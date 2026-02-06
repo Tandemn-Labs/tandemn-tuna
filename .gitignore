@@ -12,6 +12,7 @@ venv/
 # Simulation & standalone scripts
 cost_sim.py
 modal_vllm_server.py
+hybrid-gpu-inference-orchestrator-for-online-inference.md
 
 # Test scripts
 test_transition.sh
