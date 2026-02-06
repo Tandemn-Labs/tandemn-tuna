@@ -8,6 +8,7 @@ import logging
 import sys
 
 from tandemn.models import DeployRequest
+from tandemn.scaling import default_scaling_policy, load_scaling_policy
 
 
 def cmd_deploy(args: argparse.Namespace) -> None:
@@ -16,6 +17,17 @@ def cmd_deploy(args: argparse.Namespace) -> None:
 
     # Import modal provider to trigger registration
     import tandemn.providers.modal_provider  # noqa: F401
+
+    # Build scaling policy: defaults ← YAML ← CLI flags
+    if args.scaling_policy:
+        scaling = load_scaling_policy(args.scaling_policy)
+    else:
+        scaling = default_scaling_policy()
+
+    if args.concurrency is not None:
+        scaling.serverless.concurrency = args.concurrency
+    if args.no_scale_to_zero:
+        scaling.spot.min_replicas = max(1, scaling.spot.min_replicas)
 
     request = DeployRequest(
         model_name=args.model,
@@ -26,9 +38,8 @@ def cmd_deploy(args: argparse.Namespace) -> None:
         serverless_provider=args.serverless_provider,
         spots_cloud=args.spots_cloud,
         region=args.region,
-        concurrency=args.concurrency,
         cold_start_mode=args.cold_start_mode,
-        scale_to_zero=not args.no_scale_to_zero,
+        scaling=scaling,
         service_name=args.service_name,
     )
 
@@ -101,9 +112,12 @@ def main() -> None:
     p_deploy.add_argument("--serverless-provider", default="modal", help="Serverless backend")
     p_deploy.add_argument("--spots-cloud", default="aws", help="Cloud for spot GPUs")
     p_deploy.add_argument("--region", default=None)
-    p_deploy.add_argument("--concurrency", type=int, default=32)
+    p_deploy.add_argument("--concurrency", type=int, default=None,
+                          help="Override serverless concurrency limit")
     p_deploy.add_argument("--cold-start-mode", default="fast_boot", choices=["fast_boot", "no_fast_boot"])
     p_deploy.add_argument("--no-scale-to-zero", action="store_true")
+    p_deploy.add_argument("--scaling-policy", default=None,
+                          help="Path to YAML file with scaling parameters")
     p_deploy.add_argument("--service-name", default=None, help="Custom service name")
     p_deploy.set_defaults(func=cmd_deploy)
 

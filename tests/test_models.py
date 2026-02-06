@@ -1,6 +1,7 @@
 """Tests for tandemn.models."""
 
 from tandemn.models import DeployRequest, DeploymentResult, HybridDeployment, ProviderPlan
+from tandemn.scaling import ScalingPolicy, SpotScaling, ServerlessScaling
 
 
 class TestDeployRequest:
@@ -30,9 +31,11 @@ class TestDeployRequest:
         assert req.max_model_len == 4096
         assert req.serverless_provider == "modal"
         assert req.spots_cloud == "aws"
-        assert req.concurrency == 32
         assert req.cold_start_mode == "fast_boot"
-        assert req.scale_to_zero is True
+        # Scaling policy defaults
+        assert req.scaling.serverless.concurrency == 32
+        assert req.scaling.spot.min_replicas == 0
+        assert req.scaling.spot.max_replicas == 5
 
 
 class TestProviderPlan:

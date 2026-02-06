@@ -63,7 +63,7 @@ class TestModalProviderPlan:
         assert "enable_gpu_snapshot" not in plan.rendered_script
 
     def test_plan_concurrency(self):
-        self.request.concurrency = 64
+        self.request.scaling.serverless.concurrency = 64
         plan = self.provider.plan(self.request, self.vllm_cmd)
         assert "max_inputs=64" in plan.rendered_script
 

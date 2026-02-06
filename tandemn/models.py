@@ -6,6 +6,8 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Optional
 
+from tandemn.scaling import ScalingPolicy, default_scaling_policy
+
 
 @dataclass
 class DeployRequest:
@@ -19,9 +21,8 @@ class DeployRequest:
     serverless_provider: str = "modal"  # "modal", later "cloudrun", "runpod"
     spots_cloud: str = "aws"
     region: Optional[str] = None
-    concurrency: int = 32
     cold_start_mode: str = "fast_boot"  # "fast_boot" or "no_fast_boot"
-    scale_to_zero: bool = True
+    scaling: ScalingPolicy = field(default_factory=default_scaling_policy)
     service_name: Optional[str] = None  # auto-generated if None
 
     def __post_init__(self):
