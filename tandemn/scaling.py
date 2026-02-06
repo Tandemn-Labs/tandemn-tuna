@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 
 import yaml
 
@@ -29,10 +29,8 @@ class ScalingPolicy:
     serverless: ServerlessScaling
 
 
-_SPOT_KEYS = frozenset(f.name for f in SpotScaling.__dataclass_fields__.values())
-_SERVERLESS_KEYS = frozenset(
-    f.name for f in ServerlessScaling.__dataclass_fields__.values()
-)
+_SPOT_KEYS = frozenset(f.name for f in fields(SpotScaling))
+_SERVERLESS_KEYS = frozenset(f.name for f in fields(ServerlessScaling))
 
 
 def default_scaling_policy() -> ScalingPolicy:
@@ -65,10 +63,28 @@ def load_scaling_policy(path: str) -> ScalingPolicy:
     _validate_keys("spot", spot_raw, _SPOT_KEYS)
     _validate_keys("serverless", serverless_raw, _SERVERLESS_KEYS)
 
+    # Enforce int types — defense against injection via string values
+    # that would be interpolated into templates verbatim.
+    spot_raw = _cast_int_values("spot", spot_raw)
+    serverless_raw = _cast_int_values("serverless", serverless_raw)
+
     return ScalingPolicy(
         spot=SpotScaling(**spot_raw),
         serverless=ServerlessScaling(**serverless_raw),
     )
+
+
+def _cast_int_values(section: str, raw: dict) -> dict:
+    """Cast all values to int, raising ValueError on failure."""
+    out = {}
+    for key, value in raw.items():
+        try:
+            out[key] = int(value)
+        except (TypeError, ValueError):
+            raise ValueError(
+                f"'{section}.{key}' must be an integer, got {value!r}"
+            )
+    return out
 
 
 def _validate_keys(section: str, raw: dict, allowed: frozenset[str]) -> None:

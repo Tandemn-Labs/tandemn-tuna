@@ -28,6 +28,7 @@ def cmd_deploy(args: argparse.Namespace) -> None:
         scaling.serverless.concurrency = args.concurrency
     if args.no_scale_to_zero:
         scaling.spot.min_replicas = max(1, scaling.spot.min_replicas)
+        scaling.serverless.scaledown_window = 300
 
     request = DeployRequest(
         model_name=args.model,
