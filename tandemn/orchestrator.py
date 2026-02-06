@@ -242,30 +242,40 @@ def launch_hybrid(request: DeployRequest) -> HybridDeployment:
 
 
 def _cleanup_serve_controller() -> None:
-    """Tear down the SkyServe controller VM if no services remain."""
+    """Tear down the SkyServe controller VM if no services remain.
+
+    Polls ``sky serve status`` for up to 30 seconds waiting for in-progress
+    teardowns to finish before deciding whether to remove the controller.
+    """
     try:
-        result = subprocess.run(
-            ["sky", "serve", "status"],
-            capture_output=True, text=True, timeout=30,
-        )
-        # If there are active services, the output will contain table rows
-        # with service names. "No existing services." means it's safe to clean up.
-        if "No existing services." in result.stdout:
-            # Find the controller cluster
-            status_result = subprocess.run(
-                ["sky", "status"],
+        # Wait for any SHUTTING_DOWN services to finish
+        for _ in range(6):
+            result = subprocess.run(
+                ["sky", "serve", "status"],
                 capture_output=True, text=True, timeout=30,
             )
-            for line in status_result.stdout.splitlines():
-                if "sky-serve-controller" in line:
-                    controller_name = line.split()[0]
-                    logger.info("No remaining services, tearing down controller: %s", controller_name)
-                    subprocess.run(
-                        ["sky", "down", controller_name, "-y"],
-                        input="delete\n",
-                        capture_output=True, text=True, timeout=120,
-                    )
-                    break
+            if "No existing services." in result.stdout:
+                break
+            time.sleep(5)
+        else:
+            # Still services remaining after polling — leave controller alone
+            return
+
+        # Find and tear down the controller cluster
+        status_result = subprocess.run(
+            ["sky", "status"],
+            capture_output=True, text=True, timeout=30,
+        )
+        for line in status_result.stdout.splitlines():
+            if "sky-serve-controller" in line:
+                controller_name = line.split()[0]
+                logger.info("No remaining services, tearing down controller: %s", controller_name)
+                subprocess.run(
+                    ["sky", "down", controller_name, "-y"],
+                    input="delete\n",
+                    capture_output=True, text=True, timeout=120,
+                )
+                break
     except Exception as e:
         logger.debug("Controller cleanup check failed (non-fatal): %s", e)
 
