@@ -241,6 +241,34 @@ def launch_hybrid(request: DeployRequest) -> HybridDeployment:
     )
 
 
+def _cleanup_serve_controller() -> None:
+    """Tear down the SkyServe controller VM if no services remain."""
+    try:
+        result = subprocess.run(
+            ["sky", "serve", "status"],
+            capture_output=True, text=True, timeout=30,
+        )
+        # If there are active services, the output will contain table rows
+        # with service names. "No existing services." means it's safe to clean up.
+        if "No existing services." in result.stdout:
+            # Find the controller cluster
+            status_result = subprocess.run(
+                ["sky", "status"],
+                capture_output=True, text=True, timeout=30,
+            )
+            for line in status_result.stdout.splitlines():
+                if "sky-serve-controller" in line:
+                    controller_name = line.split()[0]
+                    logger.info("No remaining services, tearing down controller: %s", controller_name)
+                    subprocess.run(
+                        ["sky", "down", controller_name, "-y"],
+                        capture_output=True, text=True, timeout=120,
+                    )
+                    break
+    except Exception as e:
+        logger.debug("Controller cleanup check failed (non-fatal): %s", e)
+
+
 def destroy_hybrid(service_name: str) -> None:
     """Tear down all components of a hybrid deployment."""
     logger.info("Destroying hybrid deployment: %s", service_name)
@@ -268,6 +296,9 @@ def destroy_hybrid(service_name: str) -> None:
         ["modal", "app", "stop", modal_app],
         capture_output=True, text=True, timeout=60,
     )
+
+    # Clean up SkyServe controller if no services remain
+    _cleanup_serve_controller()
 
     logger.info("Destroy complete for %s", service_name)
 
