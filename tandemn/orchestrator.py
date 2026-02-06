@@ -262,6 +262,7 @@ def _cleanup_serve_controller() -> None:
                     logger.info("No remaining services, tearing down controller: %s", controller_name)
                     subprocess.run(
                         ["sky", "down", controller_name, "-y"],
+                        input="delete\n",
                         capture_output=True, text=True, timeout=120,
                     )
                     break
