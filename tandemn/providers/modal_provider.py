@@ -32,14 +32,16 @@ class ModalProvider(ServerlessProvider):
         # Modal uses port 8000 internally
         modal_vllm_cmd = vllm_cmd.replace("--port 8001", "--port 8000")
 
+        serverless = request.scaling.serverless
+
         replacements = {
             "app_name": app_name,
             "gpu": request.gpu,
             "port": "8000",
             "vllm_cmd": modal_vllm_cmd,
-            "max_concurrency": str(request.concurrency),
-            "timeout_s": "600",
-            "scaledown_window_s": "60" if request.scale_to_zero else "300",
+            "max_concurrency": str(serverless.concurrency),
+            "timeout_s": str(serverless.timeout),
+            "scaledown_window_s": str(serverless.scaledown_window),
             "startup_timeout_s": "600",
             "enable_memory_snapshot": "True" if is_fast_boot else "False",
             "experimental_options_line": (

@@ -23,7 +23,7 @@ class SkyLauncher:
 
     def plan(self, request: DeployRequest, vllm_cmd: str) -> ProviderPlan:
         service_name = f"{request.service_name}-spot"
-        min_replicas = 0 if request.scale_to_zero else 1
+        spot = request.scaling.spot
 
         # Region block for YAML — only include if region is specified
         region_block = ""
@@ -39,8 +39,11 @@ class SkyLauncher:
             "gpu_count": str(request.gpu_count),
             "port": "8001",
             "vllm_cmd": vllm_cmd,
-            "min_replicas": str(min_replicas),
-            "max_replicas": "5",
+            "min_replicas": str(spot.min_replicas),
+            "max_replicas": str(spot.max_replicas),
+            "target_qps": str(spot.target_qps),
+            "upscale_delay": str(spot.upscale_delay),
+            "downscale_delay": str(spot.downscale_delay),
             "region_block": region_block,
         }
 

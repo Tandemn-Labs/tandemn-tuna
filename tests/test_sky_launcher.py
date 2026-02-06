@@ -3,6 +3,7 @@
 import yaml
 
 from tandemn.models import DeployRequest
+from tandemn.scaling import ScalingPolicy, SpotScaling, ServerlessScaling
 from tandemn.spot.sky_launcher import SkyLauncher
 
 
@@ -52,7 +53,7 @@ class TestSkyLauncherPlan:
         assert parsed["service"]["replica_policy"]["min_replicas"] == 0
 
     def test_plan_no_scale_to_zero(self):
-        self.request.scale_to_zero = False
+        self.request.scaling.spot.min_replicas = 1
         plan = self.launcher.plan(self.request, self.vllm_cmd)
         parsed = yaml.safe_load(plan.rendered_script)
         assert parsed["service"]["replica_policy"]["min_replicas"] == 1
