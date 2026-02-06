@@ -59,8 +59,8 @@ The router automatically:
 
 1. **Clone and install**:
    ```bash
-   git clone https://github.com/your-org/serverless-spot.git
-   cd serverless-spot
+   git clone https://github.com/Tandemn-Labs/hybrid-router.git
+   cd hybrid-router
    pip install -e .
    ```
 
@@ -96,19 +96,20 @@ tandemn deploy \
 
 Output:
 ```
-Deploying hybrid inference endpoint...
+Deploying Qwen/Qwen3-0.6B on L40S
+Service name: tandemn-abc12345
+Serverless provider: modal
+Spot cloud: aws
 
-📡 Serverless (Modal):     https://xxx.modal.run
-   Status: Ready in ~30s
+============================================================
+DEPLOYMENT RESULT
+============================================================
+  Router:     http://x.x.x.x:8080
+  Serverless: https://xxx.modal.run
+  Spot:       launching in background...
 
-📍 Spot (SkyServe):        http://x.x.x.x:30001
-   Status: Starting (~5 min, cheaper once ready)
-
-🔀 Router:                 http://localhost:8080
-   Status: Ready
-   Currently routing to: Modal (spot warming up)
-
-✅ All traffic → http://localhost:8080
+All traffic -> http://x.x.x.x:8080
+============================================================
 ```
 
 ### Advanced Options
@@ -121,40 +122,43 @@ tandemn deploy \
   --max-model-len 8192 \
   --tp-size 1 \
   --concurrency 64 \
-  --region us-east-1 \
-  --scale-to-zero true
+  --region us-east-1
 ```
 
 **Options**:
-- `--model`: HuggingFace model ID or local path
-- `--gpu`: `L40S` (default), `A100-80GB`, `H100`
-- `--serverless-provider`: `modal`, `cerebrium`, `runpod` (planned)
-- `--max-model-len`: KV cache size (for long contexts)
-- `--tp-size`: Tensor parallelism (use 1 for single GPU)
-- `--concurrency`: Request queue depth
+- `--model`: HuggingFace model ID or local path (required)
+- `--gpu`: GPU type, e.g. `L40S`, `A100-80GB`, `H100` (required)
+- `--gpu-count`: Number of GPUs (default: 1)
+- `--serverless-provider`: `modal` (default; more providers planned)
+- `--max-model-len`: KV cache size (default: 4096)
+- `--tp-size`: Tensor parallelism (default: 1)
+- `--concurrency`: Request queue depth (default: 32)
 - `--region`: AWS region for spot instances
-- `--scale-to-zero`: Tear down spot when idle (saves money, slower restart)
+- `--spots-cloud`: Cloud provider for spot GPUs (default: `aws`)
+- `--cold-start-mode`: `fast_boot` (default) or `no_fast_boot`
+- `--no-scale-to-zero`: Keep spot replicas warm when idle (default: scale to zero)
+- `--service-name`: Custom service name (default: auto-generated)
 
 ### Testing the Endpoint
 
 ```bash
-# Health check
-curl http://localhost:8080/health
+# Health check (use the router IP from deployment output)
+curl http://<router-ip>:8080/health
 
 # Send an inference request (vLLM OpenAI API format)
-curl -X POST http://localhost:8080/v1/completions \
+curl -X POST http://<router-ip>:8080/v1/completions \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "gpt2",
+    "model": "Qwen/Qwen3-0.6B",
     "prompt": "Once upon a time",
     "max_tokens": 50
   }'
 
 # Streaming
-curl -N -X POST http://localhost:8080/v1/completions \
+curl -N -X POST http://<router-ip>:8080/v1/completions \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "gpt2",
+    "model": "Qwen/Qwen3-0.6B",
     "prompt": "The future of AI",
     "max_tokens": 100,
     "stream": true
@@ -163,20 +167,19 @@ curl -N -X POST http://localhost:8080/v1/completions \
 
 ### Monitor Routing
 
-The router exposes a config endpoint to check current status:
+The router exposes a health endpoint to check current status:
 
 ```bash
-curl http://localhost:8080/router/config
+curl http://<router-ip>:8080/router/health
 
 # Response:
 # {
-#   "serverless_url": "https://xxx.modal.run",
-#   "spot_url": "http://x.x.x.x:30001",
-#   "current_primary": "spot",
-#   "health": {
-#     "serverless": "healthy",
-#     "spot": "healthy"
-#   }
+#   "skyserve_ready": true,
+#   "last_probe_ts": 1706000000.0,
+#   "last_probe_err": null,
+#   "serverless_base_url": "https://xxx.modal.run",
+#   "skyserve_base_url": "http://x.x.x.x:30001",
+#   "route_stats": { ... }
 # }
 ```
 
@@ -192,8 +195,7 @@ Model: `meta-llama/Llama-2-7b-hf`
 tandemn deploy \
   --model meta-llama/Llama-2-7b-hf \
   --gpu L40S \
-  --serverless-provider modal \
-  --scale-to-zero true
+  --serverless-provider modal
 ```
 
 **Expected cost/month**: ~$1,700
@@ -215,7 +217,6 @@ tandemn deploy \
   --model Qwen/Qwen3-72B \
   --gpu A100-80GB \
   --serverless-provider modal \
-  --scale-to-zero true \
   --max-model-len 2048
 ```
 
@@ -235,11 +236,11 @@ tandemn deploy \
   --model mistralai/Mistral-7B-Instruct \
   --gpu L40S \
   --serverless-provider modal \
-  --scale-to-zero false \
+  --no-scale-to-zero \
   --concurrency 128
 ```
 
-**Why scale-to-zero=false**:
+**Why `--no-scale-to-zero`**:
 - SkyServe keeps 1 replica warm continuously (faster restart on spike)
 - Modal acts as a buffer for overflow
 - Router prioritizes SkyServe (cheaper), falls back to Modal if needed
@@ -254,10 +255,7 @@ tandemn deploy \
 
 ```bash
 # Check if both backends are alive
-curl http://localhost:8080/router/config
-
-# Check router logs
-docker logs <router-container-id>
+curl http://<router-ip>:8080/router/health
 
 # Check if Modal deployment succeeded
 modal app list
@@ -270,10 +268,8 @@ sky status --refresh
 
 Check which backend is serving:
 ```bash
-# Add a request header to trace routing
-curl -v -X POST http://localhost:8080/v1/completions \
-  -H "X-Debug: true" \
-  -d '...'
+# Check which backend the router is using
+curl http://<router-ip>:8080/router/health
 ```
 
 If Modal is responding (should be ~65ms overhead), wait for SkyServe to finish booting. If SkyServe is responding but slow, check EC2 instance type and network.
@@ -285,23 +281,23 @@ If Modal is responding (should be ~65ms overhead), wait for SkyServe to finish b
 sky logs <cluster-name> --all
 ```
 
-If Modal is always on: set `--scale-to-zero true` or increase request volume.
-If SkyServe is always on: set `--scale-to-zero true` if batch workloads.
+If Modal is always on: ensure `--no-scale-to-zero` is not set, or increase request volume.
+If SkyServe is always on: don't use `--no-scale-to-zero` for batch workloads.
 
 ## API Reference
 
-### Inference Endpoints
+### Inference Endpoints (proxied to backends)
 
-All endpoints support vLLM's OpenAI-compatible API:
+All vLLM endpoints are proxied through the router to the active backend:
 
 - `POST /v1/completions` — Text generation
 - `POST /v1/chat/completions` — Chat API
-- `GET /health` — Health check
-- `GET /router/config` — Routing config
+- `GET /health` — Health check (proxied to active backend)
 
-### Management Endpoints
+### Router Endpoints
 
-- `POST /router/config` — Update backend URLs (internal)
+- `GET /router/health` — Router status, backend URLs, and routing stats
+- `POST /router/config` — Update backend URLs (used internally by orchestrator)
 
 ## Project Status
 
