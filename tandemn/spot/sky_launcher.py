@@ -11,6 +11,8 @@ import time
 from pathlib import Path
 
 from tandemn.models import DeployRequest, DeploymentResult, ProviderPlan
+from tandemn.providers.base import InferenceProvider
+from tandemn.providers.registry import register
 from tandemn.template_engine import render_template
 
 logger = logging.getLogger(__name__)
@@ -18,8 +20,11 @@ logger = logging.getLogger(__name__)
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent.parent / "templates"
 
 
-class SkyLauncher:
+class SkyLauncher(InferenceProvider):
     """Deploy a vLLM server on spot GPUs via SkyServe."""
+
+    def name(self) -> str:
+        return "skyserve"
 
     def plan(self, request: DeployRequest, vllm_cmd: str) -> ProviderPlan:
         service_name = f"{request.service_name}-spot"
@@ -52,7 +57,7 @@ class SkyLauncher:
         )
 
         return ProviderPlan(
-            provider="skyserve",
+            provider=self.name(),
             rendered_script=rendered,
             metadata={"service_name": service_name},
         )
@@ -86,7 +91,7 @@ class SkyLauncher:
             if result.returncode != 0:
                 logger.error("sky serve up failed: %s", result.stderr)
                 return DeploymentResult(
-                    provider="skyserve",
+                    provider=self.name(),
                     error=f"sky serve up failed: {result.stderr}",
                     metadata={"service_name": service_name},
                 )
@@ -101,14 +106,14 @@ class SkyLauncher:
                     service_name,
                 )
                 return DeploymentResult(
-                    provider="skyserve",
+                    provider=self.name(),
                     error="Endpoint not yet available (still provisioning)",
                     metadata={"service_name": service_name},
                 )
 
             logger.info("SkyServe %s endpoint: %s", service_name, endpoint)
             return DeploymentResult(
-                provider="skyserve",
+                provider=self.name(),
                 endpoint_url=endpoint,
                 health_url=f"{endpoint}/health",
                 metadata={"service_name": service_name},
@@ -130,6 +135,19 @@ class SkyLauncher:
             text=True,
             timeout=120,
         )
+
+    def status(self, service_name: str) -> dict:
+        spot_service = f"{service_name}-spot"
+        try:
+            result = subprocess.run(
+                ["sky", "serve", "status", spot_service],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            return {"provider": self.name(), "service_name": spot_service, "raw": result.stdout.strip()}
+        except Exception as e:
+            return {"provider": self.name(), "service_name": spot_service, "error": str(e)}
 
     def _poll_endpoint(
         self,
@@ -162,3 +180,6 @@ class SkyLauncher:
                 time.sleep(delay)
 
         return None
+
+
+register("skyserve", SkyLauncher)

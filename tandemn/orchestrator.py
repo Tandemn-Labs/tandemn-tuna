@@ -15,7 +15,6 @@ import requests
 
 from tandemn.models import DeployRequest, DeploymentResult, HybridDeployment, ProviderPlan
 from tandemn.providers.registry import get_provider
-from tandemn.spot.sky_launcher import SkyLauncher
 from tandemn.template_engine import render_template
 
 logger = logging.getLogger(__name__)
@@ -180,9 +179,9 @@ def launch_hybrid(request: DeployRequest) -> HybridDeployment:
 
     def _launch_spot():
         try:
-            launcher = SkyLauncher()
-            plan = launcher.plan(request, vllm_cmd)
-            return launcher.deploy(plan)
+            provider = get_provider("skyserve")
+            plan = provider.plan(request, vllm_cmd)
+            return provider.deploy(plan)
         except Exception as e:
             logger.error("Spot launch failed: %s", e)
             return DeploymentResult(provider="skyserve", error=str(e))
@@ -284,7 +283,7 @@ def destroy_hybrid(service_name: str) -> None:
     """Tear down all components of a hybrid deployment."""
     logger.info("Destroying hybrid deployment: %s", service_name)
 
-    # Tear down router VM
+    # Tear down router VM — infrastructure, not an inference provider
     router_cluster = f"{service_name}-router"
     logger.info("Tearing down router: %s", router_cluster)
     subprocess.run(
@@ -292,21 +291,25 @@ def destroy_hybrid(service_name: str) -> None:
         capture_output=True, text=True, timeout=120,
     )
 
-    # Tear down SkyServe spot
-    spot_service = f"{service_name}-spot"
-    logger.info("Tearing down spot service: %s", spot_service)
-    subprocess.run(
-        ["sky", "serve", "down", spot_service, "-y"],
-        capture_output=True, text=True, timeout=120,
+    # Tear down spot via provider interface
+    # TODO: persist provider name in deployment metadata instead of hardcoding
+    spot_provider = get_provider("skyserve")
+    spot_result = DeploymentResult(
+        provider=spot_provider.name(),
+        metadata={"service_name": f"{service_name}-spot"},
     )
+    logger.info("Tearing down spot service via provider: %s", spot_provider.name())
+    spot_provider.destroy(spot_result)
 
-    # Tear down Modal — need to know app_name
-    modal_app = f"{service_name}-serverless"
-    logger.info("Tearing down Modal app: %s", modal_app)
-    subprocess.run(
-        ["modal", "app", "stop", modal_app],
-        capture_output=True, text=True, timeout=60,
+    # Tear down serverless via provider interface
+    # TODO: persist provider name in deployment metadata instead of hardcoding
+    serverless_provider = get_provider("modal")
+    serverless_result = DeploymentResult(
+        provider=serverless_provider.name(),
+        metadata={"app_name": f"{service_name}-serverless"},
     )
+    logger.info("Tearing down serverless via provider: %s", serverless_provider.name())
+    serverless_provider.destroy(serverless_result)
 
     # Clean up SkyServe controller if no services remain
     _cleanup_serve_controller()
@@ -323,7 +326,7 @@ def status_hybrid(service_name: str) -> dict:
         "spot": None,
     }
 
-    # Check router
+    # Check router — infrastructure, not an inference provider
     router_cluster = f"{service_name}-router"
     ip = _get_cluster_ip(router_cluster)
     if ip:
@@ -338,15 +341,14 @@ def status_hybrid(service_name: str) -> dict:
     else:
         status["router"] = {"status": "no cluster found"}
 
-    # Check spot via sky serve status
-    spot_service = f"{service_name}-spot"
-    try:
-        result = subprocess.run(
-            ["sky", "serve", "status", spot_service],
-            capture_output=True, text=True, timeout=30,
-        )
-        status["spot"] = {"raw": result.stdout.strip()}
-    except Exception as e:
-        status["spot"] = {"error": str(e)}
+    # Check spot via provider interface
+    # TODO: persist provider name in deployment metadata instead of hardcoding
+    spot_provider = get_provider("skyserve")
+    status["spot"] = spot_provider.status(service_name)
+
+    # Check serverless via provider interface
+    # TODO: persist provider name in deployment metadata instead of hardcoding
+    serverless_provider = get_provider("modal")
+    status["serverless"] = serverless_provider.status(service_name)
 
     return status

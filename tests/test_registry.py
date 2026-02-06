@@ -3,7 +3,7 @@
 import pytest
 
 from tandemn.models import DeployRequest, DeploymentResult, ProviderPlan
-from tandemn.providers.base import ServerlessProvider
+from tandemn.providers.base import InferenceProvider
 from tandemn.providers.registry import (
     _PROVIDERS,
     get_provider,
@@ -12,7 +12,7 @@ from tandemn.providers.registry import (
 )
 
 
-class _DummyProvider(ServerlessProvider):
+class _DummyProvider(InferenceProvider):
     def name(self) -> str:
         return "dummy"
 

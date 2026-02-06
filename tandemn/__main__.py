@@ -15,8 +15,9 @@ def cmd_deploy(args: argparse.Namespace) -> None:
     # Lazy import so --help is fast and doesn't pull in heavy deps
     from tandemn.orchestrator import launch_hybrid
 
-    # Import modal provider to trigger registration
+    # Import providers to trigger registration
     import tandemn.providers.modal_provider  # noqa: F401
+    import tandemn.spot.sky_launcher  # noqa: F401
 
     # Build scaling policy: defaults ← YAML ← CLI flags
     if args.scaling_policy:
@@ -81,6 +82,10 @@ def cmd_deploy(args: argparse.Namespace) -> None:
 def cmd_destroy(args: argparse.Namespace) -> None:
     from tandemn.orchestrator import destroy_hybrid
 
+    # Import providers to trigger registration
+    import tandemn.providers.modal_provider  # noqa: F401
+    import tandemn.spot.sky_launcher  # noqa: F401
+
     print(f"Destroying deployment: {args.service_name}")
     destroy_hybrid(args.service_name)
     print("Done.")
@@ -88,6 +93,10 @@ def cmd_destroy(args: argparse.Namespace) -> None:
 
 def cmd_status(args: argparse.Namespace) -> None:
     from tandemn.orchestrator import status_hybrid
+
+    # Import providers to trigger registration
+    import tandemn.providers.modal_provider  # noqa: F401
+    import tandemn.spot.sky_launcher  # noqa: F401
 
     status = status_hybrid(args.service_name)
     print(json.dumps(status, indent=2, default=str))

@@ -3,8 +3,19 @@
 import yaml
 
 from tandemn.models import DeployRequest
+from tandemn.providers.base import InferenceProvider
 from tandemn.scaling import ScalingPolicy, SpotScaling, ServerlessScaling
 from tandemn.spot.sky_launcher import SkyLauncher
+
+
+class TestSkyLauncherProvider:
+    def test_is_inference_provider(self):
+        assert issubclass(SkyLauncher, InferenceProvider)
+        assert isinstance(SkyLauncher(), InferenceProvider)
+
+    def test_name(self):
+        launcher = SkyLauncher()
+        assert launcher.name() == "skyserve"
 
 
 class TestSkyLauncherPlan:

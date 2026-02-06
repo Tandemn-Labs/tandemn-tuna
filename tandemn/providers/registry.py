@@ -2,17 +2,17 @@
 
 from __future__ import annotations
 
-from tandemn.providers.base import ServerlessProvider
+from tandemn.providers.base import InferenceProvider
 
-_PROVIDERS: dict[str, type[ServerlessProvider]] = {}
+_PROVIDERS: dict[str, type[InferenceProvider]] = {}
 
 
-def register(name: str, cls: type[ServerlessProvider]) -> None:
+def register(name: str, cls: type[InferenceProvider]) -> None:
     """Register a provider class under a name."""
     _PROVIDERS[name] = cls
 
 
-def get_provider(name: str) -> ServerlessProvider:
+def get_provider(name: str) -> InferenceProvider:
     """Instantiate and return a provider by name."""
     cls = _PROVIDERS.get(name)
     if not cls:
