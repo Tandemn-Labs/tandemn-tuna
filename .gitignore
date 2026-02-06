@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+.venv/
+venv/
+
+# Simulation & standalone scripts
+cost_sim.py
+modal_vllm_server.py
+
+# Test scripts
+test_transition.sh
+
+# IDE / editors
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# pytest
+.pytest_cache/
+
+# Claude
+.claude/
+CLAUDE.md
+
+# Misc
+n
