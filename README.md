@@ -122,7 +122,8 @@ tandemn deploy \
   --max-model-len 8192 \
   --tp-size 1 \
   --concurrency 64 \
-  --region us-east-1
+  --region us-east-1 \
+  --scaling-policy scaling.yaml
 ```
 
 **Options**:
@@ -132,12 +133,35 @@ tandemn deploy \
 - `--serverless-provider`: `modal` (default; more providers planned)
 - `--max-model-len`: KV cache size (default: 4096)
 - `--tp-size`: Tensor parallelism (default: 1)
-- `--concurrency`: Request queue depth (default: 32)
+- `--concurrency`: Override serverless concurrency limit (default: 32)
 - `--region`: AWS region for spot instances
 - `--spots-cloud`: Cloud provider for spot GPUs (default: `aws`)
 - `--cold-start-mode`: `fast_boot` (default) or `no_fast_boot`
 - `--no-scale-to-zero`: Keep spot replicas warm when idle (default: scale to zero)
+- `--scaling-policy`: Path to YAML file with scaling parameters (see below)
 - `--service-name`: Custom service name (default: auto-generated)
+
+### Scaling Policy
+
+All autoscaling parameters can be configured via a YAML file passed with `--scaling-policy`. If omitted, sane defaults apply.
+
+```yaml
+spot:
+  min_replicas: 0        # 0 = scale to zero (default)
+  max_replicas: 8
+  target_qps: 10         # per-replica QPS target
+  upscale_delay: 5       # seconds before adding replicas
+  downscale_delay: 300   # seconds before removing replicas
+
+serverless:
+  concurrency: 32        # max concurrent requests per container
+  scaledown_window: 60   # seconds idle before scaling down
+  timeout: 600           # request timeout in seconds
+```
+
+**Precedence**: defaults ← YAML file ← CLI flags. For example, `--concurrency 64` overrides `serverless.concurrency` from the YAML. `--no-scale-to-zero` forces `spot.min_replicas` to at least 1 and sets `serverless.scaledown_window` to 300s.
+
+Unknown keys in the YAML will error immediately (catches typos).
 
 ### Testing the Endpoint
 
@@ -316,7 +340,7 @@ All vLLM endpoints are proxied through the router to the active backend:
 
 ## Contributing
 
-Issues and PRs welcome. See [ARCHITECTURE.md](ARCHITECTURE.md) for design details.
+Issues and PRs welcome.
 
 ## License
 
