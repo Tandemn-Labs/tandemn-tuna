@@ -75,11 +75,12 @@ def _launch_router_vm(request: DeployRequest) -> DeploymentResult:
                 "sky", "launch", yaml_path,
                 "--cluster", cluster_name,
                 "-y",
-                "--down",  # Auto-teardown on failure
+                "-d",  # Detach: return once run cmd starts (gunicorn never exits)
+                "--down",
             ],
             capture_output=True,
             text=True,
-            timeout=600,
+            timeout=900,
         )
 
         if result.returncode != 0:
@@ -129,7 +130,11 @@ def _get_cluster_ip(cluster_name: str) -> str | None:
 
 
 def push_url_to_router(
-    router_url: str, serverless_url: str | None = None, spot_url: str | None = None
+    router_url: str,
+    serverless_url: str | None = None,
+    spot_url: str | None = None,
+    retries: int = 5,
+    delay: float = 3.0,
 ) -> bool:
     """POST updated backend URLs to the router's /router/config endpoint."""
     payload = {}
@@ -141,12 +146,19 @@ def push_url_to_router(
     if not payload:
         return True
 
-    try:
-        resp = requests.post(f"{router_url}/router/config", json=payload, timeout=10)
-        return resp.status_code == 200
-    except Exception as e:
-        logger.error("Failed to push URL to router: %s", e)
-        return False
+    for attempt in range(retries):
+        try:
+            resp = requests.post(f"{router_url}/router/config", json=payload, timeout=10)
+            if resp.status_code == 200:
+                return True
+            logger.warning("Push to router returned %d (attempt %d/%d)", resp.status_code, attempt + 1, retries)
+        except Exception as e:
+            logger.warning("Push to router failed (attempt %d/%d): %s", attempt + 1, retries, e)
+        if attempt < retries - 1:
+            time.sleep(delay)
+
+    logger.error("Failed to push URLs to router after %d attempts", retries)
+    return False
 
 
 def launch_hybrid(request: DeployRequest) -> HybridDeployment:
@@ -176,12 +188,19 @@ def launch_hybrid(request: DeployRequest) -> HybridDeployment:
             return DeploymentResult(provider="skyserve", error=str(e))
 
     logger.info("Launching router + serverless + spot in parallel")
-    with ThreadPoolExecutor(max_workers=3) as pool:
+    spot_result = None
+    pool = ThreadPoolExecutor(max_workers=3)
+    try:
         fut_router = pool.submit(_launch_router_vm, request)
         fut_serverless = pool.submit(_launch_serverless)
         fut_spot = pool.submit(_launch_spot)
 
-        router_result = fut_router.result(timeout=600)
+        try:
+            router_result = fut_router.result(timeout=900)
+        except Exception as e:
+            logger.error("Router launch failed: %s", e)
+            router_result = DeploymentResult(provider="router", error=str(e))
+            return HybridDeployment(router=router_result)
         if router_result.error:
             logger.error("Router launch failed: %s", router_result.error)
             return HybridDeployment(router=router_result)
@@ -194,26 +213,29 @@ def launch_hybrid(request: DeployRequest) -> HybridDeployment:
                 provider=request.serverless_provider, error=str(e)
             )
 
-    if serverless_result and serverless_result.endpoint_url:
-        logger.info("Pushing serverless URL to router: %s", serverless_result.endpoint_url)
-        push_url_to_router(router_url, serverless_url=serverless_result.endpoint_url)
+        # Push serverless URL to router immediately
+        if serverless_result and serverless_result.endpoint_url:
+            logger.info("Pushing serverless URL to router: %s", serverless_result.endpoint_url)
+            push_url_to_router(router_url, serverless_url=serverless_result.endpoint_url)
 
-    def _wait_and_push_spot():
+        # Wait for spot (sky serve up returns fast for scale-to-zero)
         try:
             spot_result = fut_spot.result(timeout=900)
-            if spot_result and spot_result.endpoint_url:
-                logger.info("Pushing spot URL to router: %s", spot_result.endpoint_url)
-                push_url_to_router(router_url, spot_url=spot_result.endpoint_url)
-            elif spot_result and spot_result.error:
-                logger.warning("Spot deployment issue: %s", spot_result.error)
         except Exception as e:
-            logger.error("Spot wait failed: %s", e)
+            logger.error("Spot launch failed: %s", e)
+            spot_result = DeploymentResult(provider="skyserve", error=str(e))
 
-    threading.Thread(target=_wait_and_push_spot, daemon=True).start()
+        if spot_result and spot_result.endpoint_url:
+            logger.info("Pushing spot URL to router: %s", spot_result.endpoint_url)
+            push_url_to_router(router_url, spot_url=spot_result.endpoint_url)
+        elif spot_result and spot_result.error:
+            logger.warning("Spot deployment issue: %s", spot_result.error)
+    finally:
+        pool.shutdown(wait=False)
 
     return HybridDeployment(
         serverless=serverless_result,
-        spot=None,
+        spot=spot_result,
         router=router_result,
         router_url=router_url,
     )

@@ -1,7 +1,38 @@
 {
   "permissions": {
     "allow": [
-      "WebFetch(domain:docs.skypilot.co)"
+      "WebFetch(domain:docs.skypilot.co)",
+      "WebFetch(domain:cloudprice.dev)",
+      "WebFetch(domain:sparecores.com)",
+      "WebFetch(domain:getdeploying.com)",
+      "WebFetch(domain:www.datacrunch.io)",
+      "WebFetch(domain:www.digitalocean.com)",
+      "WebFetch(domain:verda.com)",
+      "WebFetch(domain:gpuprices.net)",
+      "WebFetch(domain:medium.com)",
+      "WebFetch(domain:www.cursor.com)",
+      "WebFetch(domain:gpus.llm-utils.org)",
+      "WebFetch(domain:cloudcatalog.app)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:aws.amazon.com)",
+      "WebFetch(domain:concurrencylabs.com)",
+      "WebFetch(domain:blog.skypilot.co)",
+      "WebFetch(domain:skypilot.readthedocs.io)",
+      "WebFetch(domain:blog.vantage.sh)",
+      "WebFetch(domain:www.vantage.sh)",
+      "WebFetch(domain:docs.google.com)",
+      "WebFetch(domain:infracost.io)",
+      "WebFetch(domain:www.lmql.ai)",
+      "WebFetch(domain:gpuhunt.com)",
+      "WebFetch(domain:www.seeweb.it)",
+      "WebFetch(domain:vast.ai)",
+      "WebFetch(domain:orikami.nl)",
+      "WebFetch(domain:www.apptension.com)",
+      "WebFetch(domain:www.latitude.sh)",
+      "WebFetch(domain:www.tbtech.co)",
+      "WebFetch(domain:brev.dev)",
+      "WebFetch(domain:www.semianalysis.com)",
+      "Bash(curl:*)"
     ]
   }
 }
