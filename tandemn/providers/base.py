@@ -1,4 +1,4 @@
-"""Abstract base class for serverless GPU providers."""
+"""Abstract base class for inference providers (serverless and spot)."""
 
 from __future__ import annotations
 
@@ -7,8 +7,8 @@ from abc import ABC, abstractmethod
 from tandemn.models import DeployRequest, DeploymentResult, ProviderPlan
 
 
-class ServerlessProvider(ABC):
-    """Base class for serverless GPU providers.
+class InferenceProvider(ABC):
+    """Base class for inference providers (serverless and spot).
 
     Each provider implements: plan -> deploy -> destroy.
     The router never touches this — it only knows about URLs.
@@ -16,7 +16,7 @@ class ServerlessProvider(ABC):
 
     @abstractmethod
     def name(self) -> str:
-        """Provider identifier: 'modal', 'cloudrun', 'runpod'."""
+        """Provider identifier: 'modal', 'skyserve', 'cloudrun', 'runpod'."""
         ...
 
     @abstractmethod
@@ -36,6 +36,10 @@ class ServerlessProvider(ABC):
     def destroy(self, result: DeploymentResult) -> None:
         """Tear down the deployment."""
         ...
+
+    def status(self, service_name: str) -> dict:
+        """Check deployment status. Override for provider-native status APIs."""
+        return {"provider": self.name(), "status": "unknown"}
 
     def health_check(self, result: DeploymentResult) -> bool:
         """HTTP GET to health_url. Override for provider-native status APIs."""

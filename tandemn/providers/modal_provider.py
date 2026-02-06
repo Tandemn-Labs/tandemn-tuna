@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 
 from tandemn.models import DeployRequest, DeploymentResult, ProviderPlan
-from tandemn.providers.base import ServerlessProvider
+from tandemn.providers.base import InferenceProvider
 from tandemn.providers.registry import register
 from tandemn.template_engine import render_template
 
@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent.parent / "templates"
 
 
-class ModalProvider(ServerlessProvider):
+class ModalProvider(InferenceProvider):
     """Deploy a vLLM server on Modal's serverless GPUs."""
 
     def name(self) -> str:
@@ -127,6 +127,21 @@ class ModalProvider(ServerlessProvider):
             text=True,
             timeout=60,
         )
+
+    def status(self, service_name: str) -> dict:
+        app_name = f"{service_name}-serverless"
+        try:
+            result = subprocess.run(
+                ["modal", "app", "list"],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if app_name in result.stdout:
+                return {"provider": self.name(), "app_name": app_name, "status": "running"}
+            return {"provider": self.name(), "app_name": app_name, "status": "not found"}
+        except Exception as e:
+            return {"provider": self.name(), "app_name": app_name, "error": str(e)}
 
     def _resolve_web_url(
         self, app_name: str, function_name: str, retries: int = 5, delay: float = 3.0

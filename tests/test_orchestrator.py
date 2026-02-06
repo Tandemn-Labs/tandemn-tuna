@@ -3,7 +3,7 @@
 from unittest.mock import MagicMock, patch
 
 from tandemn.models import DeployRequest, DeploymentResult
-from tandemn.orchestrator import build_vllm_cmd, push_url_to_router
+from tandemn.orchestrator import build_vllm_cmd, destroy_hybrid, push_url_to_router, status_hybrid
 
 
 class TestBuildVllmCmd:
@@ -79,3 +79,98 @@ class TestPushUrlToRouter:
             "http://router:8080", serverless_url="https://modal.run"
         )
         assert result is False
+
+
+class TestDestroyHybrid:
+    @patch("tandemn.orchestrator.subprocess")
+    @patch("tandemn.orchestrator.get_provider")
+    def test_calls_provider_destroy_for_spot(self, mock_get_provider, mock_subprocess):
+        mock_spot = MagicMock()
+        mock_spot.name.return_value = "skyserve"
+        mock_modal = MagicMock()
+        mock_modal.name.return_value = "modal"
+        mock_get_provider.side_effect = lambda name: {"skyserve": mock_spot, "modal": mock_modal}[name]
+
+        destroy_hybrid("my-svc")
+
+        mock_spot.destroy.assert_called_once()
+        result_arg = mock_spot.destroy.call_args[0][0]
+        assert result_arg.metadata["service_name"] == "my-svc-spot"
+
+    @patch("tandemn.orchestrator.subprocess")
+    @patch("tandemn.orchestrator.get_provider")
+    def test_calls_provider_destroy_for_serverless(self, mock_get_provider, mock_subprocess):
+        mock_spot = MagicMock()
+        mock_spot.name.return_value = "skyserve"
+        mock_modal = MagicMock()
+        mock_modal.name.return_value = "modal"
+        mock_get_provider.side_effect = lambda name: {"skyserve": mock_spot, "modal": mock_modal}[name]
+
+        destroy_hybrid("my-svc")
+
+        mock_modal.destroy.assert_called_once()
+        result_arg = mock_modal.destroy.call_args[0][0]
+        assert result_arg.metadata["app_name"] == "my-svc-serverless"
+
+    @patch("tandemn.orchestrator.subprocess")
+    @patch("tandemn.orchestrator.get_provider")
+    def test_router_teardown_uses_sky_down(self, mock_get_provider, mock_subprocess):
+        mock_spot = MagicMock()
+        mock_spot.name.return_value = "skyserve"
+        mock_modal = MagicMock()
+        mock_modal.name.return_value = "modal"
+        mock_get_provider.side_effect = lambda name: {"skyserve": mock_spot, "modal": mock_modal}[name]
+
+        destroy_hybrid("my-svc")
+
+        # Router teardown should still use subprocess (infrastructure, not provider)
+        mock_subprocess.run.assert_called()
+        first_call = mock_subprocess.run.call_args_list[0]
+        assert "sky" in first_call[0][0]
+        assert "down" in first_call[0][0]
+        assert "my-svc-router" in first_call[0][0]
+
+
+class TestStatusHybrid:
+    @patch("tandemn.orchestrator._get_cluster_ip", return_value=None)
+    @patch("tandemn.orchestrator.get_provider")
+    def test_calls_provider_status_for_spot(self, mock_get_provider, mock_get_ip):
+        mock_spot = MagicMock()
+        mock_spot.status.return_value = {"provider": "skyserve", "status": "running"}
+        mock_modal = MagicMock()
+        mock_modal.status.return_value = {"provider": "modal", "status": "running"}
+        mock_get_provider.side_effect = lambda name: {"skyserve": mock_spot, "modal": mock_modal}[name]
+
+        result = status_hybrid("my-svc")
+
+        mock_spot.status.assert_called_once_with("my-svc")
+        assert result["spot"]["provider"] == "skyserve"
+
+    @patch("tandemn.orchestrator._get_cluster_ip", return_value=None)
+    @patch("tandemn.orchestrator.get_provider")
+    def test_calls_provider_status_for_serverless(self, mock_get_provider, mock_get_ip):
+        mock_spot = MagicMock()
+        mock_spot.status.return_value = {"provider": "skyserve", "status": "running"}
+        mock_modal = MagicMock()
+        mock_modal.status.return_value = {"provider": "modal", "status": "running"}
+        mock_get_provider.side_effect = lambda name: {"skyserve": mock_spot, "modal": mock_modal}[name]
+
+        result = status_hybrid("my-svc")
+
+        mock_modal.status.assert_called_once_with("my-svc")
+        assert result["serverless"]["provider"] == "modal"
+
+    @patch("tandemn.orchestrator._get_cluster_ip", return_value=None)
+    @patch("tandemn.orchestrator.get_provider")
+    def test_serverless_status_included(self, mock_get_provider, mock_get_ip):
+        mock_spot = MagicMock()
+        mock_spot.status.return_value = {"provider": "skyserve", "raw": "UP"}
+        mock_modal = MagicMock()
+        mock_modal.status.return_value = {"provider": "modal", "app_name": "my-svc-serverless", "status": "running"}
+        mock_get_provider.side_effect = lambda name: {"skyserve": mock_spot, "modal": mock_modal}[name]
+
+        result = status_hybrid("my-svc")
+
+        # Serverless status was missing before — now it's included
+        assert result["serverless"] is not None
+        assert result["serverless"]["status"] == "running"
