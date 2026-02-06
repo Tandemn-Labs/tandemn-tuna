@@ -1,0 +1,9 @@
+vllm serve {model} \
+  --host {host} \
+  --port {port} \
+  --max-model-len {max_model_len} \
+  --served-model-name llm \
+  --tensor-parallel-size {tp_size} \
+  --disable-log-requests \
+  --uvicorn-log-level info \
+  {eager_flag}

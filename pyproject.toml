@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "tandemn"
+version = "0.1.0"
+description = "Hybrid GPU Inference Orchestrator — serverless for cold starts, spot for scale"
+requires-python = ">=3.10"
+dependencies = [
+    "flask>=3.0",
+    "requests>=2.31",
+    "gunicorn>=21.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-mock>=3.12",
+    "pyyaml>=6.0",
+]
+
+[project.scripts]
+tandemn = "tandemn.__main__:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
