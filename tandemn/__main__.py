@@ -18,6 +18,7 @@ def cmd_deploy(args: argparse.Namespace) -> None:
 
     # Import providers to trigger registration
     import tandemn.providers.modal_provider  # noqa: F401
+    import tandemn.providers.runpod_provider  # noqa: F401
     import tandemn.spot.sky_launcher  # noqa: F401
 
     # Build scaling policy: defaults <- YAML <- CLI flags
@@ -151,7 +152,7 @@ def main() -> None:
     p_deploy.add_argument("--gpu-count", type=int, default=1)
     p_deploy.add_argument("--tp-size", type=int, default=1, help="Tensor parallel size")
     p_deploy.add_argument("--max-model-len", type=int, default=4096)
-    p_deploy.add_argument("--serverless-provider", default="modal", help="Serverless backend")
+    p_deploy.add_argument("--serverless-provider", default="modal", help="Serverless backend: modal, runpod")
     p_deploy.add_argument("--spots-cloud", default="aws", help="Cloud for spot GPUs")
     p_deploy.add_argument("--region", default=None)
     p_deploy.add_argument("--concurrency", type=int, default=None,

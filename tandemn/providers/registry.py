@@ -11,6 +11,7 @@ _PROVIDERS: dict[str, type[InferenceProvider]] = {}
 # Maps provider name → (module_path, class_name) for lazy loading.
 PROVIDER_MODULES: dict[str, tuple[str, str]] = {
     "modal": ("tandemn.providers.modal_provider", "ModalProvider"),
+    "runpod": ("tandemn.providers.runpod_provider", "RunPodProvider"),
     "skyserve": ("tandemn.spot.sky_launcher", "SkyLauncher"),
 }
 
