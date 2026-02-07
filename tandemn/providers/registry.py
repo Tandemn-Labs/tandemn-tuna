@@ -8,10 +8,10 @@ from tandemn.providers.base import InferenceProvider
 
 _PROVIDERS: dict[str, type[InferenceProvider]] = {}
 
-# Maps provider name to the module that registers it on import.
-PROVIDER_MODULES: dict[str, str] = {
-    "modal": "tandemn.providers.modal_provider",
-    "skyserve": "tandemn.spot.sky_launcher",
+# Maps provider name → (module_path, class_name) for lazy loading.
+PROVIDER_MODULES: dict[str, tuple[str, str]] = {
+    "modal": ("tandemn.providers.modal_provider", "ModalProvider"),
+    "skyserve": ("tandemn.spot.sky_launcher", "SkyLauncher"),
 }
 
 
@@ -37,20 +37,19 @@ def list_providers() -> list[str]:
 
 
 def ensure_provider_registered(name: str) -> None:
-    """Import the provider module if not already registered."""
+    """Import the provider module and register the class if not already present."""
     if name in _PROVIDERS:
         return
-    module_path = PROVIDER_MODULES.get(name)
-    if not module_path:
+    entry = PROVIDER_MODULES.get(name)
+    if not entry:
         raise ValueError(
             f"No known module for provider {name!r}. "
             f"Known providers: {list(PROVIDER_MODULES.keys())}"
         )
+    module_path, class_name = entry
     mod = importlib.import_module(module_path)
-    # If the module was already imported, the register() call at module level
-    # won't re-execute. Reload to ensure registration happens.
-    if name not in _PROVIDERS:
-        importlib.reload(mod)
+    cls = getattr(mod, class_name)
+    register(name, cls)
 
 
 def ensure_providers_for_deployment(record) -> None:

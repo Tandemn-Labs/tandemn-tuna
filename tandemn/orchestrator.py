@@ -311,9 +311,11 @@ def destroy_hybrid(service_name: str, record: "DeploymentRecord | None" = None) 
     )
 
     spot_name = record.spot_provider_name or "skyserve"
-    spot_meta = record.spot_metadata or {"service_name": f"{service_name}-spot"}
+    spot_meta = (record.spot_metadata or {}).copy()
+    spot_meta.setdefault("service_name", f"{service_name}-spot")
     serverless_name = record.serverless_provider_name or "modal"
-    serverless_meta = record.serverless_metadata or {"app_name": f"{service_name}-serverless"}
+    serverless_meta = (record.serverless_metadata or {}).copy()
+    serverless_meta.setdefault("app_name", f"{service_name}-serverless")
 
     # Tear down spot via provider interface
     spot_provider = get_provider(spot_name)
