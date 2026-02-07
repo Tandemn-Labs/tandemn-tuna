@@ -21,6 +21,9 @@ class ServerlessScaling:
     concurrency: int = 32
     scaledown_window: int = 60
     timeout: int = 600
+    workers_min: int = 0       # RunPod min workers (Modal ignores)
+    workers_max: int = 1       # RunPod max workers (Modal ignores)
+    scaler_value: int = 4      # RunPod scaler threshold (Modal ignores)
 
 
 @dataclass

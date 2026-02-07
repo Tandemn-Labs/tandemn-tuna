@@ -86,11 +86,12 @@ class RunPodProvider(InferenceProvider):
             "image_name": "runpod/worker-v1-vllm:v2.11.3",
             "gpu_type_id": gpu_type_id,
             "gpu_count": str(request.gpu_count),
-            "workers_min": "0",
-            "workers_max": "1",
+            "workers_min": str(serverless.workers_min),
+            "workers_max": str(serverless.workers_max),
             "idle_timeout": str(serverless.scaledown_window),
             "execution_timeout_ms": str(serverless.timeout * 1000),
             "flashboot": "true" if request.cold_start_mode == "fast_boot" else "false",
+            "scaler_value": str(serverless.scaler_value),
         }
 
         return ProviderPlan(
@@ -152,7 +153,7 @@ class RunPodProvider(InferenceProvider):
             "executionTimeoutMs": int(plan.metadata["execution_timeout_ms"]),
             "flashboot": plan.metadata["flashboot"] == "true",
             "scalerType": "QUEUE_DELAY",
-            "scalerValue": 4,
+            "scalerValue": int(plan.metadata["scaler_value"]),
         }
 
         logger.info("Creating RunPod endpoint: %s", endpoint_name)

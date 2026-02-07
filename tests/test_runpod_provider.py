@@ -66,6 +66,17 @@ class TestRunPodPlan:
         assert plan.metadata["execution_timeout_ms"] == "300000"
         assert plan.metadata["workers_min"] == "0"
         assert plan.metadata["workers_max"] == "1"
+        assert plan.metadata["scaler_value"] == "4"
+
+    def test_custom_workers_max(self):
+        self.request.scaling.serverless.workers_max = 5
+        plan = self.provider.plan(self.request, self.vllm_cmd)
+        assert plan.metadata["workers_max"] == "5"
+
+    def test_no_scale_to_zero_sets_workers_min(self):
+        self.request.scaling.serverless.workers_min = 1
+        plan = self.provider.plan(self.request, self.vllm_cmd)
+        assert plan.metadata["workers_min"] == "1"
 
     def test_provider_name(self):
         plan = self.provider.plan(self.request, self.vllm_cmd)

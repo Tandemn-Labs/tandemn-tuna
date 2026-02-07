@@ -29,7 +29,7 @@ class TestSkyLauncherPlan:
         self.vllm_cmd = (
             "vllm serve Qwen/Qwen3-0.6B "
             "--host 0.0.0.0 --port 8001 --max-model-len 4096 "
-            "--served-model-name llm --tensor-parallel-size 1 "
+            "--served-model-name Qwen/Qwen3-0.6B --tensor-parallel-size 1 "
             "--disable-log-requests --uvicorn-log-level info --enforce-eager"
         )
 

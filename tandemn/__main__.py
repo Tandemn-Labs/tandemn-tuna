@@ -29,9 +29,12 @@ def cmd_deploy(args: argparse.Namespace) -> None:
 
     if args.concurrency is not None:
         scaling.serverless.concurrency = args.concurrency
+    if args.workers_max is not None:
+        scaling.serverless.workers_max = args.workers_max
     if args.no_scale_to_zero:
         scaling.spot.min_replicas = max(1, scaling.spot.min_replicas)
         scaling.serverless.scaledown_window = 300
+        scaling.serverless.workers_min = max(1, scaling.serverless.workers_min)
 
     request = DeployRequest(
         model_name=args.model,
@@ -157,6 +160,8 @@ def main() -> None:
     p_deploy.add_argument("--region", default=None)
     p_deploy.add_argument("--concurrency", type=int, default=None,
                           help="Override serverless concurrency limit")
+    p_deploy.add_argument("--workers-max", type=int, default=None,
+                          help="Max serverless workers (RunPod only)")
     p_deploy.add_argument("--cold-start-mode", default="fast_boot", choices=["fast_boot", "no_fast_boot"])
     p_deploy.add_argument("--no-scale-to-zero", action="store_true")
     p_deploy.add_argument("--scaling-policy", default=None,
