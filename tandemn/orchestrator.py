@@ -10,12 +10,16 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import requests
 
 from tandemn.models import DeployRequest, DeploymentResult, HybridDeployment, ProviderPlan
 from tandemn.providers.registry import get_provider
 from tandemn.template_engine import render_template
+
+if TYPE_CHECKING:
+    from tandemn.state import DeploymentRecord
 
 logger = logging.getLogger(__name__)
 
@@ -279,7 +283,7 @@ def _cleanup_serve_controller() -> None:
         logger.debug("Controller cleanup check failed (non-fatal): %s", e)
 
 
-def destroy_hybrid(service_name: str, record=None) -> None:
+def destroy_hybrid(service_name: str, record: "DeploymentRecord | None" = None) -> None:
     """Tear down all components of a hybrid deployment.
 
     Parameters
@@ -292,6 +296,10 @@ def destroy_hybrid(service_name: str, record=None) -> None:
     """
     from tandemn.state import DeploymentRecord
 
+    if record is None:
+        logger.warning("No deployment record for %s, falling back to hardcoded providers", service_name)
+        record = DeploymentRecord(service_name=service_name)
+
     logger.info("Destroying hybrid deployment: %s", service_name)
 
     # Tear down router VM — infrastructure, not an inference provider
@@ -302,18 +310,10 @@ def destroy_hybrid(service_name: str, record=None) -> None:
         capture_output=True, text=True, timeout=120,
     )
 
-    # Determine provider names and metadata from record or fallback
-    if record is not None:
-        spot_name = record.spot_provider_name or "skyserve"
-        spot_meta = record.spot_metadata or {"service_name": f"{service_name}-spot"}
-        serverless_name = record.serverless_provider_name or "modal"
-        serverless_meta = record.serverless_metadata or {"app_name": f"{service_name}-serverless"}
-    else:
-        logger.warning("No deployment record for %s, falling back to hardcoded providers", service_name)
-        spot_name = "skyserve"
-        spot_meta = {"service_name": f"{service_name}-spot"}
-        serverless_name = "modal"
-        serverless_meta = {"app_name": f"{service_name}-serverless"}
+    spot_name = record.spot_provider_name or "skyserve"
+    spot_meta = record.spot_metadata or {"service_name": f"{service_name}-spot"}
+    serverless_name = record.serverless_provider_name or "modal"
+    serverless_meta = record.serverless_metadata or {"app_name": f"{service_name}-serverless"}
 
     # Tear down spot via provider interface
     spot_provider = get_provider(spot_name)
@@ -339,7 +339,7 @@ def destroy_hybrid(service_name: str, record=None) -> None:
     logger.info("Destroy complete for %s", service_name)
 
 
-def status_hybrid(service_name: str, record=None) -> dict:
+def status_hybrid(service_name: str, record: "DeploymentRecord | None" = None) -> dict:
     """Check status of all components.
 
     Parameters
@@ -351,6 +351,10 @@ def status_hybrid(service_name: str, record=None) -> dict:
         using hardcoded defaults.
     """
     from tandemn.state import DeploymentRecord
+
+    if record is None:
+        logger.warning("No deployment record for %s, falling back to hardcoded providers", service_name)
+        record = DeploymentRecord(service_name=service_name)
 
     status = {
         "service_name": service_name,
@@ -374,14 +378,8 @@ def status_hybrid(service_name: str, record=None) -> dict:
     else:
         status["router"] = {"status": "no cluster found"}
 
-    # Determine provider names from record or fallback
-    if record is not None:
-        spot_name = record.spot_provider_name or "skyserve"
-        serverless_name = record.serverless_provider_name or "modal"
-    else:
-        logger.warning("No deployment record for %s, falling back to hardcoded providers", service_name)
-        spot_name = "skyserve"
-        serverless_name = "modal"
+    spot_name = record.spot_provider_name or "skyserve"
+    serverless_name = record.serverless_provider_name or "modal"
 
     # Check spot via provider interface
     spot_provider = get_provider(spot_name)

@@ -117,7 +117,7 @@ def save_deployment(request, result, *, db_path=None) -> None:
         router_metadata = None
         if result.router:
             router_endpoint = result.router.endpoint_url
-            router_metadata = json.dumps(result.router.metadata) if result.router.metadata else None
+            router_metadata = json.dumps(result.router.metadata)
 
         serverless_provider_name = None
         serverless_endpoint = None
@@ -125,7 +125,7 @@ def save_deployment(request, result, *, db_path=None) -> None:
         if result.serverless:
             serverless_provider_name = result.serverless.provider
             serverless_endpoint = result.serverless.endpoint_url
-            serverless_metadata = json.dumps(result.serverless.metadata) if result.serverless.metadata else None
+            serverless_metadata = json.dumps(result.serverless.metadata)
 
         spot_provider_name = None
         spot_endpoint = None
@@ -133,7 +133,7 @@ def save_deployment(request, result, *, db_path=None) -> None:
         if result.spot:
             spot_provider_name = result.spot.provider
             spot_endpoint = result.spot.endpoint_url
-            spot_metadata = json.dumps(result.spot.metadata) if result.spot.metadata else None
+            spot_metadata = json.dumps(result.spot.metadata)
 
         conn.execute(
             """INSERT OR REPLACE INTO deployments (

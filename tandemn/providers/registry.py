@@ -46,7 +46,6 @@ def ensure_provider_registered(name: str) -> None:
             f"No known module for provider {name!r}. "
             f"Known providers: {list(PROVIDER_MODULES.keys())}"
         )
-    import sys
     mod = importlib.import_module(module_path)
     # If the module was already imported, the register() call at module level
     # won't re-execute. Reload to ensure registration happens.
