@@ -34,6 +34,9 @@ class TestDeployRequest:
         assert req.cold_start_mode == "fast_boot"
         # Scaling policy defaults
         assert req.scaling.serverless.concurrency == 32
+        assert req.scaling.serverless.workers_min == 0
+        assert req.scaling.serverless.workers_max == 1
+        assert req.scaling.serverless.scaler_value == 4
         assert req.scaling.spot.min_replicas == 0
         assert req.scaling.spot.max_replicas == 5
 
