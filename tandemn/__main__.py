@@ -1,4 +1,4 @@
-"""CLI entry point: python -m tandemn deploy|destroy|status ..."""
+"""CLI entry point: python -m tandemn deploy|destroy|status|list ..."""
 
 from __future__ import annotations
 
@@ -14,12 +14,13 @@ from tandemn.scaling import default_scaling_policy, load_scaling_policy
 def cmd_deploy(args: argparse.Namespace) -> None:
     # Lazy import so --help is fast and doesn't pull in heavy deps
     from tandemn.orchestrator import launch_hybrid
+    from tandemn.state import save_deployment
 
     # Import providers to trigger registration
     import tandemn.providers.modal_provider  # noqa: F401
     import tandemn.spot.sky_launcher  # noqa: F401
 
-    # Build scaling policy: defaults ← YAML ← CLI flags
+    # Build scaling policy: defaults <- YAML <- CLI flags
     if args.scaling_policy:
         scaling = load_scaling_policy(args.scaling_policy)
     else:
@@ -53,6 +54,9 @@ def cmd_deploy(args: argparse.Namespace) -> None:
 
     result = launch_hybrid(request)
 
+    # Persist deployment metadata
+    save_deployment(request, result)
+
     print()
     print("=" * 60)
     print("DEPLOYMENT RESULT")
@@ -81,25 +85,53 @@ def cmd_deploy(args: argparse.Namespace) -> None:
 
 def cmd_destroy(args: argparse.Namespace) -> None:
     from tandemn.orchestrator import destroy_hybrid
+    from tandemn.providers.registry import ensure_providers_for_deployment
+    from tandemn.state import load_deployment, update_deployment_status
 
-    # Import providers to trigger registration
-    import tandemn.providers.modal_provider  # noqa: F401
-    import tandemn.spot.sky_launcher  # noqa: F401
+    record = load_deployment(args.service_name)
+    if record is None:
+        print(f"Error: no deployment record found for '{args.service_name}'.", file=sys.stderr)
+        sys.exit(1)
+
+    ensure_providers_for_deployment(record)
 
     print(f"Destroying deployment: {args.service_name}")
-    destroy_hybrid(args.service_name)
+    destroy_hybrid(args.service_name, record=record)
+    update_deployment_status(args.service_name, "destroyed")
     print("Done.")
 
 
 def cmd_status(args: argparse.Namespace) -> None:
     from tandemn.orchestrator import status_hybrid
+    from tandemn.providers.registry import ensure_providers_for_deployment
+    from tandemn.state import load_deployment
 
-    # Import providers to trigger registration
-    import tandemn.providers.modal_provider  # noqa: F401
-    import tandemn.spot.sky_launcher  # noqa: F401
+    record = load_deployment(args.service_name)
+    if record is None:
+        print(f"Error: no deployment record found for '{args.service_name}'.", file=sys.stderr)
+        sys.exit(1)
 
-    status = status_hybrid(args.service_name)
+    ensure_providers_for_deployment(record)
+
+    status = status_hybrid(args.service_name, record=record)
     print(json.dumps(status, indent=2, default=str))
+
+
+def cmd_list(args: argparse.Namespace) -> None:
+    from tandemn.state import list_deployments
+
+    records = list_deployments(status=args.status)
+    if not records:
+        print("No deployments found.")
+        return
+
+    # Print a simple table
+    header = f"{'SERVICE NAME':<30} {'STATUS':<12} {'MODEL':<30} {'GPU':<10} {'CREATED':<26}"
+    print(header)
+    print("-" * len(header))
+    for r in records:
+        created = r.created_at[:19] if r.created_at else ""
+        print(f"{r.service_name:<30} {r.status:<12} {r.model_name:<30} {r.gpu:<10} {created:<26}")
 
 
 def main() -> None:
@@ -140,6 +172,12 @@ def main() -> None:
     p_status = subparsers.add_parser("status", help="Check deployment status")
     p_status.add_argument("--service-name", required=True)
     p_status.set_defaults(func=cmd_status)
+
+    # -- list --
+    p_list = subparsers.add_parser("list", help="List all deployments")
+    p_list.add_argument("--status", default=None, choices=["active", "destroyed", "failed"],
+                        help="Filter by deployment status")
+    p_list.set_defaults(func=cmd_list)
 
     args = parser.parse_args()
 

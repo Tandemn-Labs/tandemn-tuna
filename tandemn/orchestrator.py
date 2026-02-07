@@ -279,8 +279,19 @@ def _cleanup_serve_controller() -> None:
         logger.debug("Controller cleanup check failed (non-fatal): %s", e)
 
 
-def destroy_hybrid(service_name: str) -> None:
-    """Tear down all components of a hybrid deployment."""
+def destroy_hybrid(service_name: str, record=None) -> None:
+    """Tear down all components of a hybrid deployment.
+
+    Parameters
+    ----------
+    service_name : str
+        The deployment's service name.
+    record : DeploymentRecord | None
+        If provided, provider names and metadata are read from the record
+        instead of using hardcoded defaults.
+    """
+    from tandemn.state import DeploymentRecord
+
     logger.info("Destroying hybrid deployment: %s", service_name)
 
     # Tear down router VM — infrastructure, not an inference provider
@@ -291,22 +302,33 @@ def destroy_hybrid(service_name: str) -> None:
         capture_output=True, text=True, timeout=120,
     )
 
+    # Determine provider names and metadata from record or fallback
+    if record is not None:
+        spot_name = record.spot_provider_name or "skyserve"
+        spot_meta = record.spot_metadata or {"service_name": f"{service_name}-spot"}
+        serverless_name = record.serverless_provider_name or "modal"
+        serverless_meta = record.serverless_metadata or {"app_name": f"{service_name}-serverless"}
+    else:
+        logger.warning("No deployment record for %s, falling back to hardcoded providers", service_name)
+        spot_name = "skyserve"
+        spot_meta = {"service_name": f"{service_name}-spot"}
+        serverless_name = "modal"
+        serverless_meta = {"app_name": f"{service_name}-serverless"}
+
     # Tear down spot via provider interface
-    # TODO: persist provider name in deployment metadata instead of hardcoding
-    spot_provider = get_provider("skyserve")
+    spot_provider = get_provider(spot_name)
     spot_result = DeploymentResult(
         provider=spot_provider.name(),
-        metadata={"service_name": f"{service_name}-spot"},
+        metadata=spot_meta,
     )
     logger.info("Tearing down spot service via provider: %s", spot_provider.name())
     spot_provider.destroy(spot_result)
 
     # Tear down serverless via provider interface
-    # TODO: persist provider name in deployment metadata instead of hardcoding
-    serverless_provider = get_provider("modal")
+    serverless_provider = get_provider(serverless_name)
     serverless_result = DeploymentResult(
         provider=serverless_provider.name(),
-        metadata={"app_name": f"{service_name}-serverless"},
+        metadata=serverless_meta,
     )
     logger.info("Tearing down serverless via provider: %s", serverless_provider.name())
     serverless_provider.destroy(serverless_result)
@@ -317,8 +339,19 @@ def destroy_hybrid(service_name: str) -> None:
     logger.info("Destroy complete for %s", service_name)
 
 
-def status_hybrid(service_name: str) -> dict:
-    """Check status of all components."""
+def status_hybrid(service_name: str, record=None) -> dict:
+    """Check status of all components.
+
+    Parameters
+    ----------
+    service_name : str
+        The deployment's service name.
+    record : DeploymentRecord | None
+        If provided, provider names are read from the record instead of
+        using hardcoded defaults.
+    """
+    from tandemn.state import DeploymentRecord
+
     status = {
         "service_name": service_name,
         "router": None,
@@ -341,14 +374,21 @@ def status_hybrid(service_name: str) -> dict:
     else:
         status["router"] = {"status": "no cluster found"}
 
+    # Determine provider names from record or fallback
+    if record is not None:
+        spot_name = record.spot_provider_name or "skyserve"
+        serverless_name = record.serverless_provider_name or "modal"
+    else:
+        logger.warning("No deployment record for %s, falling back to hardcoded providers", service_name)
+        spot_name = "skyserve"
+        serverless_name = "modal"
+
     # Check spot via provider interface
-    # TODO: persist provider name in deployment metadata instead of hardcoding
-    spot_provider = get_provider("skyserve")
+    spot_provider = get_provider(spot_name)
     status["spot"] = spot_provider.status(service_name)
 
     # Check serverless via provider interface
-    # TODO: persist provider name in deployment metadata instead of hardcoding
-    serverless_provider = get_provider("modal")
+    serverless_provider = get_provider(serverless_name)
     status["serverless"] = serverless_provider.status(service_name)
 
     return status
