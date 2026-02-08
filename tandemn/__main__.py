@@ -142,7 +142,111 @@ def cmd_status(args: argparse.Namespace) -> None:
     ensure_providers_for_deployment(record)
 
     status = status_hybrid(args.service_name, record=record)
-    print(json.dumps(status, indent=2, default=str))
+    _print_status(status)
+
+
+def _print_status(status: dict) -> None:
+    from rich.console import Console
+    from rich.panel import Panel
+    from rich.table import Table
+    from rich.text import Text
+
+    console = Console()
+    service_name = status.get("service_name", "?")
+    console.print(f"\n[bold]{service_name}[/bold]\n")
+
+    # -- Components table --
+    table = Table(show_header=True, header_style="bold", expand=True)
+    table.add_column("Component")
+    table.add_column("Status")
+    table.add_column("Endpoint")
+
+    # Router
+    router = status.get("router") or {}
+    router_status = router.get("status", "unknown")
+    if router.get("url") and router_status != "unreachable":
+        router_status = "running"
+    router_url = router.get("url", "-")
+    _add_status_row(table, "Router", router_status, router_url)
+
+    # Serverless
+    sl = status.get("serverless") or {}
+    sl_status = sl.get("status", "unknown")
+    sl_provider = sl.get("provider", "")
+    sl_label = f"Serverless ({sl_provider})" if sl_provider else "Serverless"
+    sl_error = sl.get("error")
+    sl_endpoint = sl.get("endpoint_url", "-")
+    if sl_error:
+        sl_status = f"error: {sl_error}"
+    _add_status_row(table, sl_label, sl_status, sl_endpoint)
+
+    # Spot
+    spot = status.get("spot") or {}
+    spot_status = spot.get("status", "unknown")
+    spot_provider = spot.get("provider", "")
+    spot_label = f"Spot ({spot_provider})" if spot_provider else "Spot"
+    spot_endpoint = spot.get("endpoint", "-")
+    _add_status_row(table, spot_label, spot_status, spot_endpoint)
+
+    console.print(table)
+
+    # -- Route stats --
+    route_stats = router.get("route_stats")
+    if route_stats and route_stats.get("total", 0) > 0:
+        console.print()
+        stats_table = Table(title="Route stats", show_header=True, header_style="bold")
+        stats_table.add_column("Metric", style="dim")
+        stats_table.add_column("Value", justify="right")
+        stats_table.add_row("Total requests", str(route_stats.get("total", 0)))
+        stats_table.add_row("Serverless", f"{route_stats.get('serverless', 0)} ({route_stats.get('pct_serverless', 0):.0f}%)")
+        stats_table.add_row("Spot", f"{route_stats.get('spot', 0)} ({route_stats.get('pct_spot', 0):.0f}%)")
+        console.print(stats_table)
+
+    # -- Spot replica details (parse the raw sky output) --
+    raw = spot.get("raw", "")
+    if raw:
+        # Extract just the replica lines for a cleaner view
+        lines = raw.strip().splitlines()
+        replica_lines = []
+        in_replicas = False
+        for line in lines:
+            if line.startswith("Service Replicas"):
+                in_replicas = True
+                continue
+            if in_replicas and line.strip():
+                replica_lines.append(line)
+
+        if replica_lines and len(replica_lines) >= 2:
+            console.print()
+            # First line is headers, rest are data
+            headers = replica_lines[0].split()
+            console.print("[bold]Spot replicas[/bold]")
+            for line in replica_lines[1:]:
+                parts = line.split()
+                if len(parts) >= 2:
+                    # Find the status (last word)
+                    replica_status = parts[-1] if parts else "?"
+                    style = "green" if replica_status == "READY" else "yellow" if replica_status == "STARTING" else "red"
+                    console.print(f"  [{style}]{replica_status}[/{style}]  {line.strip()}")
+
+    console.print()
+
+
+def _add_status_row(table, component: str, status: str, endpoint: str) -> None:
+    status_lower = status.lower()
+    if status_lower == "running" or status_lower == "ready":
+        style = "[bold green]"
+        end = "[/bold green]"
+    elif "error" in status_lower or "failed" in status_lower or "unreachable" in status_lower:
+        style = "[bold red]"
+        end = "[/bold red]"
+    elif "starting" in status_lower or "not found" in status_lower or "unknown" in status_lower:
+        style = "[yellow]"
+        end = "[/yellow]"
+    else:
+        style = ""
+        end = ""
+    table.add_row(component, f"{style}{status}{end}", endpoint)
 
 
 def _setup_gcp_env(args: argparse.Namespace) -> None:
