@@ -18,12 +18,13 @@ class DeployRequest:
     gpu_count: int = 1
     tp_size: int = 1
     max_model_len: int = 4096
-    serverless_provider: str = "modal"  # "modal", "runpod"
+    serverless_provider: str = "modal"  # "modal", "runpod", "cloudrun"
     spots_cloud: str = "aws"
     region: Optional[str] = None
     cold_start_mode: str = "fast_boot"  # "fast_boot" or "no_fast_boot"
     scaling: ScalingPolicy = field(default_factory=default_scaling_policy)
     service_name: Optional[str] = None  # auto-generated if None
+    public: bool = False  # If True, make endpoints publicly accessible (no auth)
 
     def __post_init__(self):
         if self.service_name is None:

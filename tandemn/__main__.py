@@ -23,11 +23,7 @@ def cmd_deploy(args: argparse.Namespace) -> None:
     import tandemn.providers.runpod_provider  # noqa: F401
     import tandemn.spot.sky_launcher  # noqa: F401
 
-    # Forward GCP CLI args to env vars before building request
-    if getattr(args, "gcp_project", None):
-        os.environ["GOOGLE_CLOUD_PROJECT"] = args.gcp_project
-    if getattr(args, "gcp_region", None):
-        os.environ["GOOGLE_CLOUD_REGION"] = args.gcp_region
+    _setup_gcp_env(args)
 
     # Build scaling policy: defaults <- YAML <- CLI flags
     if args.scaling_policy:
@@ -56,6 +52,7 @@ def cmd_deploy(args: argparse.Namespace) -> None:
         cold_start_mode=args.cold_start_mode,
         scaling=scaling,
         service_name=args.service_name,
+        public=args.public,
     )
 
     print(f"Deploying {request.model_name} on {request.gpu}")
@@ -129,17 +126,24 @@ def cmd_status(args: argparse.Namespace) -> None:
     print(json.dumps(status, indent=2, default=str))
 
 
+def _setup_gcp_env(args: argparse.Namespace) -> None:
+    """Forward GCP-related CLI arguments to environment variables."""
+    if getattr(args, "gcp_project", None):
+        os.environ["GOOGLE_CLOUD_PROJECT"] = args.gcp_project
+    if getattr(args, "gcp_region", None):
+        os.environ["GOOGLE_CLOUD_REGION"] = args.gcp_region
+
+
 def cmd_check(args: argparse.Namespace) -> None:
     from tandemn.providers.registry import get_provider
 
     # Import providers to trigger registration
     import tandemn.providers.cloudrun_provider  # noqa: F401
+    import tandemn.providers.modal_provider  # noqa: F401
+    import tandemn.providers.runpod_provider  # noqa: F401
+    import tandemn.spot.sky_launcher  # noqa: F401
 
-    # Forward GCP CLI args to env vars
-    if getattr(args, "gcp_project", None):
-        os.environ["GOOGLE_CLOUD_PROJECT"] = args.gcp_project
-    if getattr(args, "gcp_region", None):
-        os.environ["GOOGLE_CLOUD_REGION"] = args.gcp_region
+    _setup_gcp_env(args)
 
     provider_name = args.provider
     try:
@@ -225,6 +229,9 @@ def main() -> None:
     p_deploy.add_argument("--scaling-policy", default=None,
                           help="Path to YAML file with scaling parameters")
     p_deploy.add_argument("--service-name", default=None, help="Custom service name")
+    p_deploy.add_argument("--public", action="store_true", default=False,
+                          help="Make deployed service publicly accessible (no auth). "
+                               "WARNING: GPU services are expensive — only use for testing.")
     p_deploy.add_argument("--gcp-project", default=None,
                           help="Google Cloud project ID (overrides GOOGLE_CLOUD_PROJECT env var)")
     p_deploy.add_argument("--gcp-region", default=None,

@@ -201,6 +201,33 @@ class TestCloudRunDeploy:
         assert result.endpoint_url == "https://test-svc-serverless-abc123.a.run.app"
         assert result.health_url == "https://test-svc-serverless-abc123.a.run.app/health"
         mock_client.create_service.assert_called_once()
+        mock_set_public.assert_not_called()  # Private by default
+
+    @patch.dict("os.environ", {"GOOGLE_CLOUD_PROJECT": "test-project"})
+    @patch("tandemn.providers.cloudrun_provider.CloudRunProvider._set_public_access")
+    def test_deploy_with_public_flag_grants_access(self, mock_set_public):
+        public_request = DeployRequest(
+            model_name="Qwen/Qwen3-0.6B",
+            gpu="L4",
+            service_name="test-svc",
+            public=True,
+        )
+        plan = self.provider.plan(public_request, self.vllm_cmd)
+
+        mock_service = MagicMock()
+        mock_service.uri = "https://test-svc-serverless-abc123.a.run.app"
+        mock_service.name = "projects/test-project/locations/us-central1/services/test-svc-serverless"
+
+        mock_operation = MagicMock()
+        mock_operation.result.return_value = mock_service
+
+        mock_client = MagicMock()
+        mock_client.create_service.return_value = mock_operation
+
+        with patch("google.cloud.run_v2.ServicesClient", return_value=mock_client):
+            result = self.provider.deploy(plan)
+
+        assert result.error is None
         mock_set_public.assert_called_once()
 
     def test_missing_sdk_returns_error(self):

@@ -36,8 +36,11 @@ GPU_REGIONS: dict[str, list[str]] = {
 }
 
 
-def _get_project_id() -> str:
-    """Resolve Google Cloud project ID from env var or gcloud CLI."""
+def _resolve_project_id() -> str | None:
+    """Resolve Google Cloud project ID from env var or gcloud CLI.
+
+    Returns ``None`` when the project cannot be determined.
+    """
     project = os.environ.get("GOOGLE_CLOUD_PROJECT")
     if project:
         return project
@@ -55,10 +58,24 @@ def _get_project_id() -> str:
     except (FileNotFoundError, subprocess.TimeoutExpired):
         pass
 
+    return None
+
+
+def _get_project_id() -> str:
+    """Resolve Google Cloud project ID, raising on failure."""
+    project = _resolve_project_id()
+    if project:
+        return project
     raise RuntimeError(
         "Cannot determine Google Cloud project. "
         "Set GOOGLE_CLOUD_PROJECT env var or run 'gcloud config set project <id>'."
     )
+
+
+def _require_cloudrun_sdk():
+    """Import and return the Cloud Run SDK, raising ImportError on failure."""
+    from google.cloud.run_v2 import ServicesClient
+    return ServicesClient
 
 
 class CloudRunProvider(InferenceProvider):
@@ -83,18 +100,7 @@ class CloudRunProvider(InferenceProvider):
         result.checks.append(self._check_adc())
 
         # 3. Project
-        project_id = os.environ.get("GOOGLE_CLOUD_PROJECT")
-        if not project_id:
-            try:
-                proj_result = subprocess.run(
-                    ["gcloud", "config", "get-value", "project"],
-                    capture_output=True, text=True, timeout=10,
-                )
-                project_id = proj_result.stdout.strip()
-                if not project_id or project_id == "(unset)":
-                    project_id = None
-            except (FileNotFoundError, subprocess.TimeoutExpired):
-                project_id = None
+        project_id = _resolve_project_id()
 
         if not project_id:
             result.checks.append(PreflightCheck(
@@ -395,6 +401,7 @@ class CloudRunProvider(InferenceProvider):
             "timeout_seconds": str(serverless.timeout),
             "cpu": "8",
             "memory": "32Gi",
+            "public_access": str(request.public).lower(),
         }
 
         return ProviderPlan(
@@ -406,9 +413,7 @@ class CloudRunProvider(InferenceProvider):
 
     def deploy(self, plan: ProviderPlan) -> DeploymentResult:
         try:
-            from google.cloud.run_v2 import (
-                ServicesClient,
-            )
+            ServicesClient = _require_cloudrun_sdk()
             from google.cloud.run_v2.types import (
                 Container,
                 ContainerPort,
@@ -521,8 +526,9 @@ class CloudRunProvider(InferenceProvider):
 
         service_uri = result_service.uri
 
-        # Make the service publicly accessible (non-fatal on failure)
-        self._set_public_access(client, result_service.name)
+        # Only grant public access when explicitly requested via --public
+        if plan.metadata.get("public_access") == "true":
+            self._set_public_access(client, result_service.name)
 
         logger.info("Cloud Run service %s deployed at %s", service_name, service_uri)
         return DeploymentResult(
@@ -580,7 +586,7 @@ class CloudRunProvider(InferenceProvider):
             return
 
         try:
-            from google.cloud.run_v2 import ServicesClient
+            ServicesClient = _require_cloudrun_sdk()
         except ImportError:
             logger.error("google-cloud-run SDK not installed, cannot destroy service")
             return
@@ -596,7 +602,7 @@ class CloudRunProvider(InferenceProvider):
 
     def status(self, service_name: str) -> dict:
         try:
-            from google.cloud.run_v2 import ServicesClient
+            ServicesClient = _require_cloudrun_sdk()
         except ImportError:
             return {
                 "provider": self.name(),
