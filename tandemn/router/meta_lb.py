@@ -113,6 +113,13 @@ _req_to_spot: int = 0
 _req_to_serverless: int = 0
 _recent_routes: deque = deque(maxlen=ROUTE_WINDOW_SIZE)
 
+# Cost tracking
+_start_time: float = time.time()
+_gpu_seconds_spot: float = 0.0
+_gpu_seconds_serverless: float = 0.0
+_spot_ready_cumulative_s: float = 0.0
+_spot_ready_since: float | None = None
+
 
 # ---------------------------------------------------------------------------
 # State accessors
@@ -144,9 +151,17 @@ def set_spot_url(url: str) -> None:
 
 def _set_ready(val: bool, err: str | None = None) -> None:
     global _skyserve_ready, _last_probe_ts, _last_probe_err
+    global _spot_ready_cumulative_s, _spot_ready_since
     with _state_lock:
+        now = time.time()
+        # Accumulate spot-ready time on state transitions
+        if _skyserve_ready and not val and _spot_ready_since is not None:
+            _spot_ready_cumulative_s += now - _spot_ready_since
+            _spot_ready_since = None
+        elif not _skyserve_ready and val:
+            _spot_ready_since = now
         _skyserve_ready = val
-        _last_probe_ts = time.time()
+        _last_probe_ts = now
         _last_probe_err = err
 
 
@@ -176,6 +191,12 @@ def _route_stats() -> dict:
         spot = _req_to_spot
         svl = _req_to_serverless
         recent = list(_recent_routes)
+        gpu_s_spot = _gpu_seconds_spot
+        gpu_s_svl = _gpu_seconds_serverless
+        # Compute spot_ready including current ongoing ready period
+        spot_ready_s = _spot_ready_cumulative_s
+        if _spot_ready_since is not None:
+            spot_ready_s += time.time() - _spot_ready_since
     recent_total = len(recent)
     recent_spot = sum(1 for r in recent if r == "spot")
     recent_svl = recent_total - recent_spot
@@ -188,6 +209,10 @@ def _route_stats() -> dict:
         "window_total": recent_total,
         "window_spot": recent_spot,
         "window_serverless": recent_svl,
+        "gpu_seconds_spot": round(gpu_s_spot, 2),
+        "gpu_seconds_serverless": round(gpu_s_svl, 2),
+        "uptime_seconds": round(time.time() - _start_time, 2),
+        "spot_ready_seconds": round(spot_ready_s, 2),
     }
 
 
@@ -266,6 +291,22 @@ def _check_skyserve_ready_async() -> None:
     threading.Thread(target=_do, daemon=True).start()
 
 
+def _check_skyserve_ready_sync() -> None:
+    """Synchronous readiness check — used by /router/health to avoid stale state."""
+    skyserve_url = _get_skyserve_url()
+    if not skyserve_url:
+        return
+    ready_url = _join_url(skyserve_url, SKYSERVE_READY_PATH)
+    try:
+        r = req_lib.get(ready_url, timeout=PROBE_TIMEOUT_SECONDS)
+        if 200 <= r.status_code < 300:
+            _set_ready(True, None)
+        else:
+            _set_ready(False, f"status={r.status_code}")
+    except Exception as e:
+        _set_ready(False, str(e))
+
+
 def _poke_skyserve_async() -> None:
     skyserve_url = _get_skyserve_url()
     if not skyserve_url:
@@ -297,6 +338,9 @@ def _poke_skyserve_async() -> None:
 def router_health():
     if not ALLOW_HEALTH_NO_AUTH and not _is_authorized(request):
         return Response("unauthorized", status=401)
+
+    # Refresh spot readiness so cost stats aren't stale
+    _check_skyserve_ready_sync()
 
     # Snapshot state and stats separately to avoid nested lock acquisition
     with _state_lock:
@@ -334,6 +378,7 @@ def update_config():
 @app.route("/", defaults={"path": ""}, methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"])
 @app.route("/<path:path>", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"])
 def proxy(path: str):
+    global _gpu_seconds_spot, _gpu_seconds_serverless
     serverless_url = _get_serverless_url()
     skyserve_url = _get_skyserve_url()
 
@@ -350,9 +395,11 @@ def proxy(path: str):
     # Decide backend: prefer spot (cheaper) if ready, else serverless (fast)
     if skyserve_url and _is_ready():
         backend_base = skyserve_url
+        backend_name = "spot"
         _record_route("spot")
     elif serverless_url:
         backend_base = serverless_url
+        backend_name = "serverless"
         _record_route("serverless")
         # Poke spot to trigger scale-up during cold start
         if skyserve_url:
@@ -383,6 +430,7 @@ def proxy(path: str):
     headers = _filter_incoming(dict(request.headers))
     data = request.get_data()
 
+    t0 = time.time()
     try:
         r = SESSION.request(
             method=request.method,
@@ -393,7 +441,20 @@ def proxy(path: str):
             timeout=(2.0, UPSTREAM_TIMEOUT_SECONDS),
         )
     except req_lib.RequestException as e:
+        elapsed = time.time() - t0
+        with _state_lock:
+            if backend_name == "spot":
+                _gpu_seconds_spot += elapsed
+            else:
+                _gpu_seconds_serverless += elapsed
         return Response(f"upstream_error: {e}", status=502)
+
+    elapsed = time.time() - t0
+    with _state_lock:
+        if backend_name == "spot":
+            _gpu_seconds_spot += elapsed
+        else:
+            _gpu_seconds_serverless += elapsed
 
     resp_headers = _filter_outgoing(r.headers)
     return Response(

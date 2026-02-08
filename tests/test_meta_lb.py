@@ -24,6 +24,10 @@ def client():
     meta_lb._req_to_spot = 0
     meta_lb._req_to_serverless = 0
     meta_lb._recent_routes.clear()
+    meta_lb._gpu_seconds_spot = 0.0
+    meta_lb._gpu_seconds_serverless = 0.0
+    meta_lb._spot_ready_cumulative_s = 0.0
+    meta_lb._spot_ready_since = None
 
     # Disable auth for tests
     original_key = meta_lb.API_KEY
