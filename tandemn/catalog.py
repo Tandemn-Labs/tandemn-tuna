@@ -39,6 +39,16 @@ class SpotPrice:
     region: str           # Cheapest region
 
 
+@dataclass(frozen=True)
+class OnDemandPrice:
+    """An on-demand GPU price from SkyPilot catalog."""
+    gpu: str              # GpuSpec.short_name
+    cloud: str            # "aws"
+    price_per_gpu_hour: float
+    instance_type: str    # e.g. "p5.4xlarge"
+    region: str           # Cheapest region
+
+
 @dataclass
 class CatalogQuery:
     """Result of a catalog query with convenience methods."""
@@ -251,3 +261,59 @@ def fetch_spot_prices(cloud: str = "aws") -> dict[str, SpotPrice]:
                     region=info.region,
                 )
     return spot_prices
+
+
+def fetch_on_demand_prices(cloud: str = "aws") -> dict[str, OnDemandPrice]:
+    """Fetch on-demand prices from SkyPilot catalog.
+
+    Same structure as fetch_spot_prices() but uses info.price (on-demand)
+    instead of info.spot_price.
+
+    Returns {our_short_name: OnDemandPrice} for the cheapest offering per GPU.
+    Gracefully returns {} if SkyPilot not installed or catalog unavailable.
+    """
+    try:
+        import sky.catalog as sky_catalog
+    except ImportError:
+        return {}
+
+    # Build reverse map: SkyPilot name -> our short name
+    reverse_map = {v: k for k, v in _SKYPILOT_GPU_NAME_MAP.items()}
+
+    try:
+        results = sky_catalog.list_accelerators(
+            gpus_only=True,
+            clouds=cloud,
+            all_regions=False,
+            require_price=True,
+        )
+    except Exception:
+        return {}
+
+    on_demand_prices: dict[str, OnDemandPrice] = {}
+    for sky_name, offerings in results.items():
+        our_name = reverse_map.get(sky_name)
+        if our_name is None:
+            continue
+        for info in offerings:
+            if info.accelerator_count != 1:
+                continue
+            if math.isnan(info.price) or info.price <= 0:
+                continue
+            if our_name not in on_demand_prices or info.price < on_demand_prices[our_name].price_per_gpu_hour:
+                on_demand_prices[our_name] = OnDemandPrice(
+                    gpu=our_name,
+                    cloud=cloud,
+                    price_per_gpu_hour=info.price,
+                    instance_type=info.instance_type or "",
+                    region=info.region,
+                )
+    return on_demand_prices
+
+
+def get_provider_price(gpu: str, provider: str) -> float:
+    """Get the static serverless price for a GPU+provider combo. Returns 0.0 if not found."""
+    for entry in _PROVIDER_GPUS:
+        if entry.gpu == gpu and entry.provider == provider:
+            return entry.price_per_gpu_hour
+    return 0.0

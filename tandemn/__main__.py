@@ -306,6 +306,239 @@ def cmd_check(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
+def cmd_cost(args: argparse.Namespace) -> None:
+    from tandemn.catalog import (
+        fetch_on_demand_prices,
+        fetch_spot_prices,
+        get_provider_price,
+        get_gpu_spec,
+    )
+    from tandemn.orchestrator import status_hybrid
+    from tandemn.providers.registry import ensure_providers_for_deployment
+    from tandemn.state import load_deployment
+
+    record = load_deployment(args.service_name)
+    if record is None:
+        print(f"Error: no deployment record found for '{args.service_name}'.", file=sys.stderr)
+        sys.exit(1)
+
+    ensure_providers_for_deployment(record)
+
+    # Fetch router health for route_stats with cost fields
+    status = status_hybrid(args.service_name, record=record)
+    router = status.get("router") or {}
+    route_stats = router.get("route_stats")
+
+    if route_stats is None:
+        print(f"Error: could not reach router for '{args.service_name}'.", file=sys.stderr)
+        print("Check deployment status with: tandemn status --service-name " + args.service_name, file=sys.stderr)
+        sys.exit(1)
+
+    # Look up prices
+    serverless_price = get_provider_price(record.gpu, record.serverless_provider)
+
+    spot_prices = fetch_spot_prices(cloud=record.spots_cloud)
+    spot_entry = spot_prices.get(record.gpu)
+    spot_price = spot_entry.price_per_gpu_hour if spot_entry else 0.0
+
+    on_demand_prices = fetch_on_demand_prices(cloud=record.spots_cloud)
+    on_demand_entry = on_demand_prices.get(record.gpu)
+    on_demand_price = on_demand_entry.price_per_gpu_hour if on_demand_entry else 0.0
+
+    # Extract cost fields from route_stats
+    gpu_sec_svl = route_stats.get("gpu_seconds_serverless", 0.0)
+    gpu_sec_spot = route_stats.get("gpu_seconds_spot", 0.0)
+    spot_ready_s = route_stats.get("spot_ready_seconds", 0.0)
+    uptime_s = route_stats.get("uptime_seconds", 0.0)
+    gpu_count = record.gpu_count
+
+    ROUTER_CPU_COST_PER_HOUR = 0.04
+
+    # Actual costs
+    actual_serverless = (gpu_sec_svl / 3600) * serverless_price
+    actual_spot = (spot_ready_s / 3600) * spot_price * gpu_count
+    actual_router = (uptime_s / 3600) * ROUTER_CPU_COST_PER_HOUR
+    actual_total = actual_serverless + actual_spot + actual_router
+
+    # Counterfactuals
+    all_serverless = ((gpu_sec_svl + gpu_sec_spot) / 3600) * serverless_price
+    all_on_demand = (uptime_s / 3600) * on_demand_price * gpu_count
+
+    # Savings
+    savings_vs_serverless = all_serverless - actual_total
+    savings_vs_on_demand = all_on_demand - actual_total
+
+    _print_cost_dashboard(
+        service_name=args.service_name,
+        record=record,
+        route_stats=route_stats,
+        serverless_price=serverless_price,
+        spot_price=spot_price,
+        spot_entry=spot_entry,
+        on_demand_price=on_demand_price,
+        on_demand_entry=on_demand_entry,
+        gpu_sec_svl=gpu_sec_svl,
+        gpu_sec_spot=gpu_sec_spot,
+        spot_ready_s=spot_ready_s,
+        uptime_s=uptime_s,
+        actual_serverless=actual_serverless,
+        actual_spot=actual_spot,
+        actual_router=actual_router,
+        actual_total=actual_total,
+        all_serverless=all_serverless,
+        all_on_demand=all_on_demand,
+        savings_vs_serverless=savings_vs_serverless,
+        savings_vs_on_demand=savings_vs_on_demand,
+    )
+
+
+def _format_duration(seconds: float) -> str:
+    """Format seconds as human-readable duration (e.g. '2h 34m')."""
+    if seconds < 60:
+        return f"{seconds:.0f}s"
+    minutes = seconds / 60
+    if minutes < 60:
+        return f"{minutes:.0f}m"
+    hours = int(minutes // 60)
+    remaining_min = int(minutes % 60)
+    return f"{hours}h {remaining_min:02d}m"
+
+
+def _print_cost_dashboard(
+    *,
+    service_name: str,
+    record,
+    route_stats: dict,
+    serverless_price: float,
+    spot_price: float,
+    spot_entry,
+    on_demand_price: float,
+    on_demand_entry,
+    gpu_sec_svl: float,
+    gpu_sec_spot: float,
+    spot_ready_s: float,
+    uptime_s: float,
+    actual_serverless: float,
+    actual_spot: float,
+    actual_router: float,
+    actual_total: float,
+    all_serverless: float,
+    all_on_demand: float,
+    savings_vs_serverless: float,
+    savings_vs_on_demand: float,
+) -> None:
+    from rich.console import Console
+    from rich.table import Table
+
+    from tandemn.catalog import GPU_SPECS
+
+    console = Console()
+
+    # Header
+    spec = GPU_SPECS.get(record.gpu)
+    gpu_label = f"{record.gpu} ({spec.vram_gb} GB)" if spec else record.gpu
+
+    total_reqs = route_stats.get("total", 0)
+    pct_spot = route_stats.get("pct_spot", 0.0)
+    pct_svl = route_stats.get("pct_serverless", 0.0)
+
+    console.print()
+    console.print(f"[bold]Cost Dashboard: {service_name}[/bold]")
+    console.print(
+        f"GPU: {gpu_label} \u00b7 Serverless: {record.serverless_provider} \u00b7 Spot: {record.spots_cloud}"
+    )
+    console.print(
+        f"Uptime: {_format_duration(uptime_s)} \u00b7 "
+        f"{total_reqs:,} requests ({pct_spot:.0f}% spot, {pct_svl:.0f}% serverless)"
+    )
+    console.print()
+
+    # Actual Costs table
+    cost_table = Table(title="Actual Costs", show_header=True, header_style="bold", expand=True)
+    cost_table.add_column("Component")
+    cost_table.add_column("Cost", justify="right")
+    cost_table.add_column("Details", style="dim")
+
+    svl_details = f"{gpu_sec_svl:,.0f} GPU-sec"
+    cost_table.add_row(
+        f"Serverless ({record.serverless_provider})",
+        f"${actual_serverless:.2f}",
+        svl_details,
+    )
+
+    spot_details = f"{_format_duration(spot_ready_s)} ready"
+    if spot_price == 0.0:
+        spot_details += " (spot price unavailable)"
+    cost_table.add_row(
+        f"Spot ({record.spots_cloud})",
+        f"${actual_spot:.2f}",
+        spot_details,
+    )
+
+    cost_table.add_row(
+        "Router CPU",
+        f"${actual_router:.2f}",
+        f"{_format_duration(uptime_s)} uptime",
+    )
+
+    cost_table.add_row(
+        "[bold]Total[/bold]",
+        f"[bold]${actual_total:.2f}[/bold]",
+        "",
+    )
+
+    console.print(cost_table)
+    console.print()
+
+    # Counterfactual table
+    cf_table = Table(title="If You Had Used", show_header=True, header_style="bold", expand=True)
+    cf_table.add_column("Scenario")
+    cf_table.add_column("Cost", justify="right")
+    cf_table.add_column("vs actual", style="dim")
+
+    if all_serverless > 0 and actual_total > 0:
+        ratio_svl = all_serverless / actual_total
+        cf_table.add_row(
+            "All serverless",
+            f"${all_serverless:.2f}",
+            f"{ratio_svl:.1f}x more expensive" if ratio_svl > 1 else f"{ratio_svl:.1f}x",
+        )
+    else:
+        cf_table.add_row("All serverless", f"${all_serverless:.2f}", "-")
+
+    if on_demand_price > 0:
+        if all_on_demand > 0 and actual_total > 0:
+            ratio_od = all_on_demand / actual_total
+            cf_table.add_row(
+                "All on-demand",
+                f"${all_on_demand:.2f}",
+                f"{ratio_od:.1f}x more expensive" if ratio_od > 1 else f"{ratio_od:.1f}x",
+            )
+        else:
+            cf_table.add_row("All on-demand", f"${all_on_demand:.2f}", "-")
+    else:
+        cf_table.add_row("All on-demand", "-", "on-demand price unavailable (SkyPilot not installed?)")
+
+    console.print(cf_table)
+    console.print()
+
+    # Summary line
+    if total_reqs == 0:
+        console.print("[dim]No requests yet — deployment is fresh.[/dim]")
+    elif savings_vs_serverless > 0 and all_serverless > 0:
+        pct_savings = (savings_vs_serverless / all_serverless) * 100
+        console.print(
+            f"[bold green]You saved ${savings_vs_serverless:.2f} vs all-serverless "
+            f"({pct_savings:.0f}% cheaper)[/bold green]"
+        )
+    elif actual_total > 0:
+        console.print(
+            f"Hybrid cost: ${actual_total:.2f} \u00b7 All-serverless would be: ${all_serverless:.2f}"
+        )
+
+    console.print()
+
+
 def cmd_show_gpus(args: argparse.Namespace) -> None:
     from tandemn.catalog import (
         fetch_spot_prices,
@@ -591,6 +824,11 @@ def main() -> None:
     p_gpus.add_argument("--spot", action="store_true", default=False,
                         help="Include AWS spot prices (requires SkyPilot)")
     p_gpus.set_defaults(func=cmd_show_gpus)
+
+    # -- cost --
+    p_cost = subparsers.add_parser("cost", help="Show cost savings dashboard for a deployment")
+    p_cost.add_argument("--service-name", required=True)
+    p_cost.set_defaults(func=cmd_cost)
 
     # -- list --
     p_list = subparsers.add_parser("list", help="List all deployments")
