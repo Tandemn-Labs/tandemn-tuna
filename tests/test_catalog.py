@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -186,56 +185,31 @@ class TestCatalogQuery:
 
 
 class TestFetchSpotPrices:
-    def test_returns_spot_prices(self):
+    @patch("sky.catalog.list_accelerators")
+    def test_returns_spot_prices(self, mock_list):
         mock_info = MagicMock()
         mock_info.accelerator_count = 1
         mock_info.spot_price = 0.35
         mock_info.instance_type = "g6.2xlarge"
         mock_info.region = "us-east-1"
 
-        mock_results = {"L4": [mock_info]}
+        mock_list.return_value = {"L4": [mock_info]}
 
-        with patch.dict("sys.modules", {"sky": MagicMock(), "sky.catalog": MagicMock()}):
-            import sys
-            sky_catalog_mock = sys.modules["sky.catalog"]
-            sky_catalog_mock.list_accelerators.return_value = mock_results
+        result = fetch_spot_prices(cloud="aws")
 
-            with patch("tandemn.catalog.sky_catalog", sky_catalog_mock, create=True):
-                # We need to call the function in a way that uses our mock
-                # Re-import to pick up the mock
-                import importlib
-                import tandemn.catalog
-                # Directly test the logic by calling with mocked import
-                spot_prices = {}
-                reverse_map = {"L4": "L4"}
-                for sky_name, offerings in mock_results.items():
-                    our_name = reverse_map.get(sky_name)
-                    if our_name is None:
-                        continue
-                    for info in offerings:
-                        if info.accelerator_count != 1:
-                            continue
-                        if math.isnan(info.spot_price) or info.spot_price <= 0:
-                            continue
-                        if our_name not in spot_prices or info.spot_price < spot_prices[our_name].price_per_gpu_hour:
-                            spot_prices[our_name] = SpotPrice(
-                                gpu=our_name,
-                                cloud="aws",
-                                price_per_gpu_hour=info.spot_price,
-                                instance_type=info.instance_type or "",
-                                region=info.region,
-                            )
-                assert "L4" in spot_prices
-                assert spot_prices["L4"].price_per_gpu_hour == 0.35
-                assert spot_prices["L4"].instance_type == "g6.2xlarge"
+        assert "L4" in result
+        assert result["L4"].price_per_gpu_hour == 0.35
+        assert result["L4"].instance_type == "g6.2xlarge"
+        assert result["L4"].region == "us-east-1"
+        assert result["L4"].cloud == "aws"
 
     def test_graceful_when_skypilot_missing(self):
-        result = fetch_spot_prices(cloud="aws")
-        # If SkyPilot is not installed, should return empty dict
-        # (may or may not be installed in test env, but should never raise)
-        assert isinstance(result, dict)
+        with patch.dict("sys.modules", {"sky": None, "sky.catalog": None}):
+            result = fetch_spot_prices(cloud="aws")
+        assert result == {}
 
-    def test_skips_multi_gpu_offerings(self):
+    @patch("sky.catalog.list_accelerators")
+    def test_skips_multi_gpu_offerings(self, mock_list):
         single_gpu = MagicMock()
         single_gpu.accelerator_count = 1
         single_gpu.spot_price = 0.35
@@ -248,63 +222,24 @@ class TestFetchSpotPrices:
         multi_gpu.instance_type = "g6.12xlarge"
         multi_gpu.region = "us-east-1"
 
-        mock_results = {"L4": [multi_gpu, single_gpu]}
+        mock_list.return_value = {"L4": [multi_gpu, single_gpu]}
 
-        with patch.dict("sys.modules", {"sky": MagicMock(), "sky.catalog": MagicMock()}):
-            import sys
-            sky_catalog_mock = sys.modules["sky.catalog"]
-            sky_catalog_mock.list_accelerators.return_value = mock_results
+        result = fetch_spot_prices(cloud="aws")
 
-            # Test the filtering logic directly
-            spot_prices = {}
-            reverse_map = {"L4": "L4"}
-            for sky_name, offerings in mock_results.items():
-                our_name = reverse_map.get(sky_name)
-                if our_name is None:
-                    continue
-                for info in offerings:
-                    if info.accelerator_count != 1:
-                        continue
-                    if math.isnan(info.spot_price) or info.spot_price <= 0:
-                        continue
-                    if our_name not in spot_prices or info.spot_price < spot_prices[our_name].price_per_gpu_hour:
-                        spot_prices[our_name] = SpotPrice(
-                            gpu=our_name,
-                            cloud="aws",
-                            price_per_gpu_hour=info.spot_price,
-                            instance_type=info.instance_type or "",
-                            region=info.region,
-                        )
-            assert "L4" in spot_prices
-            assert spot_prices["L4"].price_per_gpu_hour == 0.35  # single-GPU price, not multi
+        assert "L4" in result
+        assert result["L4"].price_per_gpu_hour == 0.35  # single-GPU price, not multi
+        assert result["L4"].instance_type == "g6.2xlarge"
 
-    def test_skips_nan_spot_prices(self):
+    @patch("sky.catalog.list_accelerators")
+    def test_skips_nan_spot_prices(self, mock_list):
         nan_info = MagicMock()
         nan_info.accelerator_count = 1
         nan_info.spot_price = float("nan")
         nan_info.instance_type = "p4d.24xlarge"
         nan_info.region = "us-east-1"
 
-        mock_results = {"A100-80GB": [nan_info]}
+        mock_list.return_value = {"A100-80GB": [nan_info]}
 
-        # Test the filtering logic directly
-        spot_prices = {}
-        reverse_map = {"A100-80GB": "A100_80GB"}
-        for sky_name, offerings in mock_results.items():
-            our_name = reverse_map.get(sky_name)
-            if our_name is None:
-                continue
-            for info in offerings:
-                if info.accelerator_count != 1:
-                    continue
-                if math.isnan(info.spot_price) or info.spot_price <= 0:
-                    continue
-                if our_name not in spot_prices or info.spot_price < spot_prices[our_name].price_per_gpu_hour:
-                    spot_prices[our_name] = SpotPrice(
-                        gpu=our_name,
-                        cloud="aws",
-                        price_per_gpu_hour=info.spot_price,
-                        instance_type=info.instance_type or "",
-                        region=info.region,
-                    )
-        assert "A100_80GB" not in spot_prices
+        result = fetch_spot_prices(cloud="aws")
+
+        assert "A100_80GB" not in result
