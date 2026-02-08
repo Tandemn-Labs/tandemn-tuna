@@ -40,13 +40,31 @@ def cmd_deploy(args: argparse.Namespace) -> None:
         scaling.serverless.scaledown_window = 300
         scaling.serverless.workers_min = max(1, scaling.serverless.workers_min)
 
+    # Auto-select cheapest serverless provider if not specified
+    serverless_provider = args.serverless_provider
+    auto_selected = False
+    if serverless_provider is None:
+        from tandemn.catalog import normalize_gpu_name, query as catalog_query
+        try:
+            gpu_name = normalize_gpu_name(args.gpu)
+        except KeyError:
+            gpu_name = args.gpu
+        result = catalog_query(gpu=gpu_name)
+        cheapest = result.cheapest()
+        if cheapest:
+            serverless_provider = cheapest.provider
+            auto_selected = True
+            _print_provider_selection(gpu_name, result, serverless_provider)
+        else:
+            serverless_provider = "modal"
+
     request = DeployRequest(
         model_name=args.model,
         gpu=args.gpu,
         gpu_count=args.gpu_count,
         tp_size=args.tp_size,
         max_model_len=args.max_model_len,
-        serverless_provider=args.serverless_provider,
+        serverless_provider=serverless_provider,
         spots_cloud=args.spots_cloud,
         region=args.region,
         cold_start_mode=args.cold_start_mode,
@@ -57,7 +75,8 @@ def cmd_deploy(args: argparse.Namespace) -> None:
 
     print(f"Deploying {request.model_name} on {request.gpu}")
     print(f"Service name: {request.service_name}")
-    print(f"Serverless provider: {request.serverless_provider}")
+    if not auto_selected:
+        print(f"Serverless provider: {request.serverless_provider}")
     print(f"Spot cloud: {request.spots_cloud}")
     print()
 
@@ -183,6 +202,208 @@ def cmd_check(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
+def cmd_show_gpus(args: argparse.Namespace) -> None:
+    from tandemn.catalog import (
+        fetch_spot_prices,
+        get_gpu_spec,
+        normalize_gpu_name,
+        query,
+        GPU_SPECS,
+    )
+
+    gpu_filter = None
+    if args.gpu:
+        try:
+            gpu_filter = normalize_gpu_name(args.gpu)
+        except KeyError:
+            print(f"Error: unknown GPU '{args.gpu}'.", file=sys.stderr)
+            sys.exit(1)
+
+    spot_prices: dict = {}
+    if args.spot:
+        spot_prices = fetch_spot_prices(cloud="aws")
+
+    result = query(gpu=gpu_filter, provider=args.provider)
+    result.spot_prices = spot_prices
+
+    if gpu_filter:
+        _print_gpu_detail(gpu_filter, result, spot_prices, get_gpu_spec)
+    else:
+        _print_gpu_table(result, spot_prices, show_spot=args.spot, get_gpu_spec=get_gpu_spec)
+
+
+def _print_provider_selection(gpu: str, result, selected_provider: str) -> None:
+    """Print a compact pricing table showing which provider was auto-selected."""
+    from rich.console import Console
+    from rich.table import Table
+    from tandemn.catalog import get_gpu_spec
+
+    spec = get_gpu_spec(gpu)
+    console = Console()
+
+    table = Table(
+        title=f"Serverless pricing for {gpu} ({spec.vram_gb} GB)",
+        show_header=True,
+        header_style="bold",
+    )
+    table.add_column("")  # checkmark column
+    table.add_column("Provider")
+    table.add_column("Price", justify="right")
+
+    for entry in result.sorted_by_price():
+        if entry.price_per_gpu_hour <= 0:
+            continue
+        is_selected = entry.provider == selected_provider
+        mark = "[bold green]\u2713[/bold green]" if is_selected else " "
+        provider_text = (
+            f"[bold green]{entry.provider}[/bold green]"
+            if is_selected
+            else entry.provider
+        )
+        price_text = (
+            f"[bold green]${entry.price_per_gpu_hour:.2f}/hr[/bold green]"
+            if is_selected
+            else f"${entry.price_per_gpu_hour:.2f}/hr"
+        )
+        table.add_row(mark, provider_text, price_text)
+
+    console.print(table)
+    console.print()
+
+
+def _format_price(price: float) -> str:
+    """Format a price as $X.XX/hr or dash for zero/missing."""
+    if price > 0:
+        return f"${price:.2f}/hr"
+    return "-"
+
+
+def _print_gpu_detail(gpu: str, result, spot_prices: dict, get_gpu_spec) -> None:
+    from rich.console import Console
+    from rich.table import Table
+    from rich.text import Text
+
+    spec = get_gpu_spec(gpu)
+    console = Console()
+
+    console.print(f"[bold]GPU:[/bold]  {spec.short_name}")
+    console.print(f"[bold]Name:[/bold] {spec.full_name}")
+    console.print(f"[bold]VRAM:[/bold] {spec.vram_gb} GB")
+    console.print(f"[bold]Arch:[/bold] {spec.arch}")
+    console.print()
+
+    table = Table(title="Provider pricing", show_header=True, header_style="bold")
+    table.add_column("Provider")
+    table.add_column("Price", justify="right")
+    table.add_column("Details", style="dim")
+
+    all_prices: list[tuple[str, float]] = []
+
+    for entry in result.sorted_by_price():
+        extra = ""
+        if entry.regions:
+            region_list = ", ".join(entry.regions[:3])
+            if len(entry.regions) > 3:
+                region_list += ", ..."
+            extra = region_list
+        if entry.price_per_gpu_hour > 0:
+            all_prices.append((entry.provider, entry.price_per_gpu_hour))
+        table.add_row(entry.provider, _format_price(entry.price_per_gpu_hour), extra)
+
+    if gpu in spot_prices:
+        sp = spot_prices[gpu]
+        extra = f"{sp.instance_type}, {sp.region}" if sp.instance_type else sp.region
+        all_prices.append(("aws spot", sp.price_per_gpu_hour))
+        table.add_row("aws spot", _format_price(sp.price_per_gpu_hour), extra)
+
+    console.print(table)
+
+    if all_prices:
+        cheapest = min(all_prices, key=lambda x: x[1])
+        console.print(
+            f"\nCheapest: [bold green]{cheapest[0]}[/bold green] "
+            f"at [bold green]${cheapest[1]:.2f}/hr[/bold green]"
+        )
+
+
+def _print_gpu_table(result, spot_prices: dict, show_spot: bool, get_gpu_spec) -> None:
+    from rich.console import Console
+    from rich.table import Table
+    from tandemn.catalog import GPU_SPECS
+
+    console = Console()
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("GPU")
+    table.add_column("VRAM", justify="right")
+
+    providers = ["modal", "runpod", "cloudrun"]
+    for p in providers:
+        table.add_column(p.upper(), justify="right")
+    if show_spot:
+        table.add_column("AWS SPOT", justify="right")
+
+    # Collect all GPUs that have at least one offering
+    seen_gpus: list[str] = []
+    for entry in result.results:
+        if entry.gpu not in seen_gpus:
+            seen_gpus.append(entry.gpu)
+
+    # Sort by VRAM then by name
+    def sort_key(gpu: str):
+        spec = GPU_SPECS.get(gpu)
+        return (spec.vram_gb if spec else 0, gpu)
+    seen_gpus.sort(key=sort_key)
+
+    # Build price lookup: (gpu, provider) -> price
+    price_map: dict[tuple[str, str], float] = {}
+    for entry in result.results:
+        price_map[(entry.gpu, entry.provider)] = entry.price_per_gpu_hour
+
+    for gpu in seen_gpus:
+        spec = GPU_SPECS.get(gpu)
+        vram = f"{spec.vram_gb} GB" if spec else "?"
+
+        # Collect all prices for this row to find the cheapest
+        row_prices: dict[str, float] = {}
+        for p in providers:
+            price = price_map.get((gpu, p))
+            if price is not None and price > 0:
+                row_prices[p] = price
+        if show_spot:
+            sp = spot_prices.get(gpu)
+            if sp and sp.price_per_gpu_hour > 0:
+                row_prices["aws_spot"] = sp.price_per_gpu_hour
+
+        cheapest_price = min(row_prices.values()) if row_prices else None
+
+        # Build cells, highlighting the cheapest in green
+        cells: list[str] = [gpu, vram]
+        for p in providers:
+            price = price_map.get((gpu, p))
+            if price is not None and price > 0:
+                text = _format_price(price)
+                if price == cheapest_price:
+                    cells.append(f"[bold green]{text}[/bold green]")
+                else:
+                    cells.append(text)
+            else:
+                cells.append("[dim]-[/dim]")
+        if show_spot:
+            sp = spot_prices.get(gpu)
+            if sp and sp.price_per_gpu_hour > 0:
+                text = _format_price(sp.price_per_gpu_hour)
+                if sp.price_per_gpu_hour == cheapest_price:
+                    cells.append(f"[bold green]{text}[/bold green]")
+                else:
+                    cells.append(text)
+            else:
+                cells.append("[dim]-[/dim]")
+
+        table.add_row(*cells)
+
+    console.print(table)
+
+
 def cmd_list(args: argparse.Namespace) -> None:
     from tandemn.state import list_deployments
 
@@ -217,7 +438,8 @@ def main() -> None:
     p_deploy.add_argument("--gpu-count", type=int, default=1)
     p_deploy.add_argument("--tp-size", type=int, default=1, help="Tensor parallel size")
     p_deploy.add_argument("--max-model-len", type=int, default=4096)
-    p_deploy.add_argument("--serverless-provider", default="modal", help="Serverless backend: modal, runpod, cloudrun")
+    p_deploy.add_argument("--serverless-provider", default=None,
+                          help="Serverless backend: modal, runpod, cloudrun (default: cheapest for GPU)")
     p_deploy.add_argument("--spots-cloud", default="aws", help="Cloud for spot GPUs")
     p_deploy.add_argument("--region", default=None)
     p_deploy.add_argument("--concurrency", type=int, default=None,
@@ -257,6 +479,14 @@ def main() -> None:
     p_status = subparsers.add_parser("status", help="Check deployment status")
     p_status.add_argument("--service-name", required=True)
     p_status.set_defaults(func=cmd_status)
+
+    # -- show-gpus --
+    p_gpus = subparsers.add_parser("show-gpus", help="Show GPU pricing across providers")
+    p_gpus.add_argument("--gpu", default=None, help="Show details for a specific GPU (e.g. L4, H100)")
+    p_gpus.add_argument("--provider", default=None, help="Filter to a specific provider")
+    p_gpus.add_argument("--spot", action="store_true", default=False,
+                        help="Include AWS spot prices (requires SkyPilot)")
+    p_gpus.set_defaults(func=cmd_show_gpus)
 
     # -- list --
     p_list = subparsers.add_parser("list", help="List all deployments")

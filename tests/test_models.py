@@ -41,6 +41,19 @@ class TestDeployRequest:
         assert req.scaling.spot.max_replicas == 5
 
 
+    def test_gpu_alias_normalized(self):
+        req = DeployRequest(model_name="m", gpu="A100")
+        assert req.gpu == "A100_80GB"
+
+    def test_gpu_alias_4090_normalized(self):
+        req = DeployRequest(model_name="m", gpu="4090")
+        assert req.gpu == "RTX4090"
+
+    def test_unknown_gpu_passes_through(self):
+        req = DeployRequest(model_name="m", gpu="UNKNOWN_GPU")
+        assert req.gpu == "UNKNOWN_GPU"
+
+
 class TestProviderPlan:
     def test_defaults(self):
         plan = ProviderPlan(provider="modal", rendered_script="# script")

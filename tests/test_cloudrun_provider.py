@@ -7,9 +7,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tandemn.catalog import provider_gpu_map
 from tandemn.models import DeployRequest, DeploymentResult
 from tandemn.providers.cloudrun_provider import (
-    GPU_MAP,
     CloudRunProvider,
     _get_project_id,
 )
@@ -17,7 +17,8 @@ from tandemn.providers.cloudrun_provider import (
 
 class TestCloudRunGpuMap:
     def test_all_short_names_resolve(self):
-        for short, full in GPU_MAP.items():
+        gpu_map = provider_gpu_map("cloudrun")
+        for short, full in gpu_map.items():
             assert isinstance(full, str)
             assert len(full) > 0
 

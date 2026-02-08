@@ -9,31 +9,18 @@ import subprocess
 
 from pathlib import Path
 
+from tandemn.catalog import provider_gpu_id, provider_gpu_map, provider_regions
 from tandemn.models import DeployRequest, DeploymentResult, PreflightCheck, PreflightResult, ProviderPlan
 from tandemn.providers.base import InferenceProvider
 from tandemn.providers.registry import register
 
 logger = logging.getLogger(__name__)
 
-GPU_MAP: dict[str, str] = {
-    "L4": "nvidia-l4",
-    "RTX_PRO_6000": "nvidia-rtx-pro-6000",
-}
-
 DEFAULT_REGION = "us-central1"
 DEFAULT_IMAGE = "vllm/vllm-openai:v0.15.1"
 VLLM_PORT = 8000
 
 REQUIRED_APIS = ["run.googleapis.com", "iam.googleapis.com"]
-
-GPU_REGIONS: dict[str, list[str]] = {
-    "nvidia-l4": [
-        "asia-east1", "asia-northeast1", "asia-south1", "asia-southeast1",
-        "europe-west1", "europe-west4", "me-west1",
-        "us-central1", "us-east1", "us-east4", "us-west1", "us-west4",
-    ],
-    "nvidia-rtx-pro-6000": ["us-central1"],
-}
 
 
 def _resolve_project_id() -> str | None:
@@ -123,10 +110,14 @@ class CloudRunProvider(InferenceProvider):
         result.checks.append(self._check_and_enable_apis(project_id))
 
         # 6. GPU region (only if GPU is specified)
-        gpu_accelerator = GPU_MAP.get(request.gpu)
+        try:
+            gpu_accelerator = provider_gpu_id(request.gpu, "cloudrun")
+        except KeyError:
+            gpu_accelerator = None
         region = request.region or os.environ.get("GOOGLE_CLOUD_REGION", DEFAULT_REGION)
         if gpu_accelerator:
-            result.checks.append(self._check_gpu_region(gpu_accelerator, region))
+            valid_regions = provider_regions(request.gpu, "cloudrun")
+            result.checks.append(self._check_gpu_region(gpu_accelerator, region, valid_regions))
 
         return result
 
@@ -311,11 +302,11 @@ class CloudRunProvider(InferenceProvider):
                 message="Failed to check APIs (gcloud error)",
             )
 
-    def _check_gpu_region(self, gpu_accelerator: str, region: str) -> PreflightCheck:
+    def _check_gpu_region(self, gpu_accelerator: str, region: str,
+                          valid_regions: tuple[str, ...] = ()) -> PreflightCheck:
         """Verify the requested GPU type is available in the selected region."""
-        valid_regions = GPU_REGIONS.get(gpu_accelerator)
-        if valid_regions is None:
-            # Unknown GPU — skip check rather than block
+        if not valid_regions:
+            # Unknown GPU or no region constraints — skip check rather than block
             return PreflightCheck(
                 name="gpu_region",
                 passed=True,
@@ -340,11 +331,12 @@ class CloudRunProvider(InferenceProvider):
 
     def plan(self, request: DeployRequest, vllm_cmd: str) -> ProviderPlan:
         # Validate GPU
-        gpu_accelerator = GPU_MAP.get(request.gpu)
-        if not gpu_accelerator:
+        try:
+            gpu_accelerator = provider_gpu_id(request.gpu, "cloudrun")
+        except KeyError:
             raise ValueError(
                 f"Unknown GPU type for Cloud Run: {request.gpu!r}. "
-                f"Supported: {sorted(GPU_MAP.keys())}"
+                f"Supported: {sorted(provider_gpu_map('cloudrun').keys())}"
             )
 
         # Cloud Run supports only 1 GPU per instance

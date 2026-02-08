@@ -7,6 +7,7 @@ import os
 
 import requests
 
+from tandemn.catalog import provider_gpu_id, provider_gpu_map
 from tandemn.models import DeployRequest, DeploymentResult, ProviderPlan
 from tandemn.providers.base import InferenceProvider
 from tandemn.providers.registry import register
@@ -14,21 +15,6 @@ from tandemn.providers.registry import register
 logger = logging.getLogger(__name__)
 
 _API_BASE = "https://rest.runpod.io/v1"
-
-GPU_MAP: dict[str, str] = {
-    "A4000": "NVIDIA RTX A4000",
-    "A5000": "NVIDIA RTX A5000",
-    "L4": "NVIDIA L4",
-    "4090": "NVIDIA GeForce RTX 4090",
-    "L40": "NVIDIA L40",
-    "L40S": "NVIDIA L40S",
-    "A6000": "NVIDIA RTX A6000",
-    "A40": "NVIDIA A40",
-    "A100": "NVIDIA A100-SXM4-80GB",
-    "H100": "NVIDIA H100 80GB HBM3",
-    "H200": "NVIDIA H200",
-    "B200": "NVIDIA B200",
-}
 
 
 def _headers() -> dict[str, str]:
@@ -55,11 +41,12 @@ class RunPodProvider(InferenceProvider):
         endpoint_name = f"{request.service_name}-serverless"
 
         # Map short GPU name to RunPod's full identifier
-        gpu_type_id = GPU_MAP.get(request.gpu)
-        if not gpu_type_id:
+        try:
+            gpu_type_id = provider_gpu_id(request.gpu, "runpod")
+        except KeyError:
             raise ValueError(
                 f"Unknown GPU type for RunPod: {request.gpu!r}. "
-                f"Supported: {sorted(GPU_MAP.keys())}"
+                f"Supported: {sorted(provider_gpu_map('runpod').keys())}"
             )
 
         serverless = request.scaling.serverless

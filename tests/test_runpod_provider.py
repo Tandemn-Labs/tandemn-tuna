@@ -4,13 +4,15 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tandemn.catalog import provider_gpu_map
 from tandemn.models import DeployRequest, DeploymentResult
-from tandemn.providers.runpod_provider import GPU_MAP, RunPodProvider
+from tandemn.providers.runpod_provider import RunPodProvider
 
 
 class TestRunPodGpuMap:
     def test_all_short_names_resolve(self):
-        for short, full in GPU_MAP.items():
+        gpu_map = provider_gpu_map("runpod")
+        for short, full in gpu_map.items():
             assert isinstance(full, str)
             assert len(full) > 0
 
