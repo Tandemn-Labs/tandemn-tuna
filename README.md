@@ -158,3 +158,5 @@ If the router is using serverless, spot instances are still booting — wait for
 ## License
 
 MIT
+
+This project depends on [SkyPilot](https://github.com/skypilot-org/skypilot) (Apache License 2.0).
