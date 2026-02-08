@@ -18,12 +18,13 @@ class DeployRequest:
     gpu_count: int = 1
     tp_size: int = 1
     max_model_len: int = 4096
-    serverless_provider: str = "modal"  # "modal", "runpod"
+    serverless_provider: str = "modal"  # "modal", "runpod", "cloudrun"
     spots_cloud: str = "aws"
     region: Optional[str] = None
     cold_start_mode: str = "fast_boot"  # "fast_boot" or "no_fast_boot"
     scaling: ScalingPolicy = field(default_factory=default_scaling_policy)
     service_name: Optional[str] = None  # auto-generated if None
+    public: bool = False  # If True, make endpoints publicly accessible (no auth)
 
     def __post_init__(self):
         if self.service_name is None:
@@ -50,6 +51,33 @@ class DeploymentResult:
     health_url: Optional[str] = None
     error: Optional[str] = None
     metadata: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass
+class PreflightCheck:
+    """Result of a single preflight validation step."""
+
+    name: str                       # e.g. "gcloud_installed"
+    passed: bool
+    message: str                    # Human-readable status
+    fix_command: str | None = None  # Exact shell command to fix
+    auto_fixed: bool = False        # True if we fixed it automatically
+
+
+@dataclass
+class PreflightResult:
+    """Aggregated result of all preflight checks for a provider."""
+
+    provider: str
+    checks: list[PreflightCheck] = field(default_factory=list)
+
+    @property
+    def ok(self) -> bool:
+        return all(c.passed for c in self.checks)
+
+    @property
+    def failed(self) -> list[PreflightCheck]:
+        return [c for c in self.checks if not c.passed]
 
 
 @dataclass

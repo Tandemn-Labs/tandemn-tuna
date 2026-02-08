@@ -175,6 +175,13 @@ def launch_hybrid(request: DeployRequest) -> HybridDeployment:
     def _launch_serverless():
         try:
             provider = get_provider(request.serverless_provider)
+            preflight = provider.preflight(request)
+            if not preflight.ok:
+                failures = "; ".join(c.message for c in preflight.failed)
+                return DeploymentResult(
+                    provider=request.serverless_provider,
+                    error=f"Preflight failed: {failures}",
+                )
             plan = provider.plan(request, vllm_cmd)
             return provider.deploy(plan)
         except Exception as e:
@@ -184,6 +191,13 @@ def launch_hybrid(request: DeployRequest) -> HybridDeployment:
     def _launch_spot():
         try:
             provider = get_provider("skyserve")
+            preflight = provider.preflight(request)
+            if not preflight.ok:
+                failures = "; ".join(c.message for c in preflight.failed)
+                return DeploymentResult(
+                    provider="skyserve",
+                    error=f"Preflight failed: {failures}",
+                )
             plan = provider.plan(request, vllm_cmd)
             return provider.deploy(plan)
         except Exception as e:

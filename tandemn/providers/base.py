@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from tandemn.models import DeployRequest, DeploymentResult, ProviderPlan
+from tandemn.models import DeployRequest, DeploymentResult, PreflightResult, ProviderPlan
 
 
 class InferenceProvider(ABC):
@@ -36,6 +36,10 @@ class InferenceProvider(ABC):
     def destroy(self, result: DeploymentResult) -> None:
         """Tear down the deployment."""
         ...
+
+    def preflight(self, request: DeployRequest) -> PreflightResult:
+        """Validate environment before plan/deploy. Override per provider."""
+        return PreflightResult(provider=self.name())
 
     def status(self, service_name: str) -> dict:
         """Check deployment status. Override for provider-native status APIs."""

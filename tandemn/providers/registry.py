@@ -12,6 +12,7 @@ _PROVIDERS: dict[str, type[InferenceProvider]] = {}
 PROVIDER_MODULES: dict[str, tuple[str, str]] = {
     "modal": ("tandemn.providers.modal_provider", "ModalProvider"),
     "runpod": ("tandemn.providers.runpod_provider", "RunPodProvider"),
+    "cloudrun": ("tandemn.providers.cloudrun_provider", "CloudRunProvider"),
     "skyserve": ("tandemn.spot.sky_launcher", "SkyLauncher"),
 }
 
