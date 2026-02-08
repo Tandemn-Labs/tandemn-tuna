@@ -27,6 +27,11 @@ class DeployRequest:
     public: bool = False  # If True, make endpoints publicly accessible (no auth)
 
     def __post_init__(self):
+        from tandemn.catalog import normalize_gpu_name
+        try:
+            self.gpu = normalize_gpu_name(self.gpu)
+        except KeyError:
+            pass  # Let provider-level validation handle unknown GPUs
         if self.service_name is None:
             short_id = uuid.uuid4().hex[:8]
             self.service_name = f"tandemn-{short_id}"

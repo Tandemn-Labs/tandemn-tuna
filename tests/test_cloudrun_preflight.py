@@ -7,10 +7,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tandemn.catalog import provider_regions
 from tandemn.models import DeployRequest
 from tandemn.providers.cloudrun_provider import (
     CloudRunProvider,
-    GPU_REGIONS,
     REQUIRED_APIS,
 )
 
@@ -214,13 +214,15 @@ class TestPreflightAPIs:
 
 class TestPreflightGpuRegion:
     def test_valid_region(self, provider):
-        check = provider._check_gpu_region("nvidia-l4", "us-central1")
+        regions = provider_regions("L4", "cloudrun")
+        check = provider._check_gpu_region("nvidia-l4", "us-central1", regions)
         assert check.passed is True
         assert "nvidia-l4" in check.message
         assert "us-central1" in check.message
 
     def test_invalid_region(self, provider):
-        check = provider._check_gpu_region("nvidia-l4", "antarctica-south1")
+        regions = provider_regions("L4", "cloudrun")
+        check = provider._check_gpu_region("nvidia-l4", "antarctica-south1", regions)
         assert check.passed is False
         assert "antarctica-south1" in check.message
         assert "us-central1" in check.fix_command
