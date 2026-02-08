@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import sys
 
 from tandemn.models import DeployRequest
@@ -17,9 +18,16 @@ def cmd_deploy(args: argparse.Namespace) -> None:
     from tandemn.state import save_deployment
 
     # Import providers to trigger registration
+    import tandemn.providers.cloudrun_provider  # noqa: F401
     import tandemn.providers.modal_provider  # noqa: F401
     import tandemn.providers.runpod_provider  # noqa: F401
     import tandemn.spot.sky_launcher  # noqa: F401
+
+    # Forward GCP CLI args to env vars before building request
+    if getattr(args, "gcp_project", None):
+        os.environ["GOOGLE_CLOUD_PROJECT"] = args.gcp_project
+    if getattr(args, "gcp_region", None):
+        os.environ["GOOGLE_CLOUD_REGION"] = args.gcp_region
 
     # Build scaling policy: defaults <- YAML <- CLI flags
     if args.scaling_policy:
@@ -121,6 +129,56 @@ def cmd_status(args: argparse.Namespace) -> None:
     print(json.dumps(status, indent=2, default=str))
 
 
+def cmd_check(args: argparse.Namespace) -> None:
+    from tandemn.providers.registry import get_provider
+
+    # Import providers to trigger registration
+    import tandemn.providers.cloudrun_provider  # noqa: F401
+
+    # Forward GCP CLI args to env vars
+    if getattr(args, "gcp_project", None):
+        os.environ["GOOGLE_CLOUD_PROJECT"] = args.gcp_project
+    if getattr(args, "gcp_region", None):
+        os.environ["GOOGLE_CLOUD_REGION"] = args.gcp_region
+
+    provider_name = args.provider
+    try:
+        provider = get_provider(provider_name)
+    except KeyError:
+        print(f"Error: unknown provider '{provider_name}'.", file=sys.stderr)
+        sys.exit(1)
+
+    # Build a minimal DeployRequest for preflight
+    request = DeployRequest(
+        model_name="check",
+        gpu=args.gpu or "L4",
+        region=args.gcp_region,
+        serverless_provider=provider_name,
+    )
+
+    print(f"Checking {provider_name}...")
+    print()
+
+    result = provider.preflight(request)
+
+    for check in result.checks:
+        tag = "PASS" if check.passed else "FAIL"
+        suffix = ""
+        if check.auto_fixed:
+            suffix = " (auto-fixed)"
+        print(f"  [{tag}] {check.name}: {check.message}{suffix}")
+        if not check.passed and check.fix_command:
+            print(f"         Fix: {check.fix_command}")
+
+    print()
+    if result.ok:
+        print(f"{provider_name}: all checks passed.")
+    else:
+        count = len(result.failed)
+        print(f"{provider_name}: {count} check(s) failed.")
+        sys.exit(1)
+
+
 def cmd_list(args: argparse.Namespace) -> None:
     from tandemn.state import list_deployments
 
@@ -155,7 +213,7 @@ def main() -> None:
     p_deploy.add_argument("--gpu-count", type=int, default=1)
     p_deploy.add_argument("--tp-size", type=int, default=1, help="Tensor parallel size")
     p_deploy.add_argument("--max-model-len", type=int, default=4096)
-    p_deploy.add_argument("--serverless-provider", default="modal", help="Serverless backend: modal, runpod")
+    p_deploy.add_argument("--serverless-provider", default="modal", help="Serverless backend: modal, runpod, cloudrun")
     p_deploy.add_argument("--spots-cloud", default="aws", help="Cloud for spot GPUs")
     p_deploy.add_argument("--region", default=None)
     p_deploy.add_argument("--concurrency", type=int, default=None,
@@ -167,7 +225,21 @@ def main() -> None:
     p_deploy.add_argument("--scaling-policy", default=None,
                           help="Path to YAML file with scaling parameters")
     p_deploy.add_argument("--service-name", default=None, help="Custom service name")
+    p_deploy.add_argument("--gcp-project", default=None,
+                          help="Google Cloud project ID (overrides GOOGLE_CLOUD_PROJECT env var)")
+    p_deploy.add_argument("--gcp-region", default=None,
+                          help="Google Cloud region (e.g. us-central1)")
     p_deploy.set_defaults(func=cmd_deploy)
+
+    # -- check --
+    p_check = subparsers.add_parser("check", help="Validate provider environment (preflight checks)")
+    p_check.add_argument("--provider", required=True, help="Provider to check (e.g. cloudrun)")
+    p_check.add_argument("--gpu", default=None, help="GPU type to validate (e.g. L4)")
+    p_check.add_argument("--gcp-project", default=None,
+                         help="Google Cloud project ID (overrides GOOGLE_CLOUD_PROJECT env var)")
+    p_check.add_argument("--gcp-region", default=None,
+                         help="Google Cloud region (e.g. us-central1)")
+    p_check.set_defaults(func=cmd_check)
 
     # -- destroy --
     p_destroy = subparsers.add_parser("destroy", help="Tear down a deployment")

@@ -53,6 +53,33 @@ class DeploymentResult:
 
 
 @dataclass
+class PreflightCheck:
+    """Result of a single preflight validation step."""
+
+    name: str                       # e.g. "gcloud_installed"
+    passed: bool
+    message: str                    # Human-readable status
+    fix_command: str | None = None  # Exact shell command to fix
+    auto_fixed: bool = False        # True if we fixed it automatically
+
+
+@dataclass
+class PreflightResult:
+    """Aggregated result of all preflight checks for a provider."""
+
+    provider: str
+    checks: list[PreflightCheck] = field(default_factory=list)
+
+    @property
+    def ok(self) -> bool:
+        return all(c.passed for c in self.checks)
+
+    @property
+    def failed(self) -> list[PreflightCheck]:
+        return [c for c in self.checks if not c.passed]
+
+
+@dataclass
 class HybridDeployment:
     """Combined result returned to the user."""
 
