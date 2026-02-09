@@ -194,6 +194,11 @@ If the router is using serverless, spot instances are still booting — wait for
 - AWS account (for spot instances via SkyPilot)
 - SkyPilot CLI (`sky check` to verify)
 
+## Contact
+
+- Hetarth — hetarth@tandemn.com
+- Mankeerat — mankeerat@tandemn.com
+
 ## License
 
 MIT
