@@ -80,7 +80,7 @@ def cmd_deploy(args: argparse.Namespace) -> None:
     print(f"Spot cloud: {request.spots_cloud}")
     print()
 
-    result = launch_hybrid(request)
+    result = launch_hybrid(request, separate_router_vm=args.use_different_vm_for_lb)
 
     # Persist deployment metadata
     save_deployment(request, result)
@@ -352,7 +352,8 @@ def cmd_cost(args: argparse.Namespace) -> None:
     uptime_s = route_stats.get("uptime_seconds", 0.0)
     gpu_count = record.gpu_count
 
-    ROUTER_CPU_COST_PER_HOUR = 0.04
+    router_meta = record.router_metadata or {}
+    ROUTER_CPU_COST_PER_HOUR = 0.0 if router_meta.get("colocated") == "true" else 0.04
 
     # Actual costs
     actual_serverless = (gpu_sec_svl / 3600) * serverless_price
@@ -791,6 +792,8 @@ def main() -> None:
     p_deploy.add_argument("--public", action="store_true", default=False,
                           help="Make deployed service publicly accessible (no auth). "
                                "WARNING: GPU services are expensive — only use for testing.")
+    p_deploy.add_argument("--use-different-vm-for-lb", action="store_true", default=False,
+                          help="Launch router on separate VM instead of colocating on SkyServe controller")
     p_deploy.add_argument("--gcp-project", default=None,
                           help="Google Cloud project ID (overrides GOOGLE_CLOUD_PROJECT env var)")
     p_deploy.add_argument("--gcp-region", default=None,
