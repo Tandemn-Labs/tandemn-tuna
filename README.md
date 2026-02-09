@@ -11,10 +11,10 @@ Tuna is a smart router that combines both behind a single OpenAI-compatible endp
 <td align="center" colspan="1"><b>Spot</b></td>
 </tr>
 <tr>
-<td align="center"><img src="assets/modal-logo-icon.png" height="30"><br>Modal</td>
-<td align="center"><img src="assets/runpod-logo-black.svg" height="30"><br>RunPod</td>
-<td align="center"><img src="assets/google-cloud-run-logo-png_seeklogo-354677.png" height="30"><br>Cloud Run</td>
-<td align="center"><img src="assets/Amazon_Web_Services_Logo.svg.png" height="30"><br>AWS via SkyPilot</td>
+<td align="center"><img src="https://raw.githubusercontent.com/Tandemn-Labs/tandemn-tuna/main/assets/modal-logo-icon.png" height="30"><br>Modal</td>
+<td align="center"><img src="https://raw.githubusercontent.com/Tandemn-Labs/tandemn-tuna/main/assets/runpod-logo-black.svg" height="30"><br>RunPod</td>
+<td align="center"><img src="https://raw.githubusercontent.com/Tandemn-Labs/tandemn-tuna/main/assets/google-cloud-run-logo-png_seeklogo-354677.png" height="30"><br>Cloud Run</td>
+<td align="center"><img src="https://raw.githubusercontent.com/Tandemn-Labs/tandemn-tuna/main/assets/Amazon_Web_Services_Logo.svg.png" height="30"><br>AWS via SkyPilot</td>
 </tr>
 </table>
 </div>
