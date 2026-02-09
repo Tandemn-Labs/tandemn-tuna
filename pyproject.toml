@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "tandemn"
 version = "0.1.0"
 description = "Hybrid GPU Inference Orchestrator — serverless for cold starts, spot for scale"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "flask>=3.0",
     "requests>=2.31",

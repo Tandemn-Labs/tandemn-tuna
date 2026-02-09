@@ -1,54 +1,100 @@
 # Tandemn
 
-Hybrid serverless + spot GPU inference. One endpoint, automatic routing between serverless backends (Modal, RunPod, Cloud Run) and spot instances (AWS via SkyPilot). Automatically selects the cheapest serverless provider for your GPU.
+Spot GPUs are 3-5x cheaper than on-demand, but they take minutes to start and can be interrupted at any time. Serverless GPUs start in seconds and never get interrupted, but you pay a premium for that convenience. What if you didn't have to choose?
 
-## Who This Is For
+Tandemn is a smart router that combines both behind a single OpenAI-compatible endpoint. It serves requests from serverless while spot instances boot up, shifts traffic to spot once ready, and falls back to serverless if spot gets preempted. You only pay for the compute you actually use — spot rates for steady traffic, serverless only during cold starts and failover.
 
-Tandemn is for teams running LLM inference that want lower GPU costs without giving up availability.
-
-**How it saves costs**: Serverless GPUs are always ready but expensive per-hour. Spot instances are cheap but take minutes to start and can be interrupted. Tandemn runs both behind a single endpoint — the router serves requests from serverless while spot instances boot, then shifts traffic to spot once ready. When spot is handling traffic, serverless scales to zero and you stop paying for it. If spot gets interrupted, the router falls back to serverless automatically.
-
-The result: you pay spot rates for steady traffic and only pay serverless rates during cold starts and failover. `tandemn cost` tracks actual spend vs. what you'd pay on pure serverless or pure on-demand, in real time.
-
-This is useful when you have:
-- **Bursty or variable traffic** — serverless absorbs spikes instantly, spot handles the baseline
-- **Cost-sensitive workloads** — spot GPUs cost a fraction of on-demand; serverless only runs when needed
-- **Availability requirements** — spot interruptions are handled automatically, no manual failover
+<div align="center">
+<table>
+<tr>
+<td align="center" colspan="3"><b>Serverless</b></td>
+<td align="center" colspan="1"><b>Spot</b></td>
+</tr>
+<tr>
+<td align="center"><img src="assets/modal-logo-icon.png" height="30"><br>Modal</td>
+<td align="center"><img src="assets/runpod-logo-black.svg" height="30"><br>RunPod</td>
+<td align="center"><img src="assets/google-cloud-run-logo-png_seeklogo-354677.png" height="30"><br>Cloud Run</td>
+<td align="center"><img src="assets/Amazon_Web_Services_Logo.svg.png" height="30"><br>AWS via SkyPilot</td>
+</tr>
+</table>
+</div>
 
 ## Quick Start
 
+**1. Install**
+
 ```bash
 pip install tandemn
-modal token new && aws configure && sky check
+```
+
+**2. Set up your provider credentials**
+
+```bash
+# At least one serverless provider + AWS for spot
+modal token new        # if using Modal
+runpodctl config       # if using RunPod
+gcloud auth login      # if using Cloud Run
+
+aws configure          # for spot instances
+sky check              # verify SkyPilot can see your cloud accounts
+```
+
+**3. Deploy a model**
+
+```bash
 tandemn deploy --model Qwen/Qwen3-0.6B --gpu L4
+```
+
+Tandemn auto-selects the cheapest serverless provider for your GPU, launches spot instances on AWS, and gives you a single endpoint. The router handles everything — serverless covers traffic immediately while spot boots up in the background.
+
+**4. Send requests** (OpenAI-compatible)
+
+```bash
 curl http://<router-ip>:8080/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{"model": "Qwen/Qwen3-0.6B", "messages": [{"role": "user", "content": "Hello"}]}'
 ```
 
+**5. Browse GPU pricing**
+
+```bash
+tandemn show-gpus              # compare serverless pricing across providers
+tandemn show-gpus --spot       # include AWS spot prices
+tandemn show-gpus --gpu H100   # detailed pricing for a specific GPU
+```
+
+**6. Monitor costs in real time**
+
+```bash
+tandemn cost --service-name <name>
+```
+
+Shows actual spend, routing split (% spot vs serverless), and savings compared to all-serverless or all-on-demand. Tracks cost per component (serverless, spot, router) so you can see exactly where your money goes.
+
 ## Architecture
 
 ```
-┌─────────────────────────────────────────┐
-│         User Traffic                    │
-│     (any HTTP requests)                 │
-└────────────────────┬────────────────────┘
-                     │
-         ┌───────────▼───────────┐
-         │   Router (c6i.large)  │◄─── SkyPilot-managed VM
-         │   Load Balancer       │     on AWS
-         └───────────┬───────────┘
-                     │
-        ┌────────────┴─────────────┐
-        │                          │
-   ┌────▼──────────────┐    ┌─────▼──────┐
-   │ Serverless         │    │ SkyServe   │
-   │ (Modal / RunPod /  │    │ (GPU fleet)│
-   │  Cloud Run)        │    │ •Spot      │
-   │ •Fast cold start   │    │  pricing   │
-   │ •Per-second billing│    │ •Slower    │
-   │ •Always ready      │    │  cold start│
-   └────────────────────┘    └────────────┘
+                ┌──────────────────────┐
+                │    User Traffic      │
+                │ (OpenAI-compatible)  │
+                └──────────┬───────────┘
+                           │
+                  ┌────────▼────────┐
+                  │  Smart Router   │
+                  │  (meta_lb)      │
+                  └────────┬────────┘
+                           │
+              ┌────────────┴────────────┐
+              │                         │
+     ┌────────▼─────────┐    ┌─────────▼─────────┐
+     │ Serverless        │    │ Spot GPUs          │
+     │ Modal / RunPod /  │    │ AWS via SkyPilot   │
+     │ Cloud Run         │    │                    │
+     │                   │    │ • 3-5x cheaper     │
+     │ • Fast cold start │    │ • Slower cold start│
+     │ • Per-second bill │    │ • Auto-failover    │
+     │ • Always ready    │    │ • Scale to zero    │
+     └───────────────────┘    └────────────────────┘
 ```
 
 The router:
@@ -88,6 +134,7 @@ The router:
 | `--scaling-policy` | — | Path to scaling YAML (see below) |
 | `--service-name` | auto | Custom service name |
 | `--public` | off | Make service publicly accessible (no auth) |
+| `--use-different-vm-for-lb` | off | Launch router on a separate VM instead of colocating on controller |
 | `--gcp-project` | — | Google Cloud project ID |
 | `--gcp-region` | — | Google Cloud region (e.g. `us-central1`) |
 
@@ -111,7 +158,7 @@ serverless:
   timeout: 600           # request timeout in seconds
 ```
 
-**Precedence**: defaults ← YAML file ← CLI flags. For example, `--concurrency 64` overrides `serverless.concurrency` from the YAML. `--no-scale-to-zero` forces `spot.min_replicas` to at least 1 and sets `serverless.scaledown_window` to 300s.
+**Precedence**: defaults <- YAML file <- CLI flags. For example, `--concurrency 64` overrides `serverless.concurrency` from the YAML. `--no-scale-to-zero` forces `spot.min_replicas` to at least 1 and sets `serverless.scaledown_window` to 300s.
 
 Unknown keys in the YAML will error immediately (catches typos).
 
@@ -130,14 +177,6 @@ modal app list
 sky status --refresh
 ```
 
-### Checking costs
-
-Track spend in real time — shows actual cost, routing split, and savings vs. pure serverless or on-demand:
-
-```bash
-tandemn cost --service-name <name>
-```
-
 ### High latency
 
 Check which backend is active:
@@ -150,7 +189,7 @@ If the router is using serverless, spot instances are still booting — wait for
 
 ## Prerequisites
 
-- Python 3.10+
+- Python 3.11+
 - Provider accounts as needed: Modal, RunPod, and/or Google Cloud
 - AWS account (for spot instances via SkyPilot)
 - SkyPilot CLI (`sky check` to verify)
