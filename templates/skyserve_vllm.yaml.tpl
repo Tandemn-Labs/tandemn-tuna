@@ -1,7 +1,7 @@
 service:
   readiness_probe:
     path: /health
-    initial_delay_seconds: 300
+    initial_delay_seconds: 1200
     timeout_seconds: 10
   replica_policy:
     min_replicas: {min_replicas}

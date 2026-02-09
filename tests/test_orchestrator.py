@@ -1,9 +1,17 @@
 """Tests for tandemn.orchestrator — unit tests with mocked subprocess/HTTP."""
 
+import subprocess
 from unittest.mock import MagicMock, patch
 
 from tandemn.models import DeployRequest, DeploymentResult
-from tandemn.orchestrator import build_vllm_cmd, destroy_hybrid, push_url_to_router, status_hybrid
+from tandemn.orchestrator import (
+    build_vllm_cmd,
+    destroy_hybrid,
+    push_url_to_router,
+    status_hybrid,
+    _find_controller_cluster,
+    _launch_router_on_controller,
+)
 from tandemn.state import DeploymentRecord
 
 
@@ -276,3 +284,164 @@ class TestStatusHybrid:
 
         mock_get_provider.assert_any_call("skyserve")
         mock_get_provider.assert_any_call("modal")
+
+    @patch("tandemn.orchestrator._get_cluster_ip", return_value="10.0.0.5")
+    @patch("tandemn.orchestrator.get_provider")
+    @patch("tandemn.orchestrator.requests")
+    def test_colocated_router_uses_controller_ip(self, mock_requests, mock_get_provider, mock_get_ip):
+        """Colocated router reads controller cluster name and port from metadata."""
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"status": "healthy"}
+        mock_requests.get.return_value = mock_resp
+
+        mock_spot = MagicMock()
+        mock_spot.status.return_value = {"provider": "skyserve", "status": "running"}
+        mock_modal = MagicMock()
+        mock_modal.status.return_value = {"provider": "modal", "status": "running"}
+        mock_get_provider.side_effect = lambda name: {"skyserve": mock_spot, "modal": mock_modal}[name]
+
+        record = self._make_record(
+            router_metadata={"colocated": "true", "cluster_name": "sky-serve-controller-abc", "router_port": "8080"},
+        )
+        result = status_hybrid("my-svc", record=record)
+
+        mock_get_ip.assert_called_with("sky-serve-controller-abc")
+        assert result["router"]["url"] == "http://10.0.0.5:8080"
+
+
+class TestFindControllerCluster:
+    @patch("tandemn.orchestrator.subprocess")
+    def test_finds_controller(self, mock_subprocess):
+        mock_subprocess.run.return_value = MagicMock(
+            stdout=(
+                "NAME                         LAUNCHED    RESOURCES\n"
+                "sky-serve-controller-abc123  2 hrs ago   AWS(m4.xlarge)\n"
+            ),
+            returncode=0,
+        )
+        result = _find_controller_cluster()
+        assert result == "sky-serve-controller-abc123"
+
+    @patch("tandemn.orchestrator.subprocess")
+    def test_returns_none_when_no_controller(self, mock_subprocess):
+        mock_subprocess.run.return_value = MagicMock(
+            stdout="NAME      LAUNCHED    RESOURCES\nmy-vm    1 hr ago    AWS\n",
+            returncode=0,
+        )
+        result = _find_controller_cluster()
+        assert result is None
+
+    @patch("tandemn.orchestrator.subprocess")
+    def test_returns_none_on_exception(self, mock_subprocess):
+        mock_subprocess.run.side_effect = subprocess.TimeoutExpired("sky", 30)
+        result = _find_controller_cluster()
+        assert result is None
+
+
+class TestLaunchRouterOnController:
+    @patch("tandemn.orchestrator._open_port_on_cluster", return_value=True)
+    @patch("tandemn.orchestrator._get_ssh_user", return_value="ubuntu")
+    @patch("tandemn.orchestrator._get_ssh_key_path", return_value="/home/user/.ssh/sky-key")
+    @patch("tandemn.orchestrator._get_cluster_ip", return_value="10.0.0.1")
+    @patch("tandemn.orchestrator.subprocess")
+    def test_success(self, mock_subprocess, mock_ip, mock_key, mock_user, mock_port):
+        mock_subprocess.run.return_value = MagicMock(returncode=0, stderr="")
+        mock_subprocess.TimeoutExpired = subprocess.TimeoutExpired
+        request = DeployRequest(model_name="m", gpu="g")
+        result = _launch_router_on_controller(request, "sky-serve-controller-x")
+
+        assert result.error is None
+        assert result.endpoint_url == "http://10.0.0.1:8080"
+        assert result.metadata["colocated"] == "true"
+        assert result.metadata["cluster_name"] == "sky-serve-controller-x"
+        # Verify SCP was called
+        scp_call = mock_subprocess.run.call_args_list[0]
+        assert "scp" in scp_call[0][0]
+
+    @patch("tandemn.orchestrator._get_cluster_ip", return_value=None)
+    def test_no_ip(self, mock_ip):
+        request = DeployRequest(model_name="m", gpu="g")
+        result = _launch_router_on_controller(request, "sky-serve-controller-x")
+        assert result.error is not None
+        assert "Could not resolve IP" in result.error
+
+    @patch("tandemn.orchestrator._open_port_on_cluster", return_value=True)
+    @patch("tandemn.orchestrator._get_ssh_user", return_value="ubuntu")
+    @patch("tandemn.orchestrator._get_ssh_key_path", return_value="/home/user/.ssh/sky-key")
+    @patch("tandemn.orchestrator._get_cluster_ip", return_value="10.0.0.1")
+    @patch("tandemn.orchestrator.subprocess")
+    def test_scp_failure(self, mock_subprocess, mock_ip, mock_key, mock_user, mock_port):
+        mock_subprocess.run.return_value = MagicMock(returncode=1, stderr="Permission denied")
+        mock_subprocess.TimeoutExpired = subprocess.TimeoutExpired
+        request = DeployRequest(model_name="m", gpu="g")
+        result = _launch_router_on_controller(request, "sky-serve-controller-x")
+        assert result.error is not None
+        assert "SCP failed" in result.error
+
+    @patch("tandemn.orchestrator._open_port_on_cluster", return_value=True)
+    @patch("tandemn.orchestrator._get_ssh_user", return_value="ubuntu")
+    @patch("tandemn.orchestrator._get_ssh_key_path", return_value="/home/user/.ssh/sky-key")
+    @patch("tandemn.orchestrator._get_cluster_ip", return_value="10.0.0.1")
+    @patch("tandemn.orchestrator.subprocess")
+    def test_serverless_url_in_env(self, mock_subprocess, mock_ip, mock_key, mock_user, mock_port):
+        mock_subprocess.run.return_value = MagicMock(returncode=0, stderr="")
+        mock_subprocess.TimeoutExpired = subprocess.TimeoutExpired
+        request = DeployRequest(model_name="m", gpu="g")
+        _launch_router_on_controller(
+            request, "sky-serve-controller-x",
+            serverless_url="https://modal.run/abc",
+        )
+        # The SSH start command should include the serverless URL
+        ssh_call = mock_subprocess.run.call_args_list[2]  # 3rd call: scp, pip install, gunicorn start
+        ssh_cmd = ssh_call[0][0][-1]  # last arg is the remote command
+        assert "SERVERLESS_BASE_URL='https://modal.run/abc'" in ssh_cmd
+
+
+class TestDestroyHybridColocated:
+    def _make_record(self, **kwargs):
+        defaults = dict(
+            service_name="my-svc",
+            serverless_provider_name="modal",
+            serverless_metadata={"app_name": "my-svc-serverless"},
+            spot_provider_name="skyserve",
+            spot_metadata={"service_name": "my-svc-spot"},
+        )
+        defaults.update(kwargs)
+        return DeploymentRecord(**defaults)
+
+    @patch("tandemn.orchestrator._get_ssh_user", return_value="ubuntu")
+    @patch("tandemn.orchestrator._get_ssh_key_path", return_value="/home/user/.ssh/sky-key")
+    @patch("tandemn.orchestrator._get_cluster_ip", return_value="10.0.0.1")
+    @patch("tandemn.orchestrator.subprocess")
+    @patch("tandemn.orchestrator.get_provider")
+    def test_colocated_router_skips_sky_down(
+        self, mock_get_provider, mock_subprocess, mock_ip, mock_key, mock_user,
+    ):
+        """Colocated router should use SSH pkill, not sky down."""
+        mock_spot = MagicMock()
+        mock_spot.name.return_value = "skyserve"
+        mock_modal = MagicMock()
+        mock_modal.name.return_value = "modal"
+        mock_get_provider.side_effect = lambda name: {"skyserve": mock_spot, "modal": mock_modal}[name]
+
+        record = self._make_record(
+            router_metadata={"colocated": "true", "cluster_name": "sky-serve-controller-abc"},
+        )
+        destroy_hybrid("my-svc", record=record)
+
+        # Verify no "sky down *-router" call
+        for call in mock_subprocess.run.call_args_list:
+            args = call[0][0]
+            if isinstance(args, list) and "sky" in args and "down" in args:
+                assert "my-svc-router" not in args, "Should not call sky down on router when colocated"
+
+        # Verify SSH pkill was called
+        found_pkill = False
+        for call in mock_subprocess.run.call_args_list:
+            args = call[0][0]
+            if isinstance(args, list) and "ssh" in args:
+                cmd = args[-1]
+                if "pkill" in cmd and "gunicorn" in cmd:
+                    found_pkill = True
+        assert found_pkill, "Should SSH pkill the colocated gunicorn process"
