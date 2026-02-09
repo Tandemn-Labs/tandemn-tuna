@@ -3,7 +3,7 @@ requires = ["setuptools>=68.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "tandemn"
+name = "tandemn-tuna"
 version = "0.1.0"
 description = "Hybrid GPU Inference Orchestrator — serverless for cold starts, spot for scale"
 requires-python = ">=3.11"
@@ -22,10 +22,10 @@ dev = [
 cloudrun = ["google-cloud-run>=0.10.0"]
 
 [project.scripts]
-tandemn = "tandemn.__main__:main"
+tuna = "tuna.__main__:main"
 
 [tool.setuptools.packages.find]
-include = ["tandemn*"]
+include = ["tuna*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -10,10 +10,10 @@ import tempfile
 import time
 from pathlib import Path
 
-from tandemn.models import DeployRequest, DeploymentResult, ProviderPlan
-from tandemn.providers.base import InferenceProvider
-from tandemn.providers.registry import register
-from tandemn.template_engine import render_template
+from tuna.models import DeployRequest, DeploymentResult, ProviderPlan
+from tuna.providers.base import InferenceProvider
+from tuna.providers.registry import register
+from tuna.template_engine import render_template
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +67,7 @@ class SkyLauncher(InferenceProvider):
 
         # Write rendered YAML to a temp file
         with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".yaml", delete=False, prefix="tandemn_sky_"
+            mode="w", suffix=".yaml", delete=False, prefix="tuna_sky_"
         ) as f:
             f.write(plan.rendered_script)
             yaml_path = f.name

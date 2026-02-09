@@ -1,4 +1,4 @@
-"""Tests for tandemn.providers.cloudrun_provider."""
+"""Tests for tuna.providers.cloudrun_provider."""
 
 from __future__ import annotations
 
@@ -7,9 +7,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from tandemn.catalog import provider_gpu_map
-from tandemn.models import DeployRequest, DeploymentResult
-from tandemn.providers.cloudrun_provider import (
+from tuna.catalog import provider_gpu_map
+from tuna.models import DeployRequest, DeploymentResult
+from tuna.providers.cloudrun_provider import (
     CloudRunProvider,
     _get_project_id,
 )
@@ -39,13 +39,13 @@ class TestGetProjectId:
         assert _get_project_id() == "my-project"
 
     @patch.dict("os.environ", {}, clear=True)
-    @patch("tandemn.providers.cloudrun_provider.subprocess.run")
+    @patch("tuna.providers.cloudrun_provider.subprocess.run")
     def test_from_gcloud_fallback(self, mock_run):
         mock_run.return_value = MagicMock(stdout="gcloud-project\n", returncode=0)
         assert _get_project_id() == "gcloud-project"
 
     @patch.dict("os.environ", {}, clear=True)
-    @patch("tandemn.providers.cloudrun_provider.subprocess.run")
+    @patch("tuna.providers.cloudrun_provider.subprocess.run")
     def test_raises_when_not_found(self, mock_run):
         mock_run.return_value = MagicMock(stdout="(unset)\n", returncode=0)
         with pytest.raises(RuntimeError, match="Cannot determine Google Cloud project"):
@@ -181,7 +181,7 @@ class TestCloudRunDeploy:
         self.vllm_cmd = "vllm serve Qwen/Qwen3-0.6B"
 
     @patch.dict("os.environ", {"GOOGLE_CLOUD_PROJECT": "test-project"})
-    @patch("tandemn.providers.cloudrun_provider.CloudRunProvider._set_public_access")
+    @patch("tuna.providers.cloudrun_provider.CloudRunProvider._set_public_access")
     def test_successful_deploy(self, mock_set_public):
         plan = self.provider.plan(self.request, self.vllm_cmd)
 
@@ -205,7 +205,7 @@ class TestCloudRunDeploy:
         mock_set_public.assert_not_called()  # Private by default
 
     @patch.dict("os.environ", {"GOOGLE_CLOUD_PROJECT": "test-project"})
-    @patch("tandemn.providers.cloudrun_provider.CloudRunProvider._set_public_access")
+    @patch("tuna.providers.cloudrun_provider.CloudRunProvider._set_public_access")
     def test_deploy_with_public_flag_grants_access(self, mock_set_public):
         public_request = DeployRequest(
             model_name="Qwen/Qwen3-0.6B",
@@ -290,7 +290,7 @@ class TestCloudRunDeploy:
         assert "Service creation failed" in result.error
 
     @patch.dict("os.environ", {"GOOGLE_CLOUD_PROJECT": "test-project"})
-    @patch("tandemn.providers.cloudrun_provider.CloudRunProvider._set_public_access")
+    @patch("tuna.providers.cloudrun_provider.CloudRunProvider._set_public_access")
     def test_already_exists_triggers_update(self, mock_set_public):
         plan = self.provider.plan(self.request, self.vllm_cmd)
 

@@ -1,10 +1,10 @@
-"""Tests for tandemn.providers.registry."""
+"""Tests for tuna.providers.registry."""
 
 import pytest
 
-from tandemn.models import DeployRequest, DeploymentResult, ProviderPlan
-from tandemn.providers.base import InferenceProvider
-from tandemn.providers.registry import (
+from tuna.models import DeployRequest, DeploymentResult, ProviderPlan
+from tuna.providers.base import InferenceProvider
+from tuna.providers.registry import (
     PROVIDER_MODULES,
     _PROVIDERS,
     ensure_provider_registered,
@@ -101,7 +101,7 @@ class TestEnsureProvidersForDeployment:
         _PROVIDERS.update(self._backup)
 
     def test_loads_both_providers(self):
-        from tandemn.state import DeploymentRecord
+        from tuna.state import DeploymentRecord
 
         _PROVIDERS.pop("modal", None)
         _PROVIDERS.pop("skyserve", None)
@@ -116,7 +116,7 @@ class TestEnsureProvidersForDeployment:
         assert "skyserve" in _PROVIDERS
 
     def test_handles_none_providers(self):
-        from tandemn.state import DeploymentRecord
+        from tuna.state import DeploymentRecord
 
         record = DeploymentRecord(
             service_name="test",

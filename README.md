@@ -1,8 +1,8 @@
-# Tandemn
+# Tuna
 
 Spot GPUs are 3-5x cheaper than on-demand, but they take minutes to start and can be interrupted at any time. Serverless GPUs start in seconds and never get interrupted, but you pay a premium for that convenience. What if you didn't have to choose?
 
-Tandemn is a smart router that combines both behind a single OpenAI-compatible endpoint. It serves requests from serverless while spot instances boot up, shifts traffic to spot once ready, and falls back to serverless if spot gets preempted. You only pay for the compute you actually use — spot rates for steady traffic, serverless only during cold starts and failover.
+Tuna is a smart router that combines both behind a single OpenAI-compatible endpoint. It serves requests from serverless while spot instances boot up, shifts traffic to spot once ready, and falls back to serverless if spot gets preempted. You only pay for the compute you actually use — spot rates for steady traffic, serverless only during cold starts and failover.
 
 <div align="center">
 <table>
@@ -24,7 +24,7 @@ Tandemn is a smart router that combines both behind a single OpenAI-compatible e
 **1. Install**
 
 ```bash
-pip install tandemn
+pip install tandemn-tuna
 ```
 
 **2. Set up your provider credentials**
@@ -42,10 +42,10 @@ sky check              # verify SkyPilot can see your cloud accounts
 **3. Deploy a model**
 
 ```bash
-tandemn deploy --model Qwen/Qwen3-0.6B --gpu L4
+tuna deploy --model Qwen/Qwen3-0.6B --gpu L4
 ```
 
-Tandemn auto-selects the cheapest serverless provider for your GPU, launches spot instances on AWS, and gives you a single endpoint. The router handles everything — serverless covers traffic immediately while spot boots up in the background.
+Tuna auto-selects the cheapest serverless provider for your GPU, launches spot instances on AWS, and gives you a single endpoint. The router handles everything — serverless covers traffic immediately while spot boots up in the background.
 
 **4. Send requests** (OpenAI-compatible)
 
@@ -58,15 +58,15 @@ curl http://<router-ip>:8080/v1/chat/completions \
 **5. Browse GPU pricing**
 
 ```bash
-tandemn show-gpus              # compare serverless pricing across providers
-tandemn show-gpus --spot       # include AWS spot prices
-tandemn show-gpus --gpu H100   # detailed pricing for a specific GPU
+tuna show-gpus              # compare serverless pricing across providers
+tuna show-gpus --spot       # include AWS spot prices
+tuna show-gpus --gpu H100   # detailed pricing for a specific GPU
 ```
 
 **6. Monitor costs in real time**
 
 ```bash
-tandemn cost --service-name <name>
+tuna cost --service-name <name>
 ```
 
 Shows actual spend, routing split (% spot vs serverless), and savings compared to all-serverless or all-on-demand. Tracks cost per component (serverless, spot, router) so you can see exactly where your money goes.

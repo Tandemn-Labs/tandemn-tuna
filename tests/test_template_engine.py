@@ -1,9 +1,9 @@
-"""Tests for tandemn.template_engine."""
+"""Tests for tuna.template_engine."""
 
 import tempfile
 from pathlib import Path
 
-from tandemn.template_engine import render_string, render_template
+from tuna.template_engine import render_string, render_template
 
 
 class TestRenderString:

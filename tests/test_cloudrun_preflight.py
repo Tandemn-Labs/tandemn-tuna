@@ -7,9 +7,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from tandemn.catalog import provider_regions
-from tandemn.models import DeployRequest
-from tandemn.providers.cloudrun_provider import (
+from tuna.catalog import provider_regions
+from tuna.models import DeployRequest
+from tuna.providers.cloudrun_provider import (
     CloudRunProvider,
     REQUIRED_APIS,
 )
@@ -38,14 +38,14 @@ def request_l4():
 class TestPreflightGcloudCheck:
     def test_gcloud_found(self, provider):
         mock_proc = MagicMock(returncode=0, stdout="Google Cloud SDK 496.0.0\nsome other line\n")
-        with patch("tandemn.providers.cloudrun_provider.subprocess.run", return_value=mock_proc):
+        with patch("tuna.providers.cloudrun_provider.subprocess.run", return_value=mock_proc):
             check = provider._check_gcloud_installed()
         assert check.passed is True
         assert check.name == "gcloud_installed"
         assert "Google Cloud SDK 496.0.0" in check.message
 
     def test_gcloud_not_found(self, provider):
-        with patch("tandemn.providers.cloudrun_provider.subprocess.run", side_effect=FileNotFoundError):
+        with patch("tuna.providers.cloudrun_provider.subprocess.run", side_effect=FileNotFoundError):
             check = provider._check_gcloud_installed()
         assert check.passed is False
         assert check.name == "gcloud_installed"
@@ -59,7 +59,7 @@ class TestPreflightGcloudCheck:
 
 class TestPreflightADCCheck:
     def test_adc_file_exists(self, provider):
-        with patch("tandemn.providers.cloudrun_provider.Path.exists", return_value=True):
+        with patch("tuna.providers.cloudrun_provider.Path.exists", return_value=True):
             check = provider._check_adc()
         assert check.passed is True
         assert check.name == "credentials"
@@ -67,8 +67,8 @@ class TestPreflightADCCheck:
     def test_adc_missing_fallback_fails(self, provider):
         mock_proc = MagicMock(returncode=1, stdout="")
         with (
-            patch("tandemn.providers.cloudrun_provider.Path.exists", return_value=False),
-            patch("tandemn.providers.cloudrun_provider.subprocess.run", return_value=mock_proc),
+            patch("tuna.providers.cloudrun_provider.Path.exists", return_value=False),
+            patch("tuna.providers.cloudrun_provider.subprocess.run", return_value=mock_proc),
         ):
             check = provider._check_adc()
         assert check.passed is False
@@ -77,8 +77,8 @@ class TestPreflightADCCheck:
     def test_adc_missing_fallback_succeeds(self, provider):
         mock_proc = MagicMock(returncode=0, stdout="ya29.some-token\n")
         with (
-            patch("tandemn.providers.cloudrun_provider.Path.exists", return_value=False),
-            patch("tandemn.providers.cloudrun_provider.subprocess.run", return_value=mock_proc),
+            patch("tuna.providers.cloudrun_provider.Path.exists", return_value=False),
+            patch("tuna.providers.cloudrun_provider.subprocess.run", return_value=mock_proc),
         ):
             check = provider._check_adc()
         assert check.passed is True
@@ -95,7 +95,7 @@ class TestPreflightProject:
             returncode=0,
             stdout=json.dumps({"lifecycleState": "ACTIVE", "projectId": "my-proj"}),
         )
-        with patch("tandemn.providers.cloudrun_provider.subprocess.run", return_value=mock_proc):
+        with patch("tuna.providers.cloudrun_provider.subprocess.run", return_value=mock_proc):
             check = provider._check_project("my-proj")
         assert check.passed is True
         assert "my-proj" in check.message
@@ -103,7 +103,7 @@ class TestPreflightProject:
 
     def test_project_not_found(self, provider):
         mock_proc = MagicMock(returncode=1, stdout="", stderr="NOT_FOUND")
-        with patch("tandemn.providers.cloudrun_provider.subprocess.run", return_value=mock_proc):
+        with patch("tuna.providers.cloudrun_provider.subprocess.run", return_value=mock_proc):
             check = provider._check_project("bad-proj")
         assert check.passed is False
         assert "bad-proj" in check.message
@@ -113,7 +113,7 @@ class TestPreflightProject:
             returncode=0,
             stdout=json.dumps({"lifecycleState": "DELETE_REQUESTED"}),
         )
-        with patch("tandemn.providers.cloudrun_provider.subprocess.run", return_value=mock_proc):
+        with patch("tuna.providers.cloudrun_provider.subprocess.run", return_value=mock_proc):
             check = provider._check_project("dying-proj")
         assert check.passed is False
         assert "DELETE_REQUESTED" in check.message
@@ -129,7 +129,7 @@ class TestPreflightBilling:
             returncode=0,
             stdout=json.dumps({"billingEnabled": True}),
         )
-        with patch("tandemn.providers.cloudrun_provider.subprocess.run", return_value=mock_proc):
+        with patch("tuna.providers.cloudrun_provider.subprocess.run", return_value=mock_proc):
             check = provider._check_billing("my-proj")
         assert check.passed is True
         assert "enabled" in check.message.lower()
@@ -139,14 +139,14 @@ class TestPreflightBilling:
             returncode=0,
             stdout=json.dumps({"billingEnabled": False}),
         )
-        with patch("tandemn.providers.cloudrun_provider.subprocess.run", return_value=mock_proc):
+        with patch("tuna.providers.cloudrun_provider.subprocess.run", return_value=mock_proc):
             check = provider._check_billing("my-proj")
         assert check.passed is False
         assert check.fix_command is not None
 
     def test_billing_check_fails(self, provider):
         mock_proc = MagicMock(returncode=1, stdout="", stderr="error")
-        with patch("tandemn.providers.cloudrun_provider.subprocess.run", return_value=mock_proc):
+        with patch("tuna.providers.cloudrun_provider.subprocess.run", return_value=mock_proc):
             check = provider._check_billing("my-proj")
         assert check.passed is False
 
@@ -161,7 +161,7 @@ class TestPreflightAPIs:
             returncode=0,
             stdout="run.googleapis.com\niam.googleapis.com\ncompute.googleapis.com\n",
         )
-        with patch("tandemn.providers.cloudrun_provider.subprocess.run", return_value=mock_proc):
+        with patch("tuna.providers.cloudrun_provider.subprocess.run", return_value=mock_proc):
             check = provider._check_and_enable_apis("my-proj")
         assert check.passed is True
         assert check.auto_fixed is False
@@ -178,7 +178,7 @@ class TestPreflightAPIs:
                 return list_proc
             return enable_proc
 
-        with patch("tandemn.providers.cloudrun_provider.subprocess.run", side_effect=side_effect):
+        with patch("tuna.providers.cloudrun_provider.subprocess.run", side_effect=side_effect):
             check = provider._check_and_enable_apis("my-proj")
         assert check.passed is True
         assert check.auto_fixed is True
@@ -196,14 +196,14 @@ class TestPreflightAPIs:
                 return list_proc
             return enable_proc
 
-        with patch("tandemn.providers.cloudrun_provider.subprocess.run", side_effect=side_effect):
+        with patch("tuna.providers.cloudrun_provider.subprocess.run", side_effect=side_effect):
             check = provider._check_and_enable_apis("my-proj")
         assert check.passed is False
         assert check.fix_command is not None
 
     def test_list_apis_fails(self, provider):
         mock_proc = MagicMock(returncode=1, stdout="", stderr="permission denied")
-        with patch("tandemn.providers.cloudrun_provider.subprocess.run", return_value=mock_proc):
+        with patch("tuna.providers.cloudrun_provider.subprocess.run", return_value=mock_proc):
             check = provider._check_and_enable_apis("my-proj")
         assert check.passed is False
 
@@ -271,8 +271,8 @@ class TestPreflightIntegration:
             return MagicMock(returncode=0, stdout="")
 
         with (
-            patch("tandemn.providers.cloudrun_provider.subprocess.run", side_effect=side_effect),
-            patch("tandemn.providers.cloudrun_provider.Path.exists", return_value=True),
+            patch("tuna.providers.cloudrun_provider.subprocess.run", side_effect=side_effect),
+            patch("tuna.providers.cloudrun_provider.Path.exists", return_value=True),
         ):
             result = provider.preflight(request_l4)
 
@@ -284,7 +284,7 @@ class TestPreflightIntegration:
 
     def test_gcloud_missing_short_circuits(self, provider, request_l4):
         """If gcloud is missing, we stop after the first check."""
-        with patch("tandemn.providers.cloudrun_provider.subprocess.run", side_effect=FileNotFoundError):
+        with patch("tuna.providers.cloudrun_provider.subprocess.run", side_effect=FileNotFoundError):
             result = provider.preflight(request_l4)
 
         assert result.ok is False
@@ -306,8 +306,8 @@ class TestPreflightIntegration:
             return MagicMock(returncode=0, stdout="")
 
         with (
-            patch("tandemn.providers.cloudrun_provider.subprocess.run", side_effect=side_effect),
-            patch("tandemn.providers.cloudrun_provider.Path.exists", return_value=True),
+            patch("tuna.providers.cloudrun_provider.subprocess.run", side_effect=side_effect),
+            patch("tuna.providers.cloudrun_provider.Path.exists", return_value=True),
         ):
             result = provider.preflight(request_l4)
 
@@ -331,8 +331,8 @@ class TestPreflightIntegration:
             return MagicMock(returncode=0, stdout="")
 
         with (
-            patch("tandemn.providers.cloudrun_provider.subprocess.run", side_effect=side_effect),
-            patch("tandemn.providers.cloudrun_provider.Path.exists", return_value=True),
+            patch("tuna.providers.cloudrun_provider.subprocess.run", side_effect=side_effect),
+            patch("tuna.providers.cloudrun_provider.Path.exists", return_value=True),
         ):
             result = provider.preflight(request_l4)
 
@@ -371,8 +371,8 @@ class TestPreflightIntegration:
             return MagicMock(returncode=0, stdout="")
 
         with (
-            patch("tandemn.providers.cloudrun_provider.subprocess.run", side_effect=side_effect),
-            patch("tandemn.providers.cloudrun_provider.Path.exists", return_value=True),
+            patch("tuna.providers.cloudrun_provider.subprocess.run", side_effect=side_effect),
+            patch("tuna.providers.cloudrun_provider.Path.exists", return_value=True),
         ):
             result = provider.preflight(request_l4)
 

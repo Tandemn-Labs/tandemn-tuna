@@ -1,10 +1,10 @@
-"""Tests for tandemn.orchestrator — unit tests with mocked subprocess/HTTP."""
+"""Tests for tuna.orchestrator — unit tests with mocked subprocess/HTTP."""
 
 import subprocess
 from unittest.mock import MagicMock, patch
 
-from tandemn.models import DeployRequest, DeploymentResult
-from tandemn.orchestrator import (
+from tuna.models import DeployRequest, DeploymentResult
+from tuna.orchestrator import (
     build_vllm_cmd,
     destroy_hybrid,
     push_url_to_router,
@@ -12,7 +12,7 @@ from tandemn.orchestrator import (
     _find_controller_cluster,
     _launch_router_on_controller,
 )
-from tandemn.state import DeploymentRecord
+from tuna.state import DeploymentRecord
 
 
 class TestBuildVllmCmd:
@@ -53,7 +53,7 @@ class TestBuildVllmCmd:
 
 
 class TestPushUrlToRouter:
-    @patch("tandemn.orchestrator.requests")
+    @patch("tuna.orchestrator.requests")
     def test_pushes_serverless_url(self, mock_requests):
         mock_requests.post.return_value = MagicMock(status_code=200)
         result = push_url_to_router(
@@ -64,7 +64,7 @@ class TestPushUrlToRouter:
         call_kwargs = mock_requests.post.call_args
         assert call_kwargs[1]["json"]["serverless_url"] == "https://modal.run"
 
-    @patch("tandemn.orchestrator.requests")
+    @patch("tuna.orchestrator.requests")
     def test_pushes_spot_url(self, mock_requests):
         mock_requests.post.return_value = MagicMock(status_code=200)
         result = push_url_to_router(
@@ -74,13 +74,13 @@ class TestPushUrlToRouter:
         call_kwargs = mock_requests.post.call_args
         assert call_kwargs[1]["json"]["spot_url"] == "http://spot:30001"
 
-    @patch("tandemn.orchestrator.requests")
+    @patch("tuna.orchestrator.requests")
     def test_empty_payload_returns_true(self, mock_requests):
         result = push_url_to_router("http://router:8080")
         assert result is True
         mock_requests.post.assert_not_called()
 
-    @patch("tandemn.orchestrator.requests")
+    @patch("tuna.orchestrator.requests")
     def test_handles_connection_error(self, mock_requests):
         import requests
         mock_requests.post.side_effect = requests.ConnectionError("nope")
@@ -102,8 +102,8 @@ class TestDestroyHybrid:
         defaults.update(kwargs)
         return DeploymentRecord(**defaults)
 
-    @patch("tandemn.orchestrator.subprocess")
-    @patch("tandemn.orchestrator.get_provider")
+    @patch("tuna.orchestrator.subprocess")
+    @patch("tuna.orchestrator.get_provider")
     def test_calls_provider_destroy_for_spot(self, mock_get_provider, mock_subprocess):
         mock_spot = MagicMock()
         mock_spot.name.return_value = "skyserve"
@@ -118,8 +118,8 @@ class TestDestroyHybrid:
         result_arg = mock_spot.destroy.call_args[0][0]
         assert result_arg.metadata["service_name"] == "my-svc-spot"
 
-    @patch("tandemn.orchestrator.subprocess")
-    @patch("tandemn.orchestrator.get_provider")
+    @patch("tuna.orchestrator.subprocess")
+    @patch("tuna.orchestrator.get_provider")
     def test_calls_provider_destroy_for_serverless(self, mock_get_provider, mock_subprocess):
         mock_spot = MagicMock()
         mock_spot.name.return_value = "skyserve"
@@ -134,8 +134,8 @@ class TestDestroyHybrid:
         result_arg = mock_modal.destroy.call_args[0][0]
         assert result_arg.metadata["app_name"] == "my-svc-serverless"
 
-    @patch("tandemn.orchestrator.subprocess")
-    @patch("tandemn.orchestrator.get_provider")
+    @patch("tuna.orchestrator.subprocess")
+    @patch("tuna.orchestrator.get_provider")
     def test_router_teardown_uses_sky_down(self, mock_get_provider, mock_subprocess):
         mock_spot = MagicMock()
         mock_spot.name.return_value = "skyserve"
@@ -153,8 +153,8 @@ class TestDestroyHybrid:
         assert "down" in first_call[0][0]
         assert "my-svc-router" in first_call[0][0]
 
-    @patch("tandemn.orchestrator.subprocess")
-    @patch("tandemn.orchestrator.get_provider")
+    @patch("tuna.orchestrator.subprocess")
+    @patch("tuna.orchestrator.get_provider")
     def test_record_provider_names_used(self, mock_get_provider, mock_subprocess):
         """Verify that provider names come from the record, not hardcoded."""
         mock_custom_spot = MagicMock()
@@ -177,8 +177,8 @@ class TestDestroyHybrid:
         mock_get_provider.assert_any_call("custom_spot")
         mock_get_provider.assert_any_call("custom_sl")
 
-    @patch("tandemn.orchestrator.subprocess")
-    @patch("tandemn.orchestrator.get_provider")
+    @patch("tuna.orchestrator.subprocess")
+    @patch("tuna.orchestrator.get_provider")
     def test_fallback_without_record(self, mock_get_provider, mock_subprocess):
         """Without a record, falls back to hardcoded provider names."""
         mock_spot = MagicMock()
@@ -203,8 +203,8 @@ class TestStatusHybrid:
         defaults.update(kwargs)
         return DeploymentRecord(**defaults)
 
-    @patch("tandemn.orchestrator._get_cluster_ip", return_value=None)
-    @patch("tandemn.orchestrator.get_provider")
+    @patch("tuna.orchestrator._get_cluster_ip", return_value=None)
+    @patch("tuna.orchestrator.get_provider")
     def test_calls_provider_status_for_spot(self, mock_get_provider, mock_get_ip):
         mock_spot = MagicMock()
         mock_spot.status.return_value = {"provider": "skyserve", "status": "running"}
@@ -218,8 +218,8 @@ class TestStatusHybrid:
         mock_spot.status.assert_called_once_with("my-svc")
         assert result["spot"]["provider"] == "skyserve"
 
-    @patch("tandemn.orchestrator._get_cluster_ip", return_value=None)
-    @patch("tandemn.orchestrator.get_provider")
+    @patch("tuna.orchestrator._get_cluster_ip", return_value=None)
+    @patch("tuna.orchestrator.get_provider")
     def test_calls_provider_status_for_serverless(self, mock_get_provider, mock_get_ip):
         mock_spot = MagicMock()
         mock_spot.status.return_value = {"provider": "skyserve", "status": "running"}
@@ -233,8 +233,8 @@ class TestStatusHybrid:
         mock_modal.status.assert_called_once_with("my-svc")
         assert result["serverless"]["provider"] == "modal"
 
-    @patch("tandemn.orchestrator._get_cluster_ip", return_value=None)
-    @patch("tandemn.orchestrator.get_provider")
+    @patch("tuna.orchestrator._get_cluster_ip", return_value=None)
+    @patch("tuna.orchestrator.get_provider")
     def test_serverless_status_included(self, mock_get_provider, mock_get_ip):
         mock_spot = MagicMock()
         mock_spot.status.return_value = {"provider": "skyserve", "raw": "UP"}
@@ -248,8 +248,8 @@ class TestStatusHybrid:
         assert result["serverless"] is not None
         assert result["serverless"]["status"] == "running"
 
-    @patch("tandemn.orchestrator._get_cluster_ip", return_value=None)
-    @patch("tandemn.orchestrator.get_provider")
+    @patch("tuna.orchestrator._get_cluster_ip", return_value=None)
+    @patch("tuna.orchestrator.get_provider")
     def test_record_provider_names_used(self, mock_get_provider, mock_get_ip):
         """Verify that provider names come from the record, not hardcoded."""
         mock_custom_spot = MagicMock()
@@ -270,8 +270,8 @@ class TestStatusHybrid:
         mock_get_provider.assert_any_call("custom_spot")
         mock_get_provider.assert_any_call("custom_sl")
 
-    @patch("tandemn.orchestrator._get_cluster_ip", return_value=None)
-    @patch("tandemn.orchestrator.get_provider")
+    @patch("tuna.orchestrator._get_cluster_ip", return_value=None)
+    @patch("tuna.orchestrator.get_provider")
     def test_fallback_without_record(self, mock_get_provider, mock_get_ip):
         """Without a record, falls back to hardcoded provider names."""
         mock_spot = MagicMock()
@@ -285,9 +285,9 @@ class TestStatusHybrid:
         mock_get_provider.assert_any_call("skyserve")
         mock_get_provider.assert_any_call("modal")
 
-    @patch("tandemn.orchestrator._get_cluster_ip", return_value="10.0.0.5")
-    @patch("tandemn.orchestrator.get_provider")
-    @patch("tandemn.orchestrator.requests")
+    @patch("tuna.orchestrator._get_cluster_ip", return_value="10.0.0.5")
+    @patch("tuna.orchestrator.get_provider")
+    @patch("tuna.orchestrator.requests")
     def test_colocated_router_uses_controller_ip(self, mock_requests, mock_get_provider, mock_get_ip):
         """Colocated router reads controller cluster name and port from metadata."""
         mock_resp = MagicMock()
@@ -311,7 +311,7 @@ class TestStatusHybrid:
 
 
 class TestFindControllerCluster:
-    @patch("tandemn.orchestrator.subprocess")
+    @patch("tuna.orchestrator.subprocess")
     def test_finds_controller(self, mock_subprocess):
         mock_subprocess.run.return_value = MagicMock(
             stdout=(
@@ -323,7 +323,7 @@ class TestFindControllerCluster:
         result = _find_controller_cluster()
         assert result == "sky-serve-controller-abc123"
 
-    @patch("tandemn.orchestrator.subprocess")
+    @patch("tuna.orchestrator.subprocess")
     def test_returns_none_when_no_controller(self, mock_subprocess):
         mock_subprocess.run.return_value = MagicMock(
             stdout="NAME      LAUNCHED    RESOURCES\nmy-vm    1 hr ago    AWS\n",
@@ -332,7 +332,7 @@ class TestFindControllerCluster:
         result = _find_controller_cluster()
         assert result is None
 
-    @patch("tandemn.orchestrator.subprocess")
+    @patch("tuna.orchestrator.subprocess")
     def test_returns_none_on_exception(self, mock_subprocess):
         mock_subprocess.run.side_effect = subprocess.TimeoutExpired("sky", 30)
         result = _find_controller_cluster()
@@ -340,11 +340,11 @@ class TestFindControllerCluster:
 
 
 class TestLaunchRouterOnController:
-    @patch("tandemn.orchestrator._open_port_on_cluster", return_value=True)
-    @patch("tandemn.orchestrator._get_ssh_user", return_value="ubuntu")
-    @patch("tandemn.orchestrator._get_ssh_key_path", return_value="/home/user/.ssh/sky-key")
-    @patch("tandemn.orchestrator._get_cluster_ip", return_value="10.0.0.1")
-    @patch("tandemn.orchestrator.subprocess")
+    @patch("tuna.orchestrator._open_port_on_cluster", return_value=True)
+    @patch("tuna.orchestrator._get_ssh_user", return_value="ubuntu")
+    @patch("tuna.orchestrator._get_ssh_key_path", return_value="/home/user/.ssh/sky-key")
+    @patch("tuna.orchestrator._get_cluster_ip", return_value="10.0.0.1")
+    @patch("tuna.orchestrator.subprocess")
     def test_success(self, mock_subprocess, mock_ip, mock_key, mock_user, mock_port):
         mock_subprocess.run.return_value = MagicMock(returncode=0, stderr="")
         mock_subprocess.TimeoutExpired = subprocess.TimeoutExpired
@@ -359,18 +359,18 @@ class TestLaunchRouterOnController:
         scp_call = mock_subprocess.run.call_args_list[0]
         assert "scp" in scp_call[0][0]
 
-    @patch("tandemn.orchestrator._get_cluster_ip", return_value=None)
+    @patch("tuna.orchestrator._get_cluster_ip", return_value=None)
     def test_no_ip(self, mock_ip):
         request = DeployRequest(model_name="m", gpu="g")
         result = _launch_router_on_controller(request, "sky-serve-controller-x")
         assert result.error is not None
         assert "Could not resolve IP" in result.error
 
-    @patch("tandemn.orchestrator._open_port_on_cluster", return_value=True)
-    @patch("tandemn.orchestrator._get_ssh_user", return_value="ubuntu")
-    @patch("tandemn.orchestrator._get_ssh_key_path", return_value="/home/user/.ssh/sky-key")
-    @patch("tandemn.orchestrator._get_cluster_ip", return_value="10.0.0.1")
-    @patch("tandemn.orchestrator.subprocess")
+    @patch("tuna.orchestrator._open_port_on_cluster", return_value=True)
+    @patch("tuna.orchestrator._get_ssh_user", return_value="ubuntu")
+    @patch("tuna.orchestrator._get_ssh_key_path", return_value="/home/user/.ssh/sky-key")
+    @patch("tuna.orchestrator._get_cluster_ip", return_value="10.0.0.1")
+    @patch("tuna.orchestrator.subprocess")
     def test_scp_failure(self, mock_subprocess, mock_ip, mock_key, mock_user, mock_port):
         mock_subprocess.run.return_value = MagicMock(returncode=1, stderr="Permission denied")
         mock_subprocess.TimeoutExpired = subprocess.TimeoutExpired
@@ -379,11 +379,11 @@ class TestLaunchRouterOnController:
         assert result.error is not None
         assert "SCP failed" in result.error
 
-    @patch("tandemn.orchestrator._open_port_on_cluster", return_value=True)
-    @patch("tandemn.orchestrator._get_ssh_user", return_value="ubuntu")
-    @patch("tandemn.orchestrator._get_ssh_key_path", return_value="/home/user/.ssh/sky-key")
-    @patch("tandemn.orchestrator._get_cluster_ip", return_value="10.0.0.1")
-    @patch("tandemn.orchestrator.subprocess")
+    @patch("tuna.orchestrator._open_port_on_cluster", return_value=True)
+    @patch("tuna.orchestrator._get_ssh_user", return_value="ubuntu")
+    @patch("tuna.orchestrator._get_ssh_key_path", return_value="/home/user/.ssh/sky-key")
+    @patch("tuna.orchestrator._get_cluster_ip", return_value="10.0.0.1")
+    @patch("tuna.orchestrator.subprocess")
     def test_serverless_url_in_env(self, mock_subprocess, mock_ip, mock_key, mock_user, mock_port):
         mock_subprocess.run.return_value = MagicMock(returncode=0, stderr="")
         mock_subprocess.TimeoutExpired = subprocess.TimeoutExpired
@@ -410,11 +410,11 @@ class TestDestroyHybridColocated:
         defaults.update(kwargs)
         return DeploymentRecord(**defaults)
 
-    @patch("tandemn.orchestrator._get_ssh_user", return_value="ubuntu")
-    @patch("tandemn.orchestrator._get_ssh_key_path", return_value="/home/user/.ssh/sky-key")
-    @patch("tandemn.orchestrator._get_cluster_ip", return_value="10.0.0.1")
-    @patch("tandemn.orchestrator.subprocess")
-    @patch("tandemn.orchestrator.get_provider")
+    @patch("tuna.orchestrator._get_ssh_user", return_value="ubuntu")
+    @patch("tuna.orchestrator._get_ssh_key_path", return_value="/home/user/.ssh/sky-key")
+    @patch("tuna.orchestrator._get_cluster_ip", return_value="10.0.0.1")
+    @patch("tuna.orchestrator.subprocess")
+    @patch("tuna.orchestrator.get_provider")
     def test_colocated_router_skips_sky_down(
         self, mock_get_provider, mock_subprocess, mock_ip, mock_key, mock_user,
     ):

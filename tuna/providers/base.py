@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from tandemn.models import DeployRequest, DeploymentResult, PreflightResult, ProviderPlan
+from tuna.models import DeployRequest, DeploymentResult, PreflightResult, ProviderPlan
 
 
 class InferenceProvider(ABC):

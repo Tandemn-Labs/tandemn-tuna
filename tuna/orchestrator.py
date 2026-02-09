@@ -14,12 +14,12 @@ from typing import TYPE_CHECKING
 
 import requests
 
-from tandemn.models import DeployRequest, DeploymentResult, HybridDeployment, ProviderPlan
-from tandemn.providers.registry import get_provider
-from tandemn.template_engine import render_template
+from tuna.models import DeployRequest, DeploymentResult, HybridDeployment, ProviderPlan
+from tuna.providers.registry import get_provider
+from tuna.template_engine import render_template
 
 if TYPE_CHECKING:
-    from tandemn.state import DeploymentRecord
+    from tuna.state import DeploymentRecord
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +66,7 @@ def _launch_router_vm(request: DeployRequest) -> DeploymentResult:
     cluster_name = f"{request.service_name}-router"
 
     with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".yaml", delete=False, prefix="tandemn_router_"
+        mode="w", suffix=".yaml", delete=False, prefix="tuna_router_"
     ) as f:
         f.write(rendered)
         yaml_path = f.name
@@ -544,7 +544,7 @@ def destroy_hybrid(service_name: str, record: "DeploymentRecord | None" = None) 
         If provided, provider names and metadata are read from the record
         instead of using hardcoded defaults.
     """
-    from tandemn.state import DeploymentRecord
+    from tuna.state import DeploymentRecord
 
     if record is None:
         logger.warning("No deployment record for %s, falling back to hardcoded providers", service_name)
@@ -624,7 +624,7 @@ def status_hybrid(service_name: str, record: "DeploymentRecord | None" = None) -
         If provided, provider names are read from the record instead of
         using hardcoded defaults.
     """
-    from tandemn.state import DeploymentRecord
+    from tuna.state import DeploymentRecord
 
     if record is None:
         logger.warning("No deployment record for %s, falling back to hardcoded providers", service_name)

@@ -4,16 +4,16 @@ from __future__ import annotations
 
 import importlib
 
-from tandemn.providers.base import InferenceProvider
+from tuna.providers.base import InferenceProvider
 
 _PROVIDERS: dict[str, type[InferenceProvider]] = {}
 
 # Maps provider name → (module_path, class_name) for lazy loading.
 PROVIDER_MODULES: dict[str, tuple[str, str]] = {
-    "modal": ("tandemn.providers.modal_provider", "ModalProvider"),
-    "runpod": ("tandemn.providers.runpod_provider", "RunPodProvider"),
-    "cloudrun": ("tandemn.providers.cloudrun_provider", "CloudRunProvider"),
-    "skyserve": ("tandemn.spot.sky_launcher", "SkyLauncher"),
+    "modal": ("tuna.providers.modal_provider", "ModalProvider"),
+    "runpod": ("tuna.providers.runpod_provider", "RunPodProvider"),
+    "cloudrun": ("tuna.providers.cloudrun_provider", "CloudRunProvider"),
+    "skyserve": ("tuna.spot.sky_launcher", "SkyLauncher"),
 }
 
 

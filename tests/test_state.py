@@ -1,4 +1,4 @@
-"""Tests for tandemn.state — SQLite deployment persistence."""
+"""Tests for tuna.state — SQLite deployment persistence."""
 
 import json
 import os
@@ -8,8 +8,8 @@ from unittest.mock import patch
 
 import pytest
 
-from tandemn.models import DeployRequest, DeploymentResult, HybridDeployment
-from tandemn.state import (
+from tuna.models import DeployRequest, DeploymentResult, HybridDeployment
+from tuna.state import (
     DeploymentRecord,
     _connect,
     _db_path,
@@ -262,15 +262,15 @@ class TestConnectionAndSchema:
 
     def test_env_var_override(self, tmp_path):
         custom_dir = tmp_path / "custom_state"
-        with patch.dict(os.environ, {"TANDEMN_STATE_DIR": str(custom_dir)}):
+        with patch.dict(os.environ, {"TUNA_STATE_DIR": str(custom_dir)}):
             assert _state_dir() == custom_dir
             assert _db_path() == custom_dir / "deployments.db"
 
     def test_default_state_dir(self):
         with patch.dict(os.environ, {}, clear=False):
-            # Remove TANDEMN_STATE_DIR if present
-            os.environ.pop("TANDEMN_STATE_DIR", None)
-            assert _state_dir() == Path.home() / ".tandemn"
+            # Remove TUNA_STATE_DIR if present
+            os.environ.pop("TUNA_STATE_DIR", None)
+            assert _state_dir() == Path.home() / ".tuna"
 
     def test_creates_parent_directories(self, tmp_path):
         deep_path = tmp_path / "a" / "b" / "c" / "test.db"

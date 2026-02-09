@@ -9,10 +9,10 @@ import subprocess
 
 from pathlib import Path
 
-from tandemn.catalog import provider_gpu_id, provider_gpu_map, provider_regions
-from tandemn.models import DeployRequest, DeploymentResult, PreflightCheck, PreflightResult, ProviderPlan
-from tandemn.providers.base import InferenceProvider
-from tandemn.providers.registry import register
+from tuna.catalog import provider_gpu_id, provider_gpu_map, provider_regions
+from tuna.models import DeployRequest, DeploymentResult, PreflightCheck, PreflightResult, ProviderPlan
+from tuna.providers.base import InferenceProvider
+from tuna.providers.registry import register
 
 logger = logging.getLogger(__name__)
 
@@ -424,7 +424,7 @@ class CloudRunProvider(InferenceProvider):
                 provider=self.name(),
                 error=(
                     "google-cloud-run SDK not installed. "
-                    "Install with: pip install 'tandemn[cloudrun]'"
+                    "Install with: pip install 'tandemn-tuna[cloudrun]'"
                 ),
                 metadata=dict(plan.metadata),
             )

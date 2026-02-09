@@ -6,7 +6,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Optional
 
-from tandemn.scaling import ScalingPolicy, default_scaling_policy
+from tuna.scaling import ScalingPolicy, default_scaling_policy
 
 
 @dataclass
@@ -27,14 +27,14 @@ class DeployRequest:
     public: bool = False  # If True, make endpoints publicly accessible (no auth)
 
     def __post_init__(self):
-        from tandemn.catalog import normalize_gpu_name
+        from tuna.catalog import normalize_gpu_name
         try:
             self.gpu = normalize_gpu_name(self.gpu)
         except KeyError:
             pass  # Let provider-level validation handle unknown GPUs
         if self.service_name is None:
             short_id = uuid.uuid4().hex[:8]
-            self.service_name = f"tandemn-{short_id}"
+            self.service_name = f"tuna-{short_id}"
 
 
 @dataclass

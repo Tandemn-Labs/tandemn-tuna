@@ -1,11 +1,11 @@
-"""Tests for tandemn.spot.sky_launcher — plan() only, no real deploys."""
+"""Tests for tuna.spot.sky_launcher — plan() only, no real deploys."""
 
 import yaml
 
-from tandemn.models import DeployRequest
-from tandemn.providers.base import InferenceProvider
-from tandemn.scaling import ScalingPolicy, SpotScaling, ServerlessScaling
-from tandemn.spot.sky_launcher import SkyLauncher
+from tuna.models import DeployRequest
+from tuna.providers.base import InferenceProvider
+from tuna.scaling import ScalingPolicy, SpotScaling, ServerlessScaling
+from tuna.spot.sky_launcher import SkyLauncher
 
 
 class TestSkyLauncherProvider:

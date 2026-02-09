@@ -1,9 +1,9 @@
-"""Tests for tandemn.providers.modal_provider — plan() only, no real deploys."""
+"""Tests for tuna.providers.modal_provider — plan() only, no real deploys."""
 
 from pathlib import Path
 
-from tandemn.models import DeployRequest
-from tandemn.providers.modal_provider import ModalProvider
+from tuna.models import DeployRequest
+from tuna.providers.modal_provider import ModalProvider
 
 
 class TestModalProviderPlan:

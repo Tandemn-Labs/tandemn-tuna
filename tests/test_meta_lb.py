@@ -1,10 +1,10 @@
-"""Tests for tandemn.router.meta_lb — routing logic without real backends."""
+"""Tests for tuna.router.meta_lb — routing logic without real backends."""
 
 import json
 
 import pytest
 
-from tandemn.router import meta_lb
+from tuna.router import meta_lb
 
 
 @pytest.fixture

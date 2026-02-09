@@ -7,10 +7,10 @@ import os
 
 import requests
 
-from tandemn.catalog import provider_gpu_id, provider_gpu_map
-from tandemn.models import DeployRequest, DeploymentResult, ProviderPlan
-from tandemn.providers.base import InferenceProvider
-from tandemn.providers.registry import register
+from tuna.catalog import provider_gpu_id, provider_gpu_map
+from tuna.models import DeployRequest, DeploymentResult, ProviderPlan
+from tuna.providers.base import InferenceProvider
+from tuna.providers.registry import register
 
 logger = logging.getLogger(__name__)
 

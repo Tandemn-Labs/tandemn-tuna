@@ -8,8 +8,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from tandemn.router import meta_lb
-from tandemn.catalog import (
+from tuna.router import meta_lb
+from tuna.catalog import (
     OnDemandPrice,
     fetch_on_demand_prices,
     get_provider_price,

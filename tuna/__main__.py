@@ -1,4 +1,4 @@
-"""CLI entry point: python -m tandemn deploy|destroy|status|list ..."""
+"""CLI entry point: python -m tuna deploy|destroy|status|list ..."""
 
 from __future__ import annotations
 
@@ -8,20 +8,20 @@ import logging
 import os
 import sys
 
-from tandemn.models import DeployRequest
-from tandemn.scaling import default_scaling_policy, load_scaling_policy
+from tuna.models import DeployRequest
+from tuna.scaling import default_scaling_policy, load_scaling_policy
 
 
 def cmd_deploy(args: argparse.Namespace) -> None:
     # Lazy import so --help is fast and doesn't pull in heavy deps
-    from tandemn.orchestrator import launch_hybrid
-    from tandemn.state import save_deployment
+    from tuna.orchestrator import launch_hybrid
+    from tuna.state import save_deployment
 
     # Import providers to trigger registration
-    import tandemn.providers.cloudrun_provider  # noqa: F401
-    import tandemn.providers.modal_provider  # noqa: F401
-    import tandemn.providers.runpod_provider  # noqa: F401
-    import tandemn.spot.sky_launcher  # noqa: F401
+    import tuna.providers.cloudrun_provider  # noqa: F401
+    import tuna.providers.modal_provider  # noqa: F401
+    import tuna.providers.runpod_provider  # noqa: F401
+    import tuna.spot.sky_launcher  # noqa: F401
 
     _setup_gcp_env(args)
 
@@ -44,7 +44,7 @@ def cmd_deploy(args: argparse.Namespace) -> None:
     serverless_provider = args.serverless_provider
     auto_selected = False
     if serverless_provider is None:
-        from tandemn.catalog import normalize_gpu_name, query as catalog_query
+        from tuna.catalog import normalize_gpu_name, query as catalog_query
         try:
             gpu_name = normalize_gpu_name(args.gpu)
         except KeyError:
@@ -112,9 +112,9 @@ def cmd_deploy(args: argparse.Namespace) -> None:
 
 
 def cmd_destroy(args: argparse.Namespace) -> None:
-    from tandemn.orchestrator import destroy_hybrid
-    from tandemn.providers.registry import ensure_providers_for_deployment
-    from tandemn.state import load_deployment, update_deployment_status
+    from tuna.orchestrator import destroy_hybrid
+    from tuna.providers.registry import ensure_providers_for_deployment
+    from tuna.state import load_deployment, update_deployment_status
 
     record = load_deployment(args.service_name)
     if record is None:
@@ -130,9 +130,9 @@ def cmd_destroy(args: argparse.Namespace) -> None:
 
 
 def cmd_status(args: argparse.Namespace) -> None:
-    from tandemn.orchestrator import status_hybrid
-    from tandemn.providers.registry import ensure_providers_for_deployment
-    from tandemn.state import load_deployment
+    from tuna.orchestrator import status_hybrid
+    from tuna.providers.registry import ensure_providers_for_deployment
+    from tuna.state import load_deployment
 
     record = load_deployment(args.service_name)
     if record is None:
@@ -258,13 +258,13 @@ def _setup_gcp_env(args: argparse.Namespace) -> None:
 
 
 def cmd_check(args: argparse.Namespace) -> None:
-    from tandemn.providers.registry import get_provider
+    from tuna.providers.registry import get_provider
 
     # Import providers to trigger registration
-    import tandemn.providers.cloudrun_provider  # noqa: F401
-    import tandemn.providers.modal_provider  # noqa: F401
-    import tandemn.providers.runpod_provider  # noqa: F401
-    import tandemn.spot.sky_launcher  # noqa: F401
+    import tuna.providers.cloudrun_provider  # noqa: F401
+    import tuna.providers.modal_provider  # noqa: F401
+    import tuna.providers.runpod_provider  # noqa: F401
+    import tuna.spot.sky_launcher  # noqa: F401
 
     _setup_gcp_env(args)
 
@@ -307,15 +307,15 @@ def cmd_check(args: argparse.Namespace) -> None:
 
 
 def cmd_cost(args: argparse.Namespace) -> None:
-    from tandemn.catalog import (
+    from tuna.catalog import (
         fetch_on_demand_prices,
         fetch_spot_prices,
         get_provider_price,
         get_gpu_spec,
     )
-    from tandemn.orchestrator import status_hybrid
-    from tandemn.providers.registry import ensure_providers_for_deployment
-    from tandemn.state import load_deployment
+    from tuna.orchestrator import status_hybrid
+    from tuna.providers.registry import ensure_providers_for_deployment
+    from tuna.state import load_deployment
 
     record = load_deployment(args.service_name)
     if record is None:
@@ -331,7 +331,7 @@ def cmd_cost(args: argparse.Namespace) -> None:
 
     if route_stats is None:
         print(f"Error: could not reach router for '{args.service_name}'.", file=sys.stderr)
-        print("Check deployment status with: tandemn status --service-name " + args.service_name, file=sys.stderr)
+        print("Check deployment status with: tuna status --service-name " + args.service_name, file=sys.stderr)
         sys.exit(1)
 
     # Look up prices
@@ -431,7 +431,7 @@ def _print_cost_dashboard(
     from rich.console import Console
     from rich.table import Table
 
-    from tandemn.catalog import GPU_SPECS
+    from tuna.catalog import GPU_SPECS
 
     console = Console()
 
@@ -541,7 +541,7 @@ def _print_cost_dashboard(
 
 
 def cmd_show_gpus(args: argparse.Namespace) -> None:
-    from tandemn.catalog import (
+    from tuna.catalog import (
         fetch_spot_prices,
         get_gpu_spec,
         normalize_gpu_name,
@@ -574,7 +574,7 @@ def _print_provider_selection(gpu: str, result, selected_provider: str) -> None:
     """Print a compact pricing table showing which provider was auto-selected."""
     from rich.console import Console
     from rich.table import Table
-    from tandemn.catalog import get_gpu_spec
+    from tuna.catalog import get_gpu_spec
 
     spec = get_gpu_spec(gpu)
     console = Console()
@@ -667,7 +667,7 @@ def _print_gpu_detail(gpu: str, result, spot_prices: dict, get_gpu_spec) -> None
 def _print_gpu_table(result, spot_prices: dict, show_spot: bool, get_gpu_spec) -> None:
     from rich.console import Console
     from rich.table import Table
-    from tandemn.catalog import GPU_SPECS
+    from tuna.catalog import GPU_SPECS
 
     console = Console()
     table = Table(show_header=True, header_style="bold")
@@ -743,7 +743,7 @@ def _print_gpu_table(result, spot_prices: dict, show_spot: bool, get_gpu_spec) -
 
 
 def cmd_list(args: argparse.Namespace) -> None:
-    from tandemn.state import list_deployments
+    from tuna.state import list_deployments
 
     records = list_deployments(status=args.status)
     if not records:
@@ -761,7 +761,7 @@ def cmd_list(args: argparse.Namespace) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        prog="tandemn",
+        prog="tuna",
         description="Hybrid GPU Inference Orchestrator",
     )
     parser.add_argument(

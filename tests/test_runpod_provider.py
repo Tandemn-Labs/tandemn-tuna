@@ -1,12 +1,12 @@
-"""Tests for tandemn.providers.runpod_provider."""
+"""Tests for tuna.providers.runpod_provider."""
 
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from tandemn.catalog import provider_gpu_map
-from tandemn.models import DeployRequest, DeploymentResult
-from tandemn.providers.runpod_provider import RunPodProvider
+from tuna.catalog import provider_gpu_map
+from tuna.models import DeployRequest, DeploymentResult
+from tuna.providers.runpod_provider import RunPodProvider
 
 
 class TestRunPodGpuMap:
@@ -119,7 +119,7 @@ class TestRunPodDeploy:
         self.vllm_cmd = "vllm serve Qwen/Qwen3-0.6B"
 
     @patch.dict("os.environ", {"RUNPOD_API_KEY": "test-key"})
-    @patch("tandemn.providers.runpod_provider.requests.post")
+    @patch("tuna.providers.runpod_provider.requests.post")
     def test_successful_deploy(self, mock_post):
         plan = self.provider.plan(self.request, self.vllm_cmd)
 
@@ -145,7 +145,7 @@ class TestRunPodDeploy:
         assert mock_post.call_count == 2
 
     @patch.dict("os.environ", {"RUNPOD_API_KEY": "test-key"})
-    @patch("tandemn.providers.runpod_provider.requests.post")
+    @patch("tuna.providers.runpod_provider.requests.post")
     def test_template_env_is_flat_dict(self, mock_post):
         """RunPod REST API expects env as a flat dict {KEY: value}."""
         plan = self.provider.plan(self.request, self.vllm_cmd)
@@ -169,7 +169,7 @@ class TestRunPodDeploy:
         assert env["MODEL_NAME"] == "Qwen/Qwen3-0.6B"
 
     @patch.dict("os.environ", {"RUNPOD_API_KEY": "test-key"})
-    @patch("tandemn.providers.runpod_provider.requests.post")
+    @patch("tuna.providers.runpod_provider.requests.post")
     def test_template_creation_fails(self, mock_post):
         plan = self.provider.plan(self.request, self.vllm_cmd)
 
@@ -182,8 +182,8 @@ class TestRunPodDeploy:
         assert mock_post.call_count == 1
 
     @patch.dict("os.environ", {"RUNPOD_API_KEY": "test-key"})
-    @patch("tandemn.providers.runpod_provider.requests.delete")
-    @patch("tandemn.providers.runpod_provider.requests.post")
+    @patch("tuna.providers.runpod_provider.requests.delete")
+    @patch("tuna.providers.runpod_provider.requests.post")
     def test_endpoint_creation_fails(self, mock_post, mock_delete):
         plan = self.provider.plan(self.request, self.vllm_cmd)
 
@@ -218,7 +218,7 @@ class TestRunPodDestroy:
         self.provider = RunPodProvider()
 
     @patch.dict("os.environ", {"RUNPOD_API_KEY": "test-key"})
-    @patch("tandemn.providers.runpod_provider.requests.delete")
+    @patch("tuna.providers.runpod_provider.requests.delete")
     def test_destroy_deletes_endpoint_and_template(self, mock_delete):
         mock_delete.return_value = MagicMock()
 
@@ -240,7 +240,7 @@ class TestRunPodDestroy:
         assert "templates/tpl_abc" in calls[1]
 
     @patch.dict("os.environ", {"RUNPOD_API_KEY": "test-key"})
-    @patch("tandemn.providers.runpod_provider.requests.delete")
+    @patch("tuna.providers.runpod_provider.requests.delete")
     def test_destroy_missing_metadata(self, mock_delete):
         result = DeploymentResult(
             provider="runpod",
@@ -257,7 +257,7 @@ class TestRunPodStatus:
         self.provider = RunPodProvider()
 
     @patch.dict("os.environ", {"RUNPOD_API_KEY": "test-key"})
-    @patch("tandemn.providers.runpod_provider.requests.get")
+    @patch("tuna.providers.runpod_provider.requests.get")
     def test_health_check(self, mock_get):
         # Mock list endpoints response
         list_resp = MagicMock()
@@ -284,7 +284,7 @@ class TestRunPodStatus:
         assert status["workers"] == {"running": 2, "idle": 1, "ready": 3}
 
     @patch.dict("os.environ", {"RUNPOD_API_KEY": "test-key"})
-    @patch("tandemn.providers.runpod_provider.requests.get")
+    @patch("tuna.providers.runpod_provider.requests.get")
     def test_status_endpoint_not_found(self, mock_get):
         list_resp = MagicMock()
         list_resp.json.return_value = []

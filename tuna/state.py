@@ -68,11 +68,11 @@ CREATE TABLE IF NOT EXISTS deployments (
 
 
 def _state_dir() -> Path:
-    """Return the state directory, respecting TANDEMN_STATE_DIR env var."""
-    env = os.environ.get("TANDEMN_STATE_DIR")
+    """Return the state directory, respecting TUNA_STATE_DIR env var."""
+    env = os.environ.get("TUNA_STATE_DIR")
     if env:
         return Path(env)
-    return Path.home() / ".tandemn"
+    return Path.home() / ".tuna"
 
 
 def _db_path() -> Path:

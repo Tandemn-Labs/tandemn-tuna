@@ -1,15 +1,15 @@
-"""Tests for tandemn.models."""
+"""Tests for tuna.models."""
 
-from tandemn.models import DeployRequest, DeploymentResult, HybridDeployment, ProviderPlan
-from tandemn.scaling import ScalingPolicy, SpotScaling, ServerlessScaling
+from tuna.models import DeployRequest, DeploymentResult, HybridDeployment, ProviderPlan
+from tuna.scaling import ScalingPolicy, SpotScaling, ServerlessScaling
 
 
 class TestDeployRequest:
     def test_auto_generates_service_name(self):
         req = DeployRequest(model_name="Qwen/Qwen3-0.6B", gpu="L40S")
         assert req.service_name is not None
-        assert req.service_name.startswith("tandemn-")
-        assert len(req.service_name) == len("tandemn-") + 8
+        assert req.service_name.startswith("tuna-")
+        assert len(req.service_name) == len("tuna-") + 8
 
     def test_preserves_explicit_service_name(self):
         req = DeployRequest(

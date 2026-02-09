@@ -1,4 +1,4 @@
-"""Tests for tandemn.catalog."""
+"""Tests for tuna.catalog."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from tandemn.catalog import (
+from tuna.catalog import (
     GPU_SPECS,
     CatalogQuery,
     GpuSpec,
