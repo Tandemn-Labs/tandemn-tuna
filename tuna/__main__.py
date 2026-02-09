@@ -15,13 +15,8 @@ from tuna.scaling import default_scaling_policy, load_scaling_policy
 def cmd_deploy(args: argparse.Namespace) -> None:
     # Lazy import so --help is fast and doesn't pull in heavy deps
     from tuna.orchestrator import launch_hybrid
+    from tuna.providers.registry import ensure_provider_registered
     from tuna.state import save_deployment
-
-    # Import providers to trigger registration
-    import tuna.providers.cloudrun_provider  # noqa: F401
-    import tuna.providers.modal_provider  # noqa: F401
-    import tuna.providers.runpod_provider  # noqa: F401
-    import tuna.spot.sky_launcher  # noqa: F401
 
     _setup_gcp_env(args)
 
@@ -72,6 +67,14 @@ def cmd_deploy(args: argparse.Namespace) -> None:
         service_name=args.service_name,
         public=args.public,
     )
+
+    # Register only the providers we actually need
+    try:
+        ensure_provider_registered(serverless_provider)
+        ensure_provider_registered("skyserve")
+    except ImportError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
 
     print(f"Deploying {request.model_name} on {request.gpu}")
     print(f"Service name: {request.service_name}")
@@ -258,21 +261,16 @@ def _setup_gcp_env(args: argparse.Namespace) -> None:
 
 
 def cmd_check(args: argparse.Namespace) -> None:
-    from tuna.providers.registry import get_provider
-
-    # Import providers to trigger registration
-    import tuna.providers.cloudrun_provider  # noqa: F401
-    import tuna.providers.modal_provider  # noqa: F401
-    import tuna.providers.runpod_provider  # noqa: F401
-    import tuna.spot.sky_launcher  # noqa: F401
+    from tuna.providers.registry import ensure_provider_registered, get_provider
 
     _setup_gcp_env(args)
 
     provider_name = args.provider
     try:
+        ensure_provider_registered(provider_name)
         provider = get_provider(provider_name)
-    except KeyError:
-        print(f"Error: unknown provider '{provider_name}'.", file=sys.stderr)
+    except (KeyError, ValueError, ImportError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)
 
     # Build a minimal DeployRequest for preflight

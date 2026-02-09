@@ -25,6 +25,7 @@ dependencies = [
     "requests>=2.31",
     "gunicorn>=21.0",
     "pyyaml>=6.0",
+    "skypilot[aws]>=0.7",
 ]
 
 [project.optional-dependencies]
@@ -33,6 +34,11 @@ dev = [
     "pytest-mock>=3.12",
 ]
 cloudrun = ["google-cloud-run>=0.10.0"]
+modal = ["modal>=0.73"]
+all = [
+    "google-cloud-run>=0.10.0",
+    "modal>=0.73",
+]
 
 [project.scripts]
 tuna = "tuna.__main__:main"

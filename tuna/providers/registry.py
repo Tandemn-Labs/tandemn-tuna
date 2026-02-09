@@ -16,6 +16,12 @@ PROVIDER_MODULES: dict[str, tuple[str, str]] = {
     "skyserve": ("tuna.spot.sky_launcher", "SkyLauncher"),
 }
 
+# pip extra needed for each provider (used in error messages).
+_INSTALL_HINTS: dict[str, str] = {
+    "modal": "pip install tandemn-tuna[modal]",
+    "cloudrun": "pip install tandemn-tuna[cloudrun]",
+}
+
 
 def register(name: str, cls: type[InferenceProvider]) -> None:
     """Register a provider class under a name."""
@@ -49,7 +55,14 @@ def ensure_provider_registered(name: str) -> None:
             f"Known providers: {list(PROVIDER_MODULES.keys())}"
         )
     module_path, class_name = entry
-    mod = importlib.import_module(module_path)
+    try:
+        mod = importlib.import_module(module_path)
+    except ImportError as exc:
+        hint = _INSTALL_HINTS.get(name)
+        msg = f"Could not load provider {name!r}: {exc}"
+        if hint:
+            msg += f"\nInstall the required dependency with: {hint}"
+        raise ImportError(msg) from exc
     cls = getattr(mod, class_name)
     register(name, cls)
 
