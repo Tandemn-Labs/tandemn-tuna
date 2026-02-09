@@ -27,6 +27,13 @@ Tuna is a smart router that combines both behind a single OpenAI-compatible endp
 pip install tandemn-tuna
 ```
 
+> ❗ **This project is under active development and experimental.** pip installs may not reflect the latest changes. For the latest version, install from source:
+> ```bash
+> git clone https://github.com/Tandemn-Labs/tandemn-tuna.git
+> cd tandemn-tuna
+> pip install -e .
+> ```
+
 **2. Set up your provider credentials**
 
 ```bash
