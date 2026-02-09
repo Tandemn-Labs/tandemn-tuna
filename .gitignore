@@ -36,5 +36,13 @@ Thumbs.db
 CLAUDE.md
 ARCHITECTURE.md
 
+# Secrets / credentials
+.env
+.env.*
+credentials.json
+service-account*.json
+*.pem
+*.key
+
 # Misc
 n
