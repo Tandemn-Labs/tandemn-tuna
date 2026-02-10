@@ -24,7 +24,10 @@ Tuna is a smart router that combines both behind a single OpenAI-compatible endp
 **1. Install**
 
 ```bash
-pip install tandemn-tuna --pre
+pip install tandemn-tuna[modal] --pre     # Modal as serverless provider
+pip install tandemn-tuna[cloudrun] --pre  # Cloud Run as serverless provider
+pip install tandemn-tuna --pre            # RunPod (no extra deps needed)
+pip install tandemn-tuna[all] --pre       # everything
 ```
 
 > ❗ **This project is under active development and experimental.** pip installs may not reflect the latest changes. For the latest version, install from source:
