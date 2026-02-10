@@ -1,4 +1,8 @@
+
 # Tuna
+<div align="center">
+<img src="https://raw.githubusercontent.com/Tandemn-Labs/tandemn-tuna/main/assets/tuna3.png" width="500" alt="Tuna">
+</div>
 
 Spot GPUs are 3-5x cheaper than on-demand, but they take minutes to start and can be interrupted at any time. Serverless GPUs start in seconds and never get interrupted, but you pay a premium for that convenience. What if you didn't have to choose?
 
