@@ -269,7 +269,7 @@ def cmd_check(args: argparse.Namespace) -> None:
     try:
         ensure_provider_registered(provider_name)
         provider = get_provider(provider_name)
-    except (KeyError, ValueError, ImportError) as exc:
+    except (ValueError, ImportError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)
 
