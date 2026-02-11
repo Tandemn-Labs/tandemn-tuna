@@ -18,7 +18,7 @@ resources:
 {region_block}
 
 setup: |
-  pip install vllm
+  pip install vllm=={vllm_version}
 
 run: |
   {vllm_cmd}

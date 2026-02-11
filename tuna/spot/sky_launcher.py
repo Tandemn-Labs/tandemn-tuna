@@ -44,6 +44,7 @@ class SkyLauncher(InferenceProvider):
             "gpu_count": str(request.gpu_count),
             "port": "8001",
             "vllm_cmd": vllm_cmd,
+            "vllm_version": request.vllm_version,
             "min_replicas": str(spot.min_replicas),
             "max_replicas": str(spot.max_replicas),
             "target_qps": str(spot.target_qps),

@@ -39,6 +39,7 @@ class ModalProvider(InferenceProvider):
             "gpu": request.gpu,
             "port": "8000",
             "vllm_cmd": modal_vllm_cmd,
+            "vllm_version": request.vllm_version,
             "max_concurrency": str(serverless.concurrency),
             "timeout_s": str(serverless.timeout),
             "scaledown_window_s": str(serverless.scaledown_window),

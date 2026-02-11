@@ -92,6 +92,7 @@ def cmd_deploy(args: argparse.Namespace) -> None:
     print("=" * 60)
     print("DEPLOYMENT RESULT")
     print("=" * 60)
+    print(f"  vLLM:       {request.vllm_version}")
 
     if result.router and result.router.endpoint_url:
         print(f"  Router:     {result.router.endpoint_url}")

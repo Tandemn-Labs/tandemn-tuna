@@ -28,7 +28,7 @@ image = (
         "libglib2.0-0",
         "libsm6",
     )
-    .pip_install("vllm", "huggingface-hub")
+    .pip_install("vllm=={vllm_version}", "huggingface-hub")
     .env(
         {{
             "HF_XET_HIGH_PERFORMANCE": "1",

@@ -71,6 +71,9 @@ class CloudRunProvider(InferenceProvider):
     def name(self) -> str:
         return "cloudrun"
 
+    def vllm_version(self) -> str:
+        return DEFAULT_IMAGE.split(":v")[-1]
+
     # -- Preflight checks ------------------------------------------------
 
     def preflight(self, request: DeployRequest) -> PreflightResult:

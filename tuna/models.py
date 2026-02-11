@@ -25,6 +25,7 @@ class DeployRequest:
     scaling: ScalingPolicy = field(default_factory=default_scaling_policy)
     service_name: Optional[str] = None  # auto-generated if None
     public: bool = False  # If True, make endpoints publicly accessible (no auth)
+    vllm_version: str = "0.15.1"  # Set by orchestrator to match serverless provider
 
     def __post_init__(self):
         from tuna.catalog import normalize_gpu_name

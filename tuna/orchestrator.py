@@ -326,6 +326,11 @@ def launch_hybrid(request: DeployRequest, *, separate_router_vm: bool = False) -
     """
     vllm_cmd = build_vllm_cmd(request)
 
+    # Pin vLLM version to match the selected serverless provider
+    serverless_prov = get_provider(request.serverless_provider)
+    request.vllm_version = serverless_prov.vllm_version()
+    logger.info("vLLM version: %s (from %s)", request.vllm_version, request.serverless_provider)
+
     router_result = None
     serverless_result = None
     router_url = None
