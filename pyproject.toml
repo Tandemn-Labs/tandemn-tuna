@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tandemn-tuna"
-version = "0.0.1a4"
+version = "0.0.1a5"
 description = "Hybrid GPU Inference Orchestrator — serverless for cold starts, spot for scale"
 readme = "README.md"
 license = "MIT"
@@ -25,6 +25,7 @@ dependencies = [
     "requests>=2.31",
     "gunicorn>=21.0",
     "pyyaml>=6.0",
+    "rich>=13.0",
     "skypilot[aws]>=0.7",
 ]
 

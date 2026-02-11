@@ -23,6 +23,15 @@ Tuna is a smart router that combines both behind a single OpenAI-compatible endp
 </table>
 </div>
 
+## Prerequisites
+
+- Python 3.11+
+- [AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) — required for spot instances (all deployments use spot)
+- At least one serverless provider account: [Modal](https://modal.com/), [RunPod](https://www.runpod.io/), or [Google Cloud](https://cloud.google.com/)
+- For gated models (Llama, Mistral, Gemma, etc.): a [HuggingFace token](https://huggingface.co/settings/tokens) with access to the model
+
+> **Note:** Tuna always deploys both a serverless backend and a spot backend. AWS credentials are required even if your serverless provider is Modal or RunPod, because spot instances run on AWS via [SkyPilot](https://github.com/skypilot-org/skypilot).
+
 ## Quick Start
 
 **1. Install**
@@ -34,34 +43,82 @@ pip install tandemn-tuna --pre            # RunPod (no extra deps needed)
 pip install tandemn-tuna[all] --pre       # everything
 ```
 
-> ❗ **This project is under active development and experimental.** pip installs may not reflect the latest changes. For the latest version, install from source:
+> This project is under active development and experimental. For the latest version, install from source:
 > ```bash
 > git clone https://github.com/Tandemn-Labs/tandemn-tuna.git
 > cd tandemn-tuna
-> pip install -e .
+> pip install -e ".[all]"
 > ```
 
-**2. Set up your provider credentials**
+**2. Set up AWS (required for all deployments)**
 
 ```bash
-# At least one serverless provider + AWS for spot
-modal token new        # if using Modal
-runpodctl config       # if using RunPod
-gcloud auth login      # if using Cloud Run
-
-aws configure          # for spot instances
-sky check              # verify SkyPilot can see your cloud accounts
+aws configure          # set up AWS credentials
+sky check              # verify SkyPilot can see your AWS account
 ```
 
-**3. Deploy a model**
+**3. Set up your serverless provider (pick one)**
+
+<details>
+<summary><b>Modal</b></summary>
 
 ```bash
-tuna deploy --model Qwen/Qwen3-0.6B --gpu L4
+modal token new
+```
+
+</details>
+
+<details>
+<summary><b>RunPod</b></summary>
+
+```bash
+export RUNPOD_API_KEY=<your-key>  # https://www.runpod.io/console/user/settings
+```
+
+Add this to your `~/.bashrc` or `~/.zshrc` to persist it.
+
+</details>
+
+<details>
+<summary><b>Cloud Run</b></summary>
+
+Requires the [gcloud CLI](https://cloud.google.com/sdk/docs/install).
+
+```bash
+gcloud auth login
+gcloud auth application-default login    # required for the Python SDK
+gcloud config set project <YOUR_PROJECT_ID>
+```
+
+You also need billing enabled and the Cloud Run API (`run.googleapis.com`) enabled on your project.
+
+</details>
+
+**4. (Optional) Set HuggingFace token for gated models**
+
+```bash
+export HF_TOKEN=<your-token>  # https://huggingface.co/settings/tokens
+```
+
+Required for models like Llama, Mistral, Gemma, and other gated models. Not needed for open models like Qwen.
+
+**5. Validate your setup**
+
+```bash
+tuna check --provider modal                          # check Modal credentials
+tuna check --provider runpod                         # check RunPod API key
+tuna check --provider cloudrun --gcp-project <id> --gcp-region us-central1  # check Cloud Run
+```
+
+**6. Deploy a model**
+
+```bash
+tuna deploy --model Qwen/Qwen3-0.6B --gpu L4 --service-name my-first-deploy
 ```
 
 Tuna auto-selects the cheapest serverless provider for your GPU, launches spot instances on AWS, and gives you a single endpoint. The router handles everything — serverless covers traffic immediately while spot boots up in the background.
 
-**4. Send requests** (OpenAI-compatible)
+**7. Send requests** (OpenAI-compatible)
 
 ```bash
 curl http://<router-ip>:8080/v1/chat/completions \
@@ -69,21 +126,25 @@ curl http://<router-ip>:8080/v1/chat/completions \
   -d '{"model": "Qwen/Qwen3-0.6B", "messages": [{"role": "user", "content": "Hello"}]}'
 ```
 
-**5. Browse GPU pricing**
+**8. Monitor and manage**
 
 ```bash
-tuna show-gpus              # compare serverless pricing across providers
-tuna show-gpus --spot       # include AWS spot prices
-tuna show-gpus --gpu H100   # detailed pricing for a specific GPU
+tuna status --service-name my-first-deploy    # check deployment status
+tuna cost --service-name my-first-deploy      # real-time cost dashboard
+tuna list                                     # list all deployments
+tuna destroy --service-name my-first-deploy   # tear down everything
 ```
 
-**6. Monitor costs in real time**
+> **Tip:** If you don't pass `--service-name` during deploy, Tuna auto-generates a name like `tuna-a3f8c21b`. Use `tuna list` to find it.
+
+**9. Browse GPU pricing**
 
 ```bash
-tuna cost --service-name <name>
+tuna show-gpus                     # compare serverless pricing across providers
+tuna show-gpus --spot              # include AWS spot prices
+tuna show-gpus --gpu H100          # detailed pricing for a specific GPU
+tuna show-gpus --provider runpod   # filter to one provider
 ```
-
-Shows actual spend, routing split (% spot vs serverless), and savings compared to all-serverless or all-on-demand. Tracks cost per component (serverless, spot, router) so you can see exactly where your money goes.
 
 ## Architecture
 
@@ -124,10 +185,10 @@ The router:
 | `deploy` | Deploy a model across serverless + spot |
 | `destroy` | Tear down a deployment |
 | `status` | Check deployment status |
-| `cost` | Show cost dashboard for a deployment |
-| `list` | List all deployments |
-| `show-gpus` | GPU pricing across providers |
-| `check` | Validate provider setup |
+| `cost` | Show cost dashboard (requires running deployment) |
+| `list` | List all deployments (filter with `--status active\|destroyed\|failed`) |
+| `show-gpus` | GPU pricing across providers (filter with `--provider`, `--gpu`, `--spot`) |
+| `check` | Validate provider credentials and setup |
 
 ### `deploy` flags
 
@@ -143,10 +204,10 @@ The router:
 | `--max-model-len` | `4096` | Maximum sequence length (context window) |
 | `--concurrency` | — | Override serverless concurrency limit |
 | `--workers-max` | — | Max serverless workers (RunPod only) |
-| `--cold-start-mode` | `fast_boot` | `fast_boot` or `no_fast_boot` |
+| `--cold-start-mode` | `fast_boot` | `fast_boot` (uses `--enforce-eager`, faster startup but lower throughput) or `no_fast_boot` |
 | `--no-scale-to-zero` | off | Keep minimum 1 spot replica running |
 | `--scaling-policy` | — | Path to scaling YAML (see below) |
-| `--service-name` | auto | Custom service name |
+| `--service-name` | auto-generated | Custom service name (recommended — makes status/destroy easier) |
 | `--public` | off | Make service publicly accessible (no auth) |
 | `--use-different-vm-for-lb` | off | Launch router on a separate VM instead of colocating on controller |
 | `--gcp-project` | — | Google Cloud project ID |
@@ -161,7 +222,7 @@ All autoscaling parameters can be configured via a YAML file passed with `--scal
 ```yaml
 spot:
   min_replicas: 0        # 0 = scale to zero (default)
-  max_replicas: 8
+  max_replicas: 5
   target_qps: 10         # per-replica QPS target
   upscale_delay: 5       # seconds before adding replicas
   downscale_delay: 300   # seconds before removing replicas
@@ -170,6 +231,9 @@ serverless:
   concurrency: 32        # max concurrent requests per container
   scaledown_window: 60   # seconds idle before scaling down
   timeout: 600           # request timeout in seconds
+  workers_min: 0         # min workers (RunPod only)
+  workers_max: 1         # max workers (RunPod only)
+  scaler_value: 4        # queue delay scaler threshold (RunPod only)
 ```
 
 **Precedence**: defaults <- YAML file <- CLI flags. For example, `--concurrency 64` overrides `serverless.concurrency` from the YAML. `--no-scale-to-zero` forces `spot.min_replicas` to at least 1 and sets `serverless.scaledown_window` to 300s.
@@ -178,14 +242,26 @@ Unknown keys in the YAML will error immediately (catches typos).
 
 ## Troubleshooting
 
+### Setup issues
+
+Start with the built-in diagnostic tool:
+
+```bash
+tuna check --provider runpod
+tuna check --provider modal
+tuna check --provider cloudrun --gcp-project <id> --gcp-region us-central1
+```
+
+This validates credentials, API access, project configuration, and GPU region availability.
+
 ### Endpoint not responding
 
 ```bash
-# Check router and backend status
-curl http://<router-ip>:8080/router/health
+# Check your deployment status
+tuna status --service-name <name>
 
-# Check if Modal deployment succeeded
-modal app list
+# Check router health directly
+curl http://<router-ip>:8080/router/health
 
 # Check SkyServe status
 sky status --refresh
@@ -193,20 +269,23 @@ sky status --refresh
 
 ### High latency
 
-Check which backend is active:
+Check which backend is serving traffic:
 
 ```bash
 curl http://<router-ip>:8080/router/health
 ```
 
-If the router is using serverless, spot instances are still booting — wait for them to come up. If spot is active but slow, check the EC2 instance type and network configuration.
+If `skyserve_ready` is `false`, spot instances are still booting — requests are going through serverless (which is working correctly). Once spot boots, traffic shifts automatically.
 
-## Prerequisites
+### Gated model fails to load
 
-- Python 3.11+
-- Provider accounts as needed: Modal, RunPod, and/or Google Cloud
-- AWS account (for spot instances via SkyPilot)
-- SkyPilot CLI (`sky check` to verify)
+If the deployment succeeds but the model fails to start, you likely need a HuggingFace token:
+
+```bash
+export HF_TOKEN=<your-token>
+```
+
+Then redeploy.
 
 ## Contact
 
