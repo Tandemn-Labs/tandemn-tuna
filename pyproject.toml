@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tandemn-tuna"
-version = "0.0.1a2"
+version = "0.0.1a3"
 description = "Hybrid GPU Inference Orchestrator — serverless for cold starts, spot for scale"
 readme = "README.md"
 license = "MIT"
