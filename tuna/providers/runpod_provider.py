@@ -8,7 +8,7 @@ import os
 import requests
 
 from tuna.catalog import provider_gpu_id, provider_gpu_map
-from tuna.models import DeployRequest, DeploymentResult, ProviderPlan
+from tuna.models import DeployRequest, DeploymentResult, PreflightCheck, PreflightResult, ProviderPlan
 from tuna.providers.base import InferenceProvider
 from tuna.providers.registry import register
 
@@ -57,6 +57,65 @@ class RunPodProvider(InferenceProvider):
 
     def vllm_version(self) -> str:
         return _fetch_runpod_vllm_version()
+
+    def auth_token(self) -> str:
+        return os.environ.get("RUNPOD_API_KEY", "")
+
+    def preflight(self, request: DeployRequest) -> PreflightResult:
+        result = PreflightResult(provider=self.name())
+
+        # 1. Check RUNPOD_API_KEY is set
+        api_key = os.environ.get("RUNPOD_API_KEY")
+        if not api_key:
+            result.checks.append(PreflightCheck(
+                name="api_key",
+                passed=False,
+                message="RUNPOD_API_KEY environment variable is not set",
+                fix_command="export RUNPOD_API_KEY=<your-key>  # https://www.runpod.io/console/user/settings",
+            ))
+            return result
+
+        result.checks.append(PreflightCheck(
+            name="api_key",
+            passed=True,
+            message="RUNPOD_API_KEY is set",
+        ))
+
+        # 2. Validate the key works
+        try:
+            resp = requests.get(
+                f"{_API_BASE}/endpoints",
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                timeout=10,
+            )
+            if resp.status_code == 401:
+                result.checks.append(PreflightCheck(
+                    name="api_key_valid",
+                    passed=False,
+                    message="RUNPOD_API_KEY is invalid (401 Unauthorized)",
+                    fix_command="export RUNPOD_API_KEY=<your-key>  # https://www.runpod.io/console/user/settings",
+                ))
+            else:
+                resp.raise_for_status()
+                result.checks.append(PreflightCheck(
+                    name="api_key_valid",
+                    passed=True,
+                    message="RUNPOD_API_KEY is valid",
+                ))
+        except requests.exceptions.ConnectionError:
+            result.checks.append(PreflightCheck(
+                name="api_key_valid",
+                passed=False,
+                message="Could not reach RunPod API (connection error)",
+            ))
+        except Exception as e:
+            result.checks.append(PreflightCheck(
+                name="api_key_valid",
+                passed=False,
+                message=f"RunPod API check failed: {e}",
+            ))
+
+        return result
 
     def plan(self, request: DeployRequest, vllm_cmd: str) -> ProviderPlan:
         endpoint_name = f"{request.service_name}-serverless"
