@@ -15,6 +15,24 @@ from tuna.providers.registry import register
 logger = logging.getLogger(__name__)
 
 _API_BASE = "https://rest.runpod.io/v1"
+_RUNPOD_VLLM_FALLBACK = "0.11.0"
+
+
+def _fetch_runpod_vllm_version() -> str:
+    """Fetch vLLM version from RunPod's worker-vllm Dockerfile on GitHub.
+
+    Falls back to hardcoded version if GitHub is unreachable or parsing fails.
+    """
+    url = "https://raw.githubusercontent.com/runpod-workers/worker-vllm/main/Dockerfile"
+    try:
+        resp = requests.get(url, timeout=5)
+        resp.raise_for_status()
+        for line in resp.text.splitlines():
+            if "vllm==" in line:
+                return line.split("vllm==")[1].split()[0].rstrip('"').rstrip("'")
+    except Exception:
+        logger.debug("Could not fetch RunPod vLLM version from GitHub, using fallback")
+    return _RUNPOD_VLLM_FALLBACK
 
 
 def _headers() -> dict[str, str]:
@@ -36,6 +54,9 @@ class RunPodProvider(InferenceProvider):
 
     def name(self) -> str:
         return "runpod"
+
+    def vllm_version(self) -> str:
+        return _fetch_runpod_vllm_version()
 
     def plan(self, request: DeployRequest, vllm_cmd: str) -> ProviderPlan:
         endpoint_name = f"{request.service_name}-serverless"

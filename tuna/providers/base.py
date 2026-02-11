@@ -45,6 +45,10 @@ class InferenceProvider(ABC):
         """Check deployment status. Override for provider-native status APIs."""
         return {"provider": self.name(), "status": "unknown"}
 
+    def vllm_version(self) -> str:
+        """Return the vLLM version this provider uses. Override per provider."""
+        return "0.15.1"
+
     def health_check(self, result: DeploymentResult) -> bool:
         """HTTP GET to health_url. Override for provider-native status APIs."""
         try:
