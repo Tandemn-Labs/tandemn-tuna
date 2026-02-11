@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tandemn-tuna"
-version = "0.0.1a3"
+version = "0.0.1a4"
 description = "Hybrid GPU Inference Orchestrator — serverless for cold starts, spot for scale"
 readme = "README.md"
 license = "MIT"
@@ -50,6 +50,9 @@ Issues = "https://github.com/Tandemn-Labs/tandemn-tuna/issues"
 
 [tool.setuptools.packages.find]
 include = ["tuna*"]
+
+[tool.setuptools]
+include-package-data = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

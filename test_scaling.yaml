@@ -1,0 +1,7 @@
+serverless:
+  concurrency: 32
+  scaledown_window: 60
+  timeout: 600
+  workers_min: 2
+  workers_max: 5
+  scaler_value: 8

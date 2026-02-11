@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
+TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 META_LB_PATH = Path(__file__).resolve().parent / "router" / "meta_lb.py"
 
 
