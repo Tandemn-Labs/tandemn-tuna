@@ -100,6 +100,7 @@ SESSION = req_lib.Session()
 
 _state_lock = threading.Lock()
 _serverless_base_url: str = os.environ.get("SERVERLESS_BASE_URL", "").rstrip("/")
+_serverless_auth_token: str = os.environ.get("SERVERLESS_AUTH_TOKEN", "")
 _skyserve_base_url: str = os.environ.get("SKYSERVE_BASE_URL", "").rstrip("/")
 _skyserve_ready: bool = False
 _last_probe_ts: float | None = None
@@ -140,6 +141,13 @@ def set_serverless_url(url: str) -> None:
     with _state_lock:
         _serverless_base_url = url.rstrip("/")
     logger.info("Serverless URL updated: %s", url)
+
+
+def set_serverless_auth_token(token: str) -> None:
+    global _serverless_auth_token
+    with _state_lock:
+        _serverless_auth_token = token
+    logger.info("Serverless auth token updated")
 
 
 def set_spot_url(url: str) -> None:
@@ -366,6 +374,8 @@ def update_config():
     data = request.get_json(silent=True) or {}
     if "serverless_url" in data:
         set_serverless_url(data["serverless_url"])
+    if "serverless_auth_token" in data:
+        set_serverless_auth_token(data["serverless_auth_token"])
     if "spot_url" in data:
         set_spot_url(data["spot_url"])
     return Response(
@@ -428,6 +438,13 @@ def proxy(path: str):
         target_url += "?" + request.query_string.decode("utf-8")
 
     headers = _filter_incoming(dict(request.headers))
+
+    # Inject backend auth token if configured
+    with _state_lock:
+        auth_token = _serverless_auth_token if backend_name == "serverless" else ""
+    if auth_token:
+        headers["Authorization"] = f"Bearer {auth_token}"
+
     data = request.get_data()
 
     t0 = time.time()

@@ -49,6 +49,13 @@ class InferenceProvider(ABC):
         """Return the vLLM version this provider uses. Override per provider."""
         return "0.15.1"
 
+    def auth_token(self) -> str:
+        """Return the auth token the router should use when proxying to this backend.
+
+        Empty string means no auth needed. Override per provider.
+        """
+        return ""
+
     def health_check(self, result: DeploymentResult) -> bool:
         """HTTP GET to health_url. Override for provider-native status APIs."""
         try:

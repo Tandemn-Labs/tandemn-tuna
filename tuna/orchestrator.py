@@ -176,6 +176,7 @@ def _launch_router_on_controller(
     request: DeployRequest,
     controller_cluster: str,
     serverless_url: str = "",
+    serverless_auth_token: str = "",
     router_port: int = 8080,
 ) -> DeploymentResult:
     """Launch the meta_lb router on the SkyServe controller VM via SSH."""
@@ -236,6 +237,7 @@ def _launch_router_on_controller(
     start_cmd = (
         f"{conda_prefix} && "
         f"SERVERLESS_BASE_URL='{serverless_url}' "
+        f"SERVERLESS_AUTH_TOKEN='{serverless_auth_token}' "
         f"SKYSERVE_BASE_URL='http://127.0.0.1:30001' "
         f"setsid gunicorn -w 1 -k gthread --threads 16 --timeout 300 "
         f"--bind 0.0.0.0:{router_port} "
@@ -284,6 +286,7 @@ def _get_cluster_ip(cluster_name: str) -> str | None:
 def push_url_to_router(
     router_url: str,
     serverless_url: str | None = None,
+    serverless_auth_token: str | None = None,
     spot_url: str | None = None,
     retries: int = 5,
     delay: float = 3.0,
@@ -292,6 +295,8 @@ def push_url_to_router(
     payload = {}
     if serverless_url:
         payload["serverless_url"] = serverless_url
+    if serverless_auth_token:
+        payload["serverless_auth_token"] = serverless_auth_token
     if spot_url:
         payload["spot_url"] = spot_url
 
@@ -330,6 +335,9 @@ def launch_hybrid(request: DeployRequest, *, separate_router_vm: bool = False) -
     serverless_prov = get_provider(request.serverless_provider)
     request.vllm_version = serverless_prov.vllm_version()
     logger.info("vLLM version: %s (from %s)", request.vllm_version, request.serverless_provider)
+
+    # Auth token the router needs to proxy to this serverless backend
+    _backend_auth_token = serverless_prov.auth_token()
 
     router_result = None
     serverless_result = None
@@ -397,7 +405,11 @@ def launch_hybrid(request: DeployRequest, *, separate_router_vm: bool = False) -
 
             if serverless_result and serverless_result.endpoint_url:
                 logger.info("Pushing serverless URL to router: %s", serverless_result.endpoint_url)
-                push_url_to_router(router_url, serverless_url=serverless_result.endpoint_url)
+                push_url_to_router(
+                    router_url,
+                    serverless_url=serverless_result.endpoint_url,
+                    serverless_auth_token=_backend_auth_token,
+                )
 
             try:
                 spot_result = fut_spot.result(timeout=900)
@@ -452,6 +464,7 @@ def launch_hybrid(request: DeployRequest, *, separate_router_vm: bool = False) -
             router_result = _launch_router_on_controller(
                 request, controller_cluster,
                 serverless_url=serverless_url,
+                serverless_auth_token=_backend_auth_token,
             )
         else:
             logger.warning("Controller cluster not found, falling back to separate router VM")
@@ -481,7 +494,11 @@ def launch_hybrid(request: DeployRequest, *, separate_router_vm: bool = False) -
         if (router_url and serverless_result and serverless_result.endpoint_url
                 and serverless_result.endpoint_url != serverless_url):
             logger.info("Pushing serverless URL to router: %s", serverless_result.endpoint_url)
-            push_url_to_router(router_url, serverless_url=serverless_result.endpoint_url)
+            push_url_to_router(
+                router_url,
+                serverless_url=serverless_result.endpoint_url,
+                serverless_auth_token=_backend_auth_token,
+            )
 
         # Spot URL is localhost for colocated, but push for fallback (separate VM)
         if (router_url and spot_result and spot_result.endpoint_url
