@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -290,25 +291,17 @@ class BasetenProvider(InferenceProvider):
         - Endpoint URL: https://model-{id}.api.baseten.co/...
         - Explicit: model_id: abc123
         """
-        import re
+        patterns = [
+            r"app\.baseten\.co/models/([a-zA-Z0-9]+)",
+            r"model-([a-zA-Z0-9]+)\.api\.baseten\.co",
+            r"model[\s_]*id\s*:\s*([a-zA-Z0-9]+)",
+        ]
 
         for line in stdout.strip().splitlines():
-            line = line.strip()
-            # Dashboard URL: /models/{model_id}/
-            match = re.search(r"app\.baseten\.co/models/([a-zA-Z0-9]+)", line)
-            if match:
-                return match.group(1)
-            # Endpoint URL: model-{id}.api.baseten.co
-            match = re.search(r"model-([a-zA-Z0-9]+)\.api\.baseten\.co", line)
-            if match:
-                return match.group(1)
-            # Explicit key-value: model_id: abc123
-            if "model_id" in line.lower() or "model id" in line.lower():
-                parts = line.split(":", 1)
-                if len(parts) == 2:
-                    candidate = parts[1].strip()
-                    if candidate:
-                        return candidate
+            for pattern in patterns:
+                match = re.search(pattern, line.strip(), re.IGNORECASE)
+                if match:
+                    return match.group(1)
         return None
 
     def destroy(self, result: DeploymentResult) -> None:
