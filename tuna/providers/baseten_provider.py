@@ -203,6 +203,7 @@ class BasetenProvider(InferenceProvider):
             "gpu": gpu_accelerator,
             "concurrency": str(serverless.concurrency),
             "eager_flag": eager_flag,
+            "vllm_version": request.vllm_version,
         }
 
         rendered = render_template(
@@ -212,6 +213,8 @@ class BasetenProvider(InferenceProvider):
         metadata = {
             "service_name": service_name,
             "model_name": request.model_name,
+            "concurrency_target": str(serverless.concurrency),
+            "scale_down_delay": str(serverless.scaledown_window),
         }
 
         return ProviderPlan(
@@ -275,6 +278,12 @@ class BasetenProvider(InferenceProvider):
             metadata = dict(plan.metadata)
             metadata["model_id"] = model_id
 
+            self._configure_autoscaling(
+                model_id,
+                concurrency_target=int(plan.metadata.get("concurrency_target", "32")),
+                scale_down_delay=int(plan.metadata.get("scale_down_delay", "60")),
+            )
+
             logger.info("Baseten model deployed: %s", endpoint_url)
             return DeploymentResult(
                 provider=self.name(),
@@ -303,6 +312,39 @@ class BasetenProvider(InferenceProvider):
                 if match:
                     return match.group(1)
         return None
+
+    def _configure_autoscaling(
+        self, model_id: str, *, concurrency_target: int, scale_down_delay: int
+    ) -> None:
+        """Set autoscaling parameters on the production environment via REST API."""
+        api_key = _get_api_key()
+        if not api_key:
+            return
+
+        settings = {
+            "autoscaling_settings": {
+                "concurrency_target": concurrency_target,
+                "scale_down_delay": scale_down_delay,
+            }
+        }
+
+        try:
+            resp = requests.patch(
+                f"{_API_BASE}/models/{model_id}/environments/production",
+                headers=_headers(api_key),
+                json=settings,
+                timeout=15,
+            )
+            if resp.status_code == 200:
+                logger.info("Baseten autoscaling configured: %s", settings)
+            else:
+                logger.warning(
+                    "Failed to configure autoscaling: %s %s",
+                    resp.status_code,
+                    resp.text,
+                )
+        except requests.RequestException as e:
+            logger.warning("Could not configure autoscaling: %s", e)
 
     def destroy(self, result: DeploymentResult) -> None:
         model_id = result.metadata.get("model_id")
