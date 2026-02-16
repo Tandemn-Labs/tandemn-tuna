@@ -86,6 +86,7 @@ GPU_SPECS: dict[str, GpuSpec] = {
     "L40S": GpuSpec("L40S", "NVIDIA L40S", 48, "ada"),
     "A100_40GB": GpuSpec("A100_40GB", "NVIDIA A100 40GB", 40, "ampere"),
     "A100_80GB": GpuSpec("A100_80GB", "NVIDIA A100 80GB SXM", 80, "ampere"),
+    "H100_MIG": GpuSpec("H100_MIG", "NVIDIA H100 MIG", 40, "hopper"),
     "H100": GpuSpec("H100", "NVIDIA H100 80GB HBM3", 80, "hopper"),
     "H200": GpuSpec("H200", "NVIDIA H200", 141, "hopper"),
     "B200": GpuSpec("B200", "NVIDIA B200", 192, "blackwell"),
@@ -136,6 +137,15 @@ _PROVIDER_GPUS: list[ProviderGpu] = [
         "RTX_PRO_6000", "cloudrun", "nvidia-rtx-pro-6000", 0.84,
         regions=("us-central1",),
     ),
+
+    # Baseten
+    ProviderGpu("T4", "baseten", "T4", 0.63),
+    ProviderGpu("L4", "baseten", "L4", 0.85),
+    ProviderGpu("A10G", "baseten", "A10G", 1.21),
+    ProviderGpu("A100_80GB", "baseten", "A100", 4.00),
+    ProviderGpu("H100_MIG", "baseten", "H100_MIG", 3.75),
+    ProviderGpu("H100", "baseten", "H100", 6.50),
+    ProviderGpu("B200", "baseten", "B200", 9.98),
 ]
 
 _SKYPILOT_GPU_NAME_MAP: dict[str, str] = {

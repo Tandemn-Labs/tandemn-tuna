@@ -36,9 +36,11 @@ dev = [
 ]
 cloudrun = ["google-cloud-run>=0.10.0"]
 modal = ["modal>=0.73"]
+baseten = ["truss>=0.9"]
 all = [
     "google-cloud-run>=0.10.0",
     "modal>=0.73",
+    "truss>=0.9",
 ]
 
 [project.scripts]
