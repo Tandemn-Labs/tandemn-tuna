@@ -136,6 +136,25 @@ _PROVIDER_GPUS: list[ProviderGpu] = [
         "RTX_PRO_6000", "cloudrun", "nvidia-rtx-pro-6000", 0.84,
         regions=("us-central1",),
     ),
+
+    # Azure Container Apps (prices from Azure Retail Prices API, US East region)
+    ProviderGpu(
+        "T4", "azure", "Consumption-GPU-NC8as-T4", 0.26,
+        regions=(
+            "australiaeast", "canadacentral", "eastus", "eastus2",
+            "francecentral", "germanywestcentral", "japaneast",
+            "koreacentral", "northcentralus", "northeurope",
+            "southcentralus", "swedencentral", "switzerlandnorth",
+            "uksouth", "westeurope", "westus3",
+        ),
+    ),
+    ProviderGpu(
+        "A100_80GB", "azure", "Consumption-GPU-NC24-A100", 1.90,
+        regions=(
+            "australiaeast", "eastus", "eastus2", "northcentralus",
+            "southcentralus", "swedencentral", "westeurope", "westus3",
+        ),
+    ),
 ]
 
 _SKYPILOT_GPU_NAME_MAP: dict[str, str] = {

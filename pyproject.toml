@@ -36,9 +36,12 @@ dev = [
 ]
 cloudrun = ["google-cloud-run>=0.10.0"]
 modal = ["modal>=0.73"]
+azure = ["azure-mgmt-appcontainers>=4.0", "azure-identity>=1.15"]
 all = [
     "google-cloud-run>=0.10.0",
     "modal>=0.73",
+    "azure-mgmt-appcontainers>=4.0",
+    "azure-identity>=1.15",
 ]
 
 [project.scripts]
