@@ -11,13 +11,14 @@ Tuna is a smart router that combines both behind a single OpenAI-compatible endp
 <div align="center">
 <table>
 <tr>
-<td align="center" colspan="3"><b>Serverless</b></td>
+<td align="center" colspan="4"><b>Serverless</b></td>
 <td align="center" colspan="1"><b>Spot</b></td>
 </tr>
 <tr>
 <td align="center"><img src="https://raw.githubusercontent.com/Tandemn-Labs/tandemn-tuna/main/assets/modal-logo-icon.png" height="30"><br>Modal</td>
 <td align="center"><img src="https://raw.githubusercontent.com/Tandemn-Labs/tandemn-tuna/main/assets/runpod-logo-black.svg" height="30"><br>RunPod</td>
 <td align="center"><img src="https://raw.githubusercontent.com/Tandemn-Labs/tandemn-tuna/main/assets/google-cloud-run-logo-png_seeklogo-354677.png" height="30"><br>Cloud Run</td>
+<td align="center"><img src="https://raw.githubusercontent.com/Tandemn-Labs/tandemn-tuna/main/assets/baseten.png" height="30"><br>Baseten</td>
 <td align="center"><img src="https://raw.githubusercontent.com/Tandemn-Labs/tandemn-tuna/main/assets/Amazon_Web_Services_Logo.svg.png" height="30"><br>AWS via SkyPilot</td>
 </tr>
 </table>
@@ -27,7 +28,7 @@ Tuna is a smart router that combines both behind a single OpenAI-compatible endp
 
 - Python 3.11+
 - [AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) — required for spot instances (all deployments use spot)
-- At least one serverless provider account: [Modal](https://modal.com/), [RunPod](https://www.runpod.io/), or [Google Cloud](https://cloud.google.com/)
+- At least one serverless provider account: [Modal](https://modal.com/), [RunPod](https://www.runpod.io/), [Google Cloud](https://cloud.google.com/), or [Baseten](https://www.baseten.co/)
 - For gated models (Llama, Mistral, Gemma, etc.): a [HuggingFace token](https://huggingface.co/settings/tokens) with access to the model
 
 > **Note:** Tuna always deploys both a serverless backend and a spot backend. AWS credentials are required even if your serverless provider is Modal or RunPod, because spot instances run on AWS via [SkyPilot](https://github.com/skypilot-org/skypilot).
@@ -39,6 +40,7 @@ Tuna is a smart router that combines both behind a single OpenAI-compatible endp
 ```bash
 pip install tandemn-tuna[modal] --pre     # Modal as serverless provider
 pip install tandemn-tuna[cloudrun] --pre  # Cloud Run as serverless provider
+pip install tandemn-tuna[baseten] --pre   # Baseten as serverless provider
 pip install tandemn-tuna --pre            # RunPod (no extra deps needed)
 pip install tandemn-tuna[all] --pre       # everything
 ```
@@ -94,6 +96,32 @@ You also need billing enabled and the Cloud Run API (`run.googleapis.com`) enabl
 
 </details>
 
+<details>
+<summary><b>Baseten</b></summary>
+
+**Step 1: Create account** — sign up at https://app.baseten.co/signup/
+
+**Step 2: Get API key** — go to Settings > API Keys (https://app.baseten.co/settings/api_keys), create a key, copy it immediately
+
+**Step 3: Set the API key**
+
+```bash
+export BASETEN_API_KEY=<your-api-key>
+```
+
+Add to `~/.bashrc` or `~/.zshrc` to persist.
+
+**Step 4: Install and authenticate the Truss CLI**
+
+```bash
+pip install --upgrade truss
+truss login --api-key $BASETEN_API_KEY
+```
+
+**Step 5: (For gated models) Add HuggingFace token** — go to Settings > Secrets (https://app.baseten.co/settings/secrets), add a secret named `hf_access_token` with your HF token.
+
+</details>
+
 **4. (Optional) Set HuggingFace token for gated models**
 
 ```bash
@@ -108,6 +136,7 @@ Required for models like Llama, Mistral, Gemma, and other gated models. Not need
 tuna check --provider modal                          # check Modal credentials
 tuna check --provider runpod                         # check RunPod API key
 tuna check --provider cloudrun --gcp-project <id> --gcp-region us-central1  # check Cloud Run
+tuna check --provider baseten                        # check Baseten API key + truss CLI
 ```
 
 **6. Deploy a model**
@@ -197,7 +226,7 @@ The router:
 | `--model` | *(required)* | HuggingFace model ID (e.g. `Qwen/Qwen3-0.6B`) |
 | `--gpu` | *(required)* | GPU type (e.g. `L4`, `L40S`, `A100`, `H100`) |
 | `--gpu-count` | `1` | Number of GPUs |
-| `--serverless-provider` | auto (cheapest for GPU) | `modal`, `runpod`, or `cloudrun` |
+| `--serverless-provider` | auto (cheapest for GPU) | `modal`, `runpod`, `cloudrun`, or `baseten` |
 | `--spots-cloud` | `aws` | Cloud provider for spot GPUs |
 | `--region` | — | Cloud region for spot instances |
 | `--tp-size` | `1` | Tensor parallelism degree |
@@ -250,6 +279,7 @@ Start with the built-in diagnostic tool:
 tuna check --provider runpod
 tuna check --provider modal
 tuna check --provider cloudrun --gcp-project <id> --gcp-region us-central1
+tuna check --provider baseten
 ```
 
 This validates credentials, API access, project configuration, and GPU region availability.
