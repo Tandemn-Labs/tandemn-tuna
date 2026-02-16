@@ -349,7 +349,7 @@ class BasetenProvider(InferenceProvider):
             if resp.status_code == 200:
                 models = resp.json().get("models", [])
                 for model in models:
-                    if service_name in model.get("name", ""):
+                    if model.get("name") == f"{service_name}-serverless":
                         return {
                             "provider": self.name(),
                             "service_name": service_name,
