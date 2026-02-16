@@ -13,6 +13,7 @@ PROVIDER_MODULES: dict[str, tuple[str, str]] = {
     "modal": ("tuna.providers.modal_provider", "ModalProvider"),
     "runpod": ("tuna.providers.runpod_provider", "RunPodProvider"),
     "cloudrun": ("tuna.providers.cloudrun_provider", "CloudRunProvider"),
+    "baseten": ("tuna.providers.baseten_provider", "BasetenProvider"),
     "skyserve": ("tuna.spot.sky_launcher", "SkyLauncher"),
 }
 
@@ -20,6 +21,7 @@ PROVIDER_MODULES: dict[str, tuple[str, str]] = {
 _INSTALL_HINTS: dict[str, str] = {
     "modal": "pip install tandemn-tuna[modal]",
     "cloudrun": "pip install tandemn-tuna[cloudrun]",
+    "baseten": "pip install tandemn-tuna[baseten]",
 }
 
 

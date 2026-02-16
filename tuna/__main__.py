@@ -673,7 +673,7 @@ def _print_gpu_table(result, spot_prices: dict, show_spot: bool, get_gpu_spec) -
     table.add_column("GPU")
     table.add_column("VRAM", justify="right")
 
-    providers = ["modal", "runpod", "cloudrun"]
+    providers = ["modal", "runpod", "cloudrun", "baseten"]
     for p in providers:
         table.add_column(p.upper(), justify="right")
     if show_spot:
@@ -776,7 +776,7 @@ def main() -> None:
     p_deploy.add_argument("--tp-size", type=int, default=1, help="Tensor parallel size")
     p_deploy.add_argument("--max-model-len", type=int, default=4096)
     p_deploy.add_argument("--serverless-provider", default=None,
-                          help="Serverless backend: modal, runpod, cloudrun (default: cheapest for GPU)")
+                          help="Serverless backend: modal, runpod, cloudrun, baseten (default: cheapest for GPU)")
     p_deploy.add_argument("--spots-cloud", default="aws", help="Cloud for spot GPUs")
     p_deploy.add_argument("--region", default=None)
     p_deploy.add_argument("--concurrency", type=int, default=None,
