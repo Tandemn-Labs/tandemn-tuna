@@ -1,4 +1,4 @@
-"""Tests for tuna.providers.baseten_provider — plan() and preflight()."""
+"""Tests for tuna.providers.baseten_provider — plan(), preflight(), and deploy()."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import yaml
 
-from tuna.models import DeployRequest
+from tuna.models import DeployRequest, ProviderPlan
 from tuna.providers.baseten_provider import BasetenProvider
 
 
@@ -271,3 +271,194 @@ class TestBasetenProviderBasics:
     @patch.dict("os.environ", {}, clear=True)
     def test_auth_token_empty_when_unset(self, provider):
         assert provider.auth_token() == ""
+
+
+# ---------------------------------------------------------------------------
+# model_cache + truss-transfer-cli template tests
+# ---------------------------------------------------------------------------
+
+class TestBasetenModelCache:
+    def test_template_has_model_cache_block(self, provider, request_l4, vllm_cmd):
+        plan = provider.plan(request_l4, vllm_cmd)
+        parsed = yaml.safe_load(plan.rendered_script)
+        assert "model_cache" in parsed
+        assert len(parsed["model_cache"]) == 1
+        assert parsed["model_cache"][0]["repo_id"] == "Qwen/Qwen3-0.6B"
+        assert parsed["model_cache"][0]["revision"] == "main"
+        assert parsed["model_cache"][0]["use_volume"] is True
+
+    def test_template_has_truss_transfer_cli(self, provider, request_l4, vllm_cmd):
+        plan = provider.plan(request_l4, vllm_cmd)
+        assert "truss-transfer-cli &&" in plan.rendered_script
+
+    def test_start_command_begins_with_truss_transfer(self, provider, request_l4, vllm_cmd):
+        plan = provider.plan(request_l4, vllm_cmd)
+        parsed = yaml.safe_load(plan.rendered_script)
+        start_cmd = parsed["docker_server"]["start_command"]
+        assert start_cmd.strip().startswith("truss-transfer-cli")
+
+    def test_model_cache_repo_id_matches_model(self, provider, vllm_cmd):
+        req = DeployRequest(
+            model_name="meta-llama/Llama-3-8B",
+            gpu="H100",
+            service_name="llama-test",
+            serverless_provider="baseten",
+        )
+        plan = provider.plan(req, vllm_cmd)
+        parsed = yaml.safe_load(plan.rendered_script)
+        assert parsed["model_cache"][0]["repo_id"] == "meta-llama/Llama-3-8B"
+
+
+# ---------------------------------------------------------------------------
+# plan() metadata for autoscaling
+# ---------------------------------------------------------------------------
+
+class TestBasetenPlanMetadata:
+    def test_plan_metadata_has_concurrency_target(self, provider, request_l4, vllm_cmd):
+        plan = provider.plan(request_l4, vllm_cmd)
+        assert "concurrency_target" in plan.metadata
+        assert plan.metadata["concurrency_target"] == "32"  # default
+
+    def test_plan_metadata_has_scale_down_delay(self, provider, request_l4, vllm_cmd):
+        plan = provider.plan(request_l4, vllm_cmd)
+        assert "scale_down_delay" in plan.metadata
+        assert plan.metadata["scale_down_delay"] == "60"  # default
+
+    def test_plan_metadata_custom_concurrency(self, provider, request_l4, vllm_cmd):
+        request_l4.scaling.serverless.concurrency = 64
+        plan = provider.plan(request_l4, vllm_cmd)
+        assert plan.metadata["concurrency_target"] == "64"
+
+    def test_plan_metadata_custom_scaledown(self, provider, request_l4, vllm_cmd):
+        request_l4.scaling.serverless.scaledown_window = 120
+        plan = provider.plan(request_l4, vllm_cmd)
+        assert plan.metadata["scale_down_delay"] == "120"
+
+
+# ---------------------------------------------------------------------------
+# _configure_autoscaling() tests
+# ---------------------------------------------------------------------------
+
+class TestBasetenAutoscaling:
+    @patch.dict("os.environ", {"BASETEN_API_KEY": "test-key"}, clear=True)
+    def test_autoscaling_patch_request(self, provider):
+        mock_resp = MagicMock(status_code=200)
+        with patch("tuna.providers.baseten_provider.requests.patch", return_value=mock_resp) as mock_patch:
+            provider._configure_autoscaling(
+                "model123",
+                concurrency_target=64,
+                scale_down_delay=120,
+            )
+
+        mock_patch.assert_called_once()
+        call_args = mock_patch.call_args
+        assert call_args[0][0] == "https://api.baseten.co/v1/models/model123/environments/production"
+        assert call_args[1]["json"] == {
+            "autoscaling_settings": {
+                "concurrency_target": 64,
+                "scale_down_delay": 120,
+            }
+        }
+        assert call_args[1]["headers"]["Authorization"] == "Api-Key test-key"
+
+    @patch.dict("os.environ", {"BASETEN_API_KEY": "test-key"}, clear=True)
+    def test_autoscaling_failure_is_non_fatal(self, provider):
+        """Autoscaling API failure should log a warning, not raise."""
+        mock_resp = MagicMock(status_code=500, text="Internal Server Error")
+        with patch("tuna.providers.baseten_provider.requests.patch", return_value=mock_resp):
+            # Should not raise
+            provider._configure_autoscaling(
+                "model123",
+                concurrency_target=32,
+                scale_down_delay=60,
+            )
+
+    @patch.dict("os.environ", {"BASETEN_API_KEY": "test-key"}, clear=True)
+    def test_autoscaling_network_error_is_non_fatal(self, provider):
+        """Network errors during autoscaling should be caught."""
+        import requests as req_lib
+        with patch(
+            "tuna.providers.baseten_provider.requests.patch",
+            side_effect=req_lib.ConnectionError("network down"),
+        ):
+            # Should not raise
+            provider._configure_autoscaling(
+                "model123",
+                concurrency_target=32,
+                scale_down_delay=60,
+            )
+
+    @patch.dict("os.environ", {}, clear=True)
+    def test_autoscaling_skipped_without_api_key(self, provider):
+        """Without API key, _configure_autoscaling should return silently."""
+        with patch("tuna.providers.baseten_provider.requests.patch") as mock_patch:
+            provider._configure_autoscaling(
+                "model123",
+                concurrency_target=32,
+                scale_down_delay=60,
+            )
+        mock_patch.assert_not_called()
+
+    @patch.dict("os.environ", {"BASETEN_API_KEY": "test-key"}, clear=True)
+    def test_deploy_calls_autoscaling(self, provider):
+        """deploy() should call _configure_autoscaling after successful truss push."""
+        mock_proc = MagicMock(
+            returncode=0,
+            stdout="https://app.baseten.co/models/abc123/logs/def456\n",
+            stderr="",
+        )
+        mock_autoscale_resp = MagicMock(status_code=200)
+
+        plan = ProviderPlan(
+            provider="baseten",
+            rendered_script="model_name: test",
+            metadata={
+                "service_name": "test-serverless",
+                "model_name": "Qwen/Qwen3-0.6B",
+                "concurrency_target": "64",
+                "scale_down_delay": "120",
+            },
+        )
+
+        with (
+            patch("tuna.providers.baseten_provider.subprocess.run", return_value=mock_proc),
+            patch("tuna.providers.baseten_provider.requests.patch", return_value=mock_autoscale_resp) as mock_patch,
+        ):
+            result = provider.deploy(plan)
+
+        assert result.error is None
+        assert result.endpoint_url is not None
+        mock_patch.assert_called_once()
+        call_json = mock_patch.call_args[1]["json"]
+        assert call_json["autoscaling_settings"]["concurrency_target"] == 64
+        assert call_json["autoscaling_settings"]["scale_down_delay"] == 120
+
+    @patch.dict("os.environ", {"BASETEN_API_KEY": "test-key"}, clear=True)
+    def test_deploy_uses_defaults_when_metadata_missing(self, provider):
+        """deploy() should use defaults if autoscaling metadata is absent."""
+        mock_proc = MagicMock(
+            returncode=0,
+            stdout="https://app.baseten.co/models/abc123/logs/def456\n",
+            stderr="",
+        )
+        mock_autoscale_resp = MagicMock(status_code=200)
+
+        plan = ProviderPlan(
+            provider="baseten",
+            rendered_script="model_name: test",
+            metadata={
+                "service_name": "test-serverless",
+                "model_name": "m",
+            },
+        )
+
+        with (
+            patch("tuna.providers.baseten_provider.subprocess.run", return_value=mock_proc),
+            patch("tuna.providers.baseten_provider.requests.patch", return_value=mock_autoscale_resp) as mock_patch,
+        ):
+            result = provider.deploy(plan)
+
+        assert result.error is None
+        call_json = mock_patch.call_args[1]["json"]
+        assert call_json["autoscaling_settings"]["concurrency_target"] == 32
+        assert call_json["autoscaling_settings"]["scale_down_delay"] == 60

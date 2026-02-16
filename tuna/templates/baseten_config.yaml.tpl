@@ -9,10 +9,16 @@ model_metadata:
     max_tokens: 128
 
 base_image:
-  image: vllm/vllm-openai:v0.15.1
+  image: vllm/vllm-openai:v{vllm_version}
+
+model_cache:
+  - repo_id: {model}
+    revision: main
+    use_volume: true
 
 docker_server:
   start_command: >-
+    truss-transfer-cli &&
     vllm serve {model}
     --host 0.0.0.0
     --port 8000
