@@ -278,13 +278,13 @@ class AzureProvider(InferenceProvider):
             return PreflightCheck(
                 name="gpu_region",
                 passed=True,
-                message=f"{gpu_profile} available in {region}",
+                message=f"{gpu_profile} listed for {region} (static catalog — actual availability depends on your subscription quota)",
             )
 
         return PreflightCheck(
             name="gpu_region",
             passed=False,
-            message=f"{gpu_profile} is not available in {region}. Available regions: {', '.join(valid_regions)}",
+            message=f"{gpu_profile} is not listed for {region}. Listed regions: {', '.join(valid_regions)}",
             fix_command=f"Use --azure-region with one of: {', '.join(valid_regions)}",
         )
 
