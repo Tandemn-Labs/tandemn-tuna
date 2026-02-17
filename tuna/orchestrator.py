@@ -5,8 +5,6 @@ from __future__ import annotations
 import logging
 import os
 import subprocess
-import tempfile
-import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -16,6 +14,13 @@ import requests
 
 from tuna.models import DeployRequest, DeploymentResult, HybridDeployment, ProviderPlan
 from tuna.providers.registry import get_provider
+from tuna.sky_sdk import (
+    cluster_down,
+    cluster_launch,
+    cluster_status,
+    serve_status,
+    task_from_yaml_str,
+)
 from tuna.template_engine import render_template
 
 if TYPE_CHECKING:
@@ -65,36 +70,12 @@ def _launch_router_vm(request: DeployRequest) -> DeploymentResult:
 
     cluster_name = f"{request.service_name}-router"
 
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".yaml", delete=False, prefix="tuna_router_"
-    ) as f:
-        f.write(rendered)
-        yaml_path = f.name
-
     try:
         logger.info("Launching router VM: %s", cluster_name)
-        result = subprocess.run(
-            [
-                "sky", "launch", yaml_path,
-                "--cluster", cluster_name,
-                "-y",
-                "-d",  # Detach: return once run cmd starts (gunicorn never exits)
-                "--down",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=900,
-        )
+        task = task_from_yaml_str(rendered)
+        job_id, handle = cluster_launch(task, cluster_name=cluster_name, down=True)
 
-        if result.returncode != 0:
-            return DeploymentResult(
-                provider="router",
-                error=f"sky launch failed: {result.stderr}",
-                metadata={"cluster_name": cluster_name},
-            )
-
-        # Get the router's public IP
-        ip = _get_cluster_ip(cluster_name)
+        ip = handle.head_ip if handle else None
         if not ip:
             return DeploymentResult(
                 provider="router",
@@ -111,20 +92,22 @@ def _launch_router_vm(request: DeployRequest) -> DeploymentResult:
             metadata={"cluster_name": cluster_name},
         )
 
-    finally:
-        Path(yaml_path).unlink(missing_ok=True)
+    except Exception as e:
+        logger.error("sky launch failed: %s", e)
+        return DeploymentResult(
+            provider="router",
+            error=f"sky launch failed: {e}",
+            metadata={"cluster_name": cluster_name},
+        )
 
 
 def _find_controller_cluster() -> str | None:
     """Find the SkyServe controller cluster name from ``sky status``."""
     try:
-        result = subprocess.run(
-            ["sky", "status"],
-            capture_output=True, text=True, timeout=30,
-        )
-        for line in result.stdout.splitlines():
-            if "sky-serve-controller" in line:
-                return line.split()[0]
+        statuses = cluster_status()
+        for entry in statuses:
+            if "sky-serve-controller" in entry.name:
+                return entry.name
     except Exception as e:
         logger.debug("Failed to find controller cluster: %s", e)
     return None
@@ -269,15 +252,9 @@ def _launch_router_on_controller(
 def _get_cluster_ip(cluster_name: str) -> str | None:
     """Get the head node IP of a SkyPilot cluster."""
     try:
-        result = subprocess.run(
-            ["sky", "status", "--ip", cluster_name],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        ip = result.stdout.strip()
-        if ip and not ip.startswith("No cluster"):
-            return ip
+        statuses = cluster_status(cluster_names=[cluster_name])
+        if statuses and statuses[0].handle:
+            return statuses[0].handle.head_ip
     except Exception as e:
         logger.debug("Failed to get IP for %s: %s", cluster_name, e)
     return None
@@ -556,11 +533,8 @@ def _cleanup_serve_controller() -> None:
     try:
         # Wait for any SHUTTING_DOWN services to finish
         for _ in range(6):
-            result = subprocess.run(
-                ["sky", "serve", "status"],
-                capture_output=True, text=True, timeout=30,
-            )
-            if "No existing services." in result.stdout:
+            statuses = serve_status(None)
+            if not statuses:
                 break
             time.sleep(5)
         else:
@@ -568,20 +542,10 @@ def _cleanup_serve_controller() -> None:
             return
 
         # Find and tear down the controller cluster
-        status_result = subprocess.run(
-            ["sky", "status"],
-            capture_output=True, text=True, timeout=30,
-        )
-        for line in status_result.stdout.splitlines():
-            if "sky-serve-controller" in line:
-                controller_name = line.split()[0]
-                logger.info("No remaining services, tearing down controller: %s", controller_name)
-                subprocess.run(
-                    ["sky", "down", controller_name, "-y"],
-                    input="delete\n",
-                    capture_output=True, text=True, timeout=120,
-                )
-                break
+        controller_name = _find_controller_cluster()
+        if controller_name:
+            logger.info("No remaining services, tearing down controller: %s", controller_name)
+            cluster_down(controller_name)
     except Exception as e:
         logger.debug("Controller cleanup check failed (non-fatal): %s", e)
 
@@ -630,10 +594,10 @@ def destroy_hybrid(service_name: str, record: "DeploymentRecord | None" = None) 
         # Legacy path: separate router VM
         router_cluster = f"{service_name}-router"
         logger.info("Tearing down router: %s", router_cluster)
-        subprocess.run(
-            ["sky", "down", router_cluster, "-y"],
-            capture_output=True, text=True, timeout=120,
-        )
+        try:
+            cluster_down(router_cluster)
+        except Exception as e:
+            logger.debug("Router teardown failed (non-fatal): %s", e)
 
     # Tear down spot via provider interface (skip if spot was never launched)
     spot_name = record.spot_provider_name

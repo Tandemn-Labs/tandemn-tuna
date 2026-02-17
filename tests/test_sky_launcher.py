@@ -1,8 +1,10 @@
 """Tests for tuna.spot.sky_launcher — plan() only, no real deploys."""
 
-import subprocess
 import yaml
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
+
+from sky import ClusterStatus
+from sky.serve import ServiceStatus
 
 from tuna.models import DeployRequest, DeploymentResult
 from tuna.providers.base import InferenceProvider
@@ -96,6 +98,55 @@ class TestSkyLauncherPlan:
         assert "L40S:4" in parsed["resources"]["accelerators"]
 
 
+class TestSkyLauncherDeploy:
+    def setup_method(self):
+        self.launcher = SkyLauncher()
+
+    @patch("tuna.spot.sky_launcher.serve_up", return_value=("my-svc-spot", "http://1.2.3.4:30001"))
+    @patch("tuna.spot.sky_launcher.task_from_yaml_str")
+    def test_deploy_success(self, mock_task, mock_serve_up):
+        from tuna.models import ProviderPlan
+        plan = ProviderPlan(
+            provider="skyserve",
+            rendered_script="resources:\n  accelerators: L40S:1\n",
+            metadata={"service_name": "my-svc-spot"},
+        )
+        result = self.launcher.deploy(plan)
+
+        assert result.error is None
+        assert result.endpoint_url == "http://1.2.3.4:30001"
+        assert result.health_url == "http://1.2.3.4:30001/health"
+        assert result.metadata["service_name"] == "my-svc-spot"
+
+    @patch("tuna.spot.sky_launcher.serve_up", return_value=("my-svc-spot", ""))
+    @patch("tuna.spot.sky_launcher.task_from_yaml_str")
+    def test_deploy_no_endpoint(self, mock_task, mock_serve_up):
+        from tuna.models import ProviderPlan
+        plan = ProviderPlan(
+            provider="skyserve",
+            rendered_script="resources:\n  accelerators: L40S:1\n",
+            metadata={"service_name": "my-svc-spot"},
+        )
+        result = self.launcher.deploy(plan)
+
+        assert result.error is not None
+        assert "Endpoint not yet available" in result.error
+
+    @patch("tuna.spot.sky_launcher.serve_up", side_effect=RuntimeError("launch failed"))
+    @patch("tuna.spot.sky_launcher.task_from_yaml_str")
+    def test_deploy_exception(self, mock_task, mock_serve_up):
+        from tuna.models import ProviderPlan
+        plan = ProviderPlan(
+            provider="skyserve",
+            rendered_script="resources:\n  accelerators: L40S:1\n",
+            metadata={"service_name": "my-svc-spot"},
+        )
+        result = self.launcher.deploy(plan)
+
+        assert result.error is not None
+        assert "launch failed" in result.error
+
+
 class TestSkyLauncherDestroy:
     def setup_method(self):
         self.launcher = SkyLauncher()
@@ -105,61 +156,94 @@ class TestSkyLauncherDestroy:
         )
 
     @patch("tuna.spot.sky_launcher.SkyLauncher._controller_is_init", return_value=False)
-    @patch("tuna.spot.sky_launcher.subprocess")
-    def test_destroy_confirms_service_gone(self, mock_subprocess, mock_ctrl):
+    @patch("tuna.spot.sky_launcher.serve_status", return_value=[])
+    @patch("tuna.spot.sky_launcher.serve_down")
+    def test_destroy_confirms_service_gone(self, mock_down, mock_status, mock_ctrl):
         """destroy() should verify the service is actually deleted."""
-        mock_subprocess.run.side_effect = [
-            MagicMock(returncode=0),  # sky serve down
-            MagicMock(stdout="No existing services.", stderr="", returncode=0),  # status check
-        ]
         self.launcher.destroy(self.result)
 
-        assert mock_subprocess.run.call_count == 2
+        mock_down.assert_called_once_with("test-svc-spot")
+        mock_status.assert_called_once_with("test-svc-spot")
 
     @patch("tuna.spot.sky_launcher.time")
-    @patch("tuna.spot.sky_launcher.subprocess")
-    def test_destroy_retries_when_controller_init(self, mock_subprocess, mock_time):
+    @patch("tuna.spot.sky_launcher.cluster_status")
+    @patch("tuna.spot.sky_launcher.serve_status")
+    @patch("tuna.spot.sky_launcher.serve_down")
+    def test_destroy_retries_when_controller_init(
+        self, mock_down, mock_serve_status, mock_cluster_status, mock_time,
+    ):
         """When controller is INIT, sky reports no services but destroy should retry."""
-        # _controller_is_init is called via subprocess (sky status), so we
-        # include those calls in the side_effect sequence:
-        mock_subprocess.run.side_effect = [
-            MagicMock(returncode=0),  # 1st sky serve down
-            MagicMock(stdout="No existing services.", stderr="", returncode=0),  # serve status (empty)
-            MagicMock(stdout="sky-serve-controller-abc  INIT  AWS", returncode=0),  # sky status → INIT
-            MagicMock(returncode=0),  # 2nd sky serve down
-            MagicMock(stdout="test-svc-spot  READY", stderr="", returncode=0),  # serve status (found)
-            MagicMock(returncode=0),  # 3rd sky serve down
-            MagicMock(stdout="No existing services.", stderr="", returncode=0),  # serve status (gone)
-            MagicMock(stdout="No existing clusters.", returncode=0),  # sky status → no controller
+        # Build a mock controller entry in INIT state
+        ctrl_entry = MagicMock()
+        ctrl_entry.name = "sky-serve-controller-abc"
+        ctrl_entry.status = ClusterStatus.INIT
+
+        # Build a mock service entry that appears after controller is ready
+        svc_entry = {"status": ServiceStatus.READY, "name": "test-svc-spot"}
+
+        # Sequence: 1st empty (but controller INIT), 2nd found, 3rd gone (no controller)
+        mock_serve_status.side_effect = [
+            [],                 # 1st check: empty (controller INIT)
+            [svc_entry],        # 2nd check: service found (not gone)
+            [],                 # 3rd check: empty (gone for real)
         ]
+        mock_cluster_status.side_effect = [
+            [ctrl_entry],       # 1st: controller in INIT
+            [],                 # 3rd: no controller
+        ]
+
         self.launcher.destroy(self.result)
 
-        # Should have called sky serve down 3 times
-        down_calls = [
-            c for c in mock_subprocess.run.call_args_list
-            if "down" in str(c)
-        ]
-        assert len(down_calls) == 3
+        assert mock_down.call_count == 3
 
     @patch("tuna.spot.sky_launcher.SkyLauncher._controller_is_init", return_value=False)
     @patch("tuna.spot.sky_launcher.time")
-    @patch("tuna.spot.sky_launcher.subprocess")
-    def test_destroy_waits_for_shutting_down(self, mock_subprocess, mock_time, mock_ctrl):
+    @patch("tuna.spot.sky_launcher.serve_status")
+    @patch("tuna.spot.sky_launcher.serve_down")
+    def test_destroy_waits_for_shutting_down(
+        self, mock_down, mock_serve_status, mock_time, mock_ctrl,
+    ):
         """If service is SHUTTING_DOWN, destroy should wait and recheck."""
-        mock_subprocess.run.side_effect = [
-            MagicMock(returncode=0),  # sky serve down
-            MagicMock(stdout="test-svc-spot  SHUTTING_DOWN", stderr="", returncode=0),
-            MagicMock(returncode=0),  # retry sky serve down
-            MagicMock(stdout="No existing services.", stderr="", returncode=0),
+        mock_serve_status.side_effect = [
+            [{"status": ServiceStatus.SHUTTING_DOWN}],  # still shutting down
+            [],                                          # gone
         ]
         self.launcher.destroy(self.result)
 
         mock_time.sleep.assert_called()
 
-    @patch("tuna.spot.sky_launcher.subprocess")
-    def test_destroy_no_service_name(self, mock_subprocess):
+    def test_destroy_no_service_name(self):
         """destroy() with no service_name in metadata should skip."""
         result = DeploymentResult(provider="skyserve", metadata={})
+        # Should not raise — just silently returns
         self.launcher.destroy(result)
 
-        mock_subprocess.run.assert_not_called()
+
+class TestSkyLauncherStatus:
+    def setup_method(self):
+        self.launcher = SkyLauncher()
+
+    @patch("tuna.spot.sky_launcher.serve_status")
+    def test_status_returns_structured_dict(self, mock_serve_status):
+        mock_serve_status.return_value = [
+            {"status": ServiceStatus.READY, "endpoint": "http://1.2.3.4:30001"},
+        ]
+        result = self.launcher.status("my-svc")
+
+        assert result["provider"] == "skyserve"
+        assert result["service_name"] == "my-svc-spot"
+        assert result["status"] == "READY"
+        assert result["endpoint"] == "http://1.2.3.4:30001"
+
+    @patch("tuna.spot.sky_launcher.serve_status", return_value=[])
+    def test_status_not_found(self, mock_serve_status):
+        result = self.launcher.status("my-svc")
+
+        assert result["status"] == "NOT_FOUND"
+
+    @patch("tuna.spot.sky_launcher.serve_status", side_effect=RuntimeError("oops"))
+    def test_status_error(self, mock_serve_status):
+        result = self.launcher.status("my-svc")
+
+        assert "error" in result
+        assert "oops" in result["error"]

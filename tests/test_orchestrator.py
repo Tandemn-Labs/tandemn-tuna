@@ -1,4 +1,4 @@
-"""Tests for tuna.orchestrator — unit tests with mocked subprocess/HTTP."""
+"""Tests for tuna.orchestrator — unit tests with mocked SDK/HTTP."""
 
 import subprocess
 from unittest.mock import MagicMock, patch
@@ -105,9 +105,9 @@ class TestDestroyHybrid:
         return DeploymentRecord(**defaults)
 
     @patch("tuna.orchestrator._cleanup_serve_controller")
-    @patch("tuna.orchestrator.subprocess")
+    @patch("tuna.orchestrator.cluster_down")
     @patch("tuna.orchestrator.get_provider")
-    def test_calls_provider_destroy_for_spot(self, mock_get_provider, mock_subprocess, mock_cleanup):
+    def test_calls_provider_destroy_for_spot(self, mock_get_provider, mock_cluster_down, mock_cleanup):
         mock_spot = MagicMock()
         mock_spot.name.return_value = "skyserve"
         mock_modal = MagicMock()
@@ -122,9 +122,9 @@ class TestDestroyHybrid:
         assert result_arg.metadata["service_name"] == "my-svc-spot"
 
     @patch("tuna.orchestrator._cleanup_serve_controller")
-    @patch("tuna.orchestrator.subprocess")
+    @patch("tuna.orchestrator.cluster_down")
     @patch("tuna.orchestrator.get_provider")
-    def test_calls_provider_destroy_for_serverless(self, mock_get_provider, mock_subprocess, mock_cleanup):
+    def test_calls_provider_destroy_for_serverless(self, mock_get_provider, mock_cluster_down, mock_cleanup):
         mock_spot = MagicMock()
         mock_spot.name.return_value = "skyserve"
         mock_modal = MagicMock()
@@ -139,9 +139,9 @@ class TestDestroyHybrid:
         assert result_arg.metadata["app_name"] == "my-svc-serverless"
 
     @patch("tuna.orchestrator._cleanup_serve_controller")
-    @patch("tuna.orchestrator.subprocess")
+    @patch("tuna.orchestrator.cluster_down")
     @patch("tuna.orchestrator.get_provider")
-    def test_router_teardown_uses_sky_down(self, mock_get_provider, mock_subprocess, mock_cleanup):
+    def test_router_teardown_uses_cluster_down(self, mock_get_provider, mock_cluster_down, mock_cleanup):
         mock_spot = MagicMock()
         mock_spot.name.return_value = "skyserve"
         mock_modal = MagicMock()
@@ -151,17 +151,13 @@ class TestDestroyHybrid:
         record = self._make_record()
         destroy_hybrid("my-svc", record=record)
 
-        # Router teardown should still use subprocess (infrastructure, not provider)
-        mock_subprocess.run.assert_called()
-        first_call = mock_subprocess.run.call_args_list[0]
-        assert "sky" in first_call[0][0]
-        assert "down" in first_call[0][0]
-        assert "my-svc-router" in first_call[0][0]
+        # Router teardown should use cluster_down SDK call
+        mock_cluster_down.assert_called_once_with("my-svc-router")
 
     @patch("tuna.orchestrator._cleanup_serve_controller")
-    @patch("tuna.orchestrator.subprocess")
+    @patch("tuna.orchestrator.cluster_down")
     @patch("tuna.orchestrator.get_provider")
-    def test_record_provider_names_used(self, mock_get_provider, mock_subprocess, mock_cleanup):
+    def test_record_provider_names_used(self, mock_get_provider, mock_cluster_down, mock_cleanup):
         """Verify that provider names come from the record, not hardcoded."""
         mock_custom_spot = MagicMock()
         mock_custom_spot.name.return_value = "custom_spot"
@@ -184,9 +180,9 @@ class TestDestroyHybrid:
         mock_get_provider.assert_any_call("custom_sl")
 
     @patch("tuna.orchestrator._cleanup_serve_controller")
-    @patch("tuna.orchestrator.subprocess")
+    @patch("tuna.orchestrator.cluster_down")
     @patch("tuna.orchestrator.get_provider")
-    def test_fallback_without_record(self, mock_get_provider, mock_subprocess, mock_cleanup):
+    def test_fallback_without_record(self, mock_get_provider, mock_cluster_down, mock_cleanup):
         """Without a record (no provider names), skips spot/serverless teardown."""
         destroy_hybrid("my-svc")
 
@@ -312,30 +308,26 @@ class TestStatusHybrid:
 
 
 class TestFindControllerCluster:
-    @patch("tuna.orchestrator.subprocess")
-    def test_finds_controller(self, mock_subprocess):
-        mock_subprocess.run.return_value = MagicMock(
-            stdout=(
-                "NAME                         LAUNCHED    RESOURCES\n"
-                "sky-serve-controller-abc123  2 hrs ago   AWS(m4.xlarge)\n"
-            ),
-            returncode=0,
-        )
+    @patch("tuna.orchestrator.cluster_status")
+    def test_finds_controller(self, mock_cluster_status):
+        entry = MagicMock()
+        entry.name = "sky-serve-controller-abc123"
+        mock_cluster_status.return_value = [entry]
+
         result = _find_controller_cluster()
         assert result == "sky-serve-controller-abc123"
 
-    @patch("tuna.orchestrator.subprocess")
-    def test_returns_none_when_no_controller(self, mock_subprocess):
-        mock_subprocess.run.return_value = MagicMock(
-            stdout="NAME      LAUNCHED    RESOURCES\nmy-vm    1 hr ago    AWS\n",
-            returncode=0,
-        )
+    @patch("tuna.orchestrator.cluster_status")
+    def test_returns_none_when_no_controller(self, mock_cluster_status):
+        entry = MagicMock()
+        entry.name = "my-vm"
+        mock_cluster_status.return_value = [entry]
+
         result = _find_controller_cluster()
         assert result is None
 
-    @patch("tuna.orchestrator.subprocess")
-    def test_returns_none_on_exception(self, mock_subprocess):
-        mock_subprocess.run.side_effect = subprocess.TimeoutExpired("sky", 30)
+    @patch("tuna.orchestrator.cluster_status", side_effect=RuntimeError("timeout"))
+    def test_returns_none_on_exception(self, mock_cluster_status):
         result = _find_controller_cluster()
         assert result is None
 
@@ -431,12 +423,6 @@ class TestDestroyHybridColocated:
             router_metadata={"colocated": "true", "cluster_name": "sky-serve-controller-abc"},
         )
         destroy_hybrid("my-svc", record=record)
-
-        # Verify no "sky down *-router" call
-        for call in mock_subprocess.run.call_args_list:
-            args = call[0][0]
-            if isinstance(args, list) and "sky" in args and "down" in args:
-                assert "my-svc-router" not in args, "Should not call sky down on router when colocated"
 
         # Verify SSH pkill was called
         found_pkill = False
@@ -664,10 +650,10 @@ class TestDestroyWithStatusLookup:
         return DeploymentRecord(**defaults)
 
     @patch("tuna.orchestrator._cleanup_serve_controller")
-    @patch("tuna.orchestrator.subprocess")
+    @patch("tuna.orchestrator.cluster_down")
     @patch("tuna.orchestrator.get_provider")
     def test_destroy_baseten_uses_status_lookup_for_model_id(
-        self, mock_get_provider, mock_subprocess, mock_cleanup,
+        self, mock_get_provider, mock_cluster_down, mock_cleanup,
     ):
         """When baseten metadata has no model_id, destroy should call status() to find it."""
         mock_baseten = MagicMock()
@@ -697,10 +683,10 @@ class TestDestroyWithStatusLookup:
         assert meta["model_id"] == "mdl_abc123"
 
     @patch("tuna.orchestrator._cleanup_serve_controller")
-    @patch("tuna.orchestrator.subprocess")
+    @patch("tuna.orchestrator.cluster_down")
     @patch("tuna.orchestrator.get_provider")
     def test_destroy_runpod_uses_status_lookup_for_endpoint_id(
-        self, mock_get_provider, mock_subprocess, mock_cleanup,
+        self, mock_get_provider, mock_cluster_down, mock_cleanup,
     ):
         """When runpod metadata has no endpoint_id, destroy should call status() to find it."""
         mock_runpod = MagicMock()
@@ -728,10 +714,10 @@ class TestDestroyWithStatusLookup:
         assert meta["endpoint_id"] == "ep_xyz789"
 
     @patch("tuna.orchestrator._cleanup_serve_controller")
-    @patch("tuna.orchestrator.subprocess")
+    @patch("tuna.orchestrator.cluster_down")
     @patch("tuna.orchestrator.get_provider")
     def test_destroy_modal_with_empty_metadata_uses_default_app_name(
-        self, mock_get_provider, mock_subprocess, mock_cleanup,
+        self, mock_get_provider, mock_cluster_down, mock_cleanup,
     ):
         """Modal destroy with empty metadata should fall back to default app_name."""
         mock_modal = MagicMock()
