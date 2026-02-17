@@ -39,7 +39,7 @@ Spot (via SkyPilot):
 | AWS | Done | Current default |
 | GCP | Planned | SkyPilot supports it, need catalog entries |
 | Azure | Planned | SkyPilot supports it, need catalog entries |
-| Spheron AI | Research | Decentralized GPU marketplace |
+| Spheron AI | Research | High Quality GPU marketplace |
 | Prime Intellect | Research | Decentralized compute |
 
 - Heterogeneous GPU selection — allow different GPUs for serverless vs spot (cheap T4 for spot, faster L4 for serverless)
