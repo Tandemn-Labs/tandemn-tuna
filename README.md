@@ -24,6 +24,10 @@ Tuna is a smart router that combines both behind a single OpenAI-compatible endp
 </table>
 </div>
 
+<p align="center">
+  <a href="ROADMAP.md"><b>View Roadmap</b></a>
+</p>
+
 ## Prerequisites
 
 - Python 3.11+
