@@ -339,6 +339,17 @@ def launch_hybrid(request: DeployRequest, *, separate_router_vm: bool = False) -
     # Auth token the router needs to proxy to this serverless backend
     _backend_auth_token = serverless_prov.auth_token()
 
+    # Early preflight — fail fast before launching any VMs
+    preflight = serverless_prov.preflight(request)
+    if not preflight.ok:
+        failures = "; ".join(c.message for c in preflight.failed)
+        return HybridDeployment(
+            serverless=DeploymentResult(
+                provider=request.serverless_provider,
+                error=f"Preflight failed: {failures}",
+            ),
+        )
+
     router_result = None
     serverless_result = None
     router_url = None
@@ -346,13 +357,6 @@ def launch_hybrid(request: DeployRequest, *, separate_router_vm: bool = False) -
     def _launch_serverless():
         try:
             provider = get_provider(request.serverless_provider)
-            preflight = provider.preflight(request)
-            if not preflight.ok:
-                failures = "; ".join(c.message for c in preflight.failed)
-                return DeploymentResult(
-                    provider=request.serverless_provider,
-                    error=f"Preflight failed: {failures}",
-                )
             plan = provider.plan(request, vllm_cmd)
             return provider.deploy(plan)
         except Exception as e:
@@ -604,30 +608,35 @@ def destroy_hybrid(service_name: str, record: "DeploymentRecord | None" = None) 
             capture_output=True, text=True, timeout=120,
         )
 
-    spot_name = record.spot_provider_name or "skyserve"
-    spot_meta = (record.spot_metadata or {}).copy()
-    spot_meta.setdefault("service_name", f"{service_name}-spot")
-    serverless_name = record.serverless_provider_name or "modal"
-    serverless_meta = (record.serverless_metadata or {}).copy()
-    serverless_meta.setdefault("app_name", f"{service_name}-serverless")
+    # Tear down spot via provider interface (skip if spot was never launched)
+    spot_name = record.spot_provider_name
+    if spot_name:
+        spot_meta = (record.spot_metadata or {}).copy()
+        spot_meta.setdefault("service_name", f"{service_name}-spot")
+        spot_provider = get_provider(spot_name)
+        spot_result = DeploymentResult(
+            provider=spot_provider.name(),
+            metadata=spot_meta,
+        )
+        logger.info("Tearing down spot service via provider: %s", spot_provider.name())
+        spot_provider.destroy(spot_result)
+    else:
+        logger.info("No spot deployment to tear down")
 
-    # Tear down spot via provider interface
-    spot_provider = get_provider(spot_name)
-    spot_result = DeploymentResult(
-        provider=spot_provider.name(),
-        metadata=spot_meta,
-    )
-    logger.info("Tearing down spot service via provider: %s", spot_provider.name())
-    spot_provider.destroy(spot_result)
-
-    # Tear down serverless via provider interface
-    serverless_provider = get_provider(serverless_name)
-    serverless_result = DeploymentResult(
-        provider=serverless_provider.name(),
-        metadata=serverless_meta,
-    )
-    logger.info("Tearing down serverless via provider: %s", serverless_provider.name())
-    serverless_provider.destroy(serverless_result)
+    # Tear down serverless via provider interface (skip if never launched)
+    serverless_name = record.serverless_provider_name
+    if serverless_name:
+        serverless_meta = (record.serverless_metadata or {}).copy()
+        serverless_meta.setdefault("app_name", f"{service_name}-serverless")
+        serverless_provider = get_provider(serverless_name)
+        serverless_result = DeploymentResult(
+            provider=serverless_provider.name(),
+            metadata=serverless_meta,
+        )
+        logger.info("Tearing down serverless via provider: %s", serverless_provider.name())
+        serverless_provider.destroy(serverless_result)
+    else:
+        logger.info("No serverless deployment to tear down")
 
     # Clean up SkyServe controller if no services remain
     _cleanup_serve_controller()

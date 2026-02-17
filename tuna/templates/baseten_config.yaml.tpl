@@ -15,10 +15,11 @@ model_cache:
   - repo_id: {model}
     revision: main
     use_volume: true
+    volume_folder: {model_cache_folder}
 
 docker_server:
   start_command: >-
-    truss-transfer-cli &&
+    bash -c "truss-transfer-cli &&
     vllm serve {model}
     --host 0.0.0.0
     --port 8000
@@ -26,7 +27,7 @@ docker_server:
     --tensor-parallel-size {tp_size}
     --gpu-memory-utilization 0.95
     --disable-log-requests
-    {eager_flag}
+    {eager_flag}"
   readiness_endpoint: /health
   liveness_endpoint: /health
   predict_endpoint: /v1/chat/completions

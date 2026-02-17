@@ -195,6 +195,9 @@ class BasetenProvider(InferenceProvider):
         eager_flag = "--enforce-eager" if request.cold_start_mode == "fast_boot" else ""
         serverless = request.scaling.serverless
 
+        # volume_folder must be a safe directory name (no slashes)
+        model_cache_folder = request.model_name.replace("/", "--")
+
         replacements = {
             "service_name": service_name,
             "model": request.model_name,
@@ -204,6 +207,7 @@ class BasetenProvider(InferenceProvider):
             "concurrency": str(serverless.concurrency),
             "eager_flag": eager_flag,
             "vllm_version": request.vllm_version,
+            "model_cache_folder": model_cache_folder,
         }
 
         rendered = render_template(

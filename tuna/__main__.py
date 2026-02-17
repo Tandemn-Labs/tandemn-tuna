@@ -106,7 +106,9 @@ def cmd_deploy(args: argparse.Namespace) -> None:
 
     if result.spot and result.spot.endpoint_url:
         print(f"  Spot:       {result.spot.endpoint_url}")
-    else:
+    elif result.spot and result.spot.error:
+        print(f"  Spot:       FAILED - {result.spot.error}")
+    elif result.spot:
         print(f"  Spot:       launching in background...")
 
     print()
