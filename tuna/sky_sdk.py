@@ -10,6 +10,7 @@ import yaml
 
 import sky
 from sky import ClusterStatus
+from sky.schemas.api.responses import StatusResponse
 from sky.serve import ServiceStatus
 
 
@@ -52,7 +53,7 @@ def cluster_launch(
 
 def cluster_status(
     cluster_names: list[str] | None = None,
-) -> list:
+) -> list[StatusResponse]:
     """Return ``StatusResponse`` objects for clusters."""
     req = sky.status(cluster_names)
     return sky.get(req)
