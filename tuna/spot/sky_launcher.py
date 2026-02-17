@@ -161,20 +161,41 @@ class SkyLauncher(InferenceProvider):
                 capture_output=True, text=True, timeout=30,
             )
             output = check.stdout + check.stderr
-            # Gone if sky says no services or doesn't mention it at all
-            if "No existing services" in output:
-                return True
-            if service_name not in check.stdout:
-                return True
             # Still shutting down — not gone yet
             if "SHUTTING_DOWN" in check.stdout:
                 logger.info("Service %s still shutting down, waiting...", service_name)
                 return False
             # Service still listed — not gone
-            return False
+            if service_name in check.stdout:
+                return False
+            # sky says no services or doesn't mention it — but don't trust this
+            # if a controller is still booting (INIT). The service may appear
+            # once the controller finishes starting.
+            if self._controller_is_init():
+                logger.info(
+                    "Controller still INIT — cannot confirm %s is gone, will retry",
+                    service_name,
+                )
+                return False
+            return True
         except Exception:
             # Can't reach sky CLI — controller probably still INIT
             return False
+
+    @staticmethod
+    def _controller_is_init() -> bool:
+        """Check if a SkyServe controller cluster exists in INIT state."""
+        try:
+            result = subprocess.run(
+                ["sky", "status"],
+                capture_output=True, text=True, timeout=30,
+            )
+            for line in result.stdout.splitlines():
+                if "sky-serve-controller" in line and "INIT" in line:
+                    return True
+        except Exception:
+            pass
+        return False
 
     def status(self, service_name: str) -> dict:
         spot_service = f"{service_name}-spot"

@@ -104,10 +104,10 @@ class TestSkyLauncherDestroy:
             metadata={"service_name": "test-svc-spot"},
         )
 
+    @patch("tuna.spot.sky_launcher.SkyLauncher._controller_is_init", return_value=False)
     @patch("tuna.spot.sky_launcher.subprocess")
-    def test_destroy_confirms_service_gone(self, mock_subprocess):
+    def test_destroy_confirms_service_gone(self, mock_subprocess, mock_ctrl):
         """destroy() should verify the service is actually deleted."""
-        # sky serve down succeeds, status confirms gone
         mock_subprocess.run.side_effect = [
             MagicMock(returncode=0),  # sky serve down
             MagicMock(stdout="No existing services.", stderr="", returncode=0),  # status check
@@ -119,31 +119,38 @@ class TestSkyLauncherDestroy:
     @patch("tuna.spot.sky_launcher.time")
     @patch("tuna.spot.sky_launcher.subprocess")
     def test_destroy_retries_when_controller_init(self, mock_subprocess, mock_time):
-        """When controller is INIT, sky serve down fails silently — destroy should retry."""
+        """When controller is INIT, sky reports no services but destroy should retry."""
+        # _controller_is_init is called via subprocess (sky status), so we
+        # include those calls in the side_effect sequence:
         mock_subprocess.run.side_effect = [
-            MagicMock(returncode=0),  # 1st sky serve down (silently fails)
-            MagicMock(stdout="test-svc-spot  READY", stderr="", returncode=0),  # still there
-            MagicMock(returncode=0),  # 2nd sky serve down (works now)
-            MagicMock(stdout="No existing services.", stderr="", returncode=0),  # confirmed gone
+            MagicMock(returncode=0),  # 1st sky serve down
+            MagicMock(stdout="No existing services.", stderr="", returncode=0),  # serve status (empty)
+            MagicMock(stdout="sky-serve-controller-abc  INIT  AWS", returncode=0),  # sky status → INIT
+            MagicMock(returncode=0),  # 2nd sky serve down
+            MagicMock(stdout="test-svc-spot  READY", stderr="", returncode=0),  # serve status (found)
+            MagicMock(returncode=0),  # 3rd sky serve down
+            MagicMock(stdout="No existing services.", stderr="", returncode=0),  # serve status (gone)
+            MagicMock(stdout="No existing clusters.", returncode=0),  # sky status → no controller
         ]
         self.launcher.destroy(self.result)
 
-        # Should have called sky serve down twice
+        # Should have called sky serve down 3 times
         down_calls = [
             c for c in mock_subprocess.run.call_args_list
             if "down" in str(c)
         ]
-        assert len(down_calls) == 2
+        assert len(down_calls) == 3
 
+    @patch("tuna.spot.sky_launcher.SkyLauncher._controller_is_init", return_value=False)
     @patch("tuna.spot.sky_launcher.time")
     @patch("tuna.spot.sky_launcher.subprocess")
-    def test_destroy_waits_for_shutting_down(self, mock_subprocess, mock_time):
+    def test_destroy_waits_for_shutting_down(self, mock_subprocess, mock_time, mock_ctrl):
         """If service is SHUTTING_DOWN, destroy should wait and recheck."""
         mock_subprocess.run.side_effect = [
             MagicMock(returncode=0),  # sky serve down
-            MagicMock(stdout="test-svc-spot  SHUTTING_DOWN", stderr="", returncode=0),  # shutting down
+            MagicMock(stdout="test-svc-spot  SHUTTING_DOWN", stderr="", returncode=0),
             MagicMock(returncode=0),  # retry sky serve down
-            MagicMock(stdout="No existing services.", stderr="", returncode=0),  # gone
+            MagicMock(stdout="No existing services.", stderr="", returncode=0),
         ]
         self.launcher.destroy(self.result)
 
