@@ -407,12 +407,14 @@ class TestDestroyHybridColocated:
     @patch("tuna.orchestrator._get_ssh_user", return_value="ubuntu")
     @patch("tuna.orchestrator._get_ssh_key_path", return_value="/home/user/.ssh/sky-key")
     @patch("tuna.orchestrator._get_cluster_ip", return_value="10.0.0.1")
+    @patch("tuna.orchestrator.cluster_down")
     @patch("tuna.orchestrator.subprocess")
     @patch("tuna.orchestrator.get_provider")
     def test_colocated_router_skips_sky_down(
-        self, mock_get_provider, mock_subprocess, mock_ip, mock_key, mock_user, mock_cleanup,
+        self, mock_get_provider, mock_subprocess, mock_cluster_down,
+        mock_ip, mock_key, mock_user, mock_cleanup,
     ):
-        """Colocated router should use SSH pkill, not sky down."""
+        """Colocated router should use SSH pkill, not cluster_down."""
         mock_spot = MagicMock()
         mock_spot.name.return_value = "skyserve"
         mock_modal = MagicMock()
@@ -424,7 +426,10 @@ class TestDestroyHybridColocated:
         )
         destroy_hybrid("my-svc", record=record)
 
-        # Verify SSH pkill was called
+        # cluster_down should NOT be called for colocated router
+        mock_cluster_down.assert_not_called()
+
+        # Verify SSH pkill was called instead
         found_pkill = False
         for call in mock_subprocess.run.call_args_list:
             args = call[0][0]
