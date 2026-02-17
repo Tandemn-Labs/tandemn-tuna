@@ -212,11 +212,12 @@ class TestSkyLauncherDestroy:
 
         mock_time.sleep.assert_called()
 
-    def test_destroy_no_service_name(self):
+    @patch("tuna.spot.sky_launcher.serve_down")
+    def test_destroy_no_service_name(self, mock_serve_down):
         """destroy() with no service_name in metadata should skip."""
         result = DeploymentResult(provider="skyserve", metadata={})
-        # Should not raise — just silently returns
         self.launcher.destroy(result)
+        mock_serve_down.assert_not_called()
 
 
 class TestSkyLauncherStatus:
