@@ -48,7 +48,7 @@ def _resolve_project_id() -> str | None:
     return None
 
 
-def _get_project_id() -> str:
+def get_project_id() -> str:
     """Resolve Google Cloud project ID, raising on failure."""
     project = _resolve_project_id()
     if project:
@@ -349,7 +349,7 @@ class CloudRunProvider(InferenceProvider):
                 "Use tp_size=1 and gpu_count=1, or choose a different provider."
             )
 
-        project_id = _get_project_id()
+        project_id = get_project_id()
         region = request.region or os.environ.get("GOOGLE_CLOUD_REGION", DEFAULT_REGION)
         service_name = f"{request.service_name}-serverless"
         serverless = request.scaling.serverless
@@ -606,7 +606,7 @@ class CloudRunProvider(InferenceProvider):
             }
 
         try:
-            project_id = _get_project_id()
+            project_id = get_project_id()
         except RuntimeError as e:
             return {"provider": self.name(), "status": "unknown", "error": str(e)}
 

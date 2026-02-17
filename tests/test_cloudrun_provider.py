@@ -11,7 +11,7 @@ from tuna.catalog import provider_gpu_map
 from tuna.models import DeployRequest, DeploymentResult
 from tuna.providers.cloudrun_provider import (
     CloudRunProvider,
-    _get_project_id,
+    get_project_id,
 )
 
 
@@ -36,20 +36,20 @@ class TestCloudRunGpuMap:
 class TestGetProjectId:
     @patch.dict("os.environ", {"GOOGLE_CLOUD_PROJECT": "my-project"})
     def test_from_env_var(self):
-        assert _get_project_id() == "my-project"
+        assert get_project_id() == "my-project"
 
     @patch.dict("os.environ", {}, clear=True)
     @patch("tuna.providers.cloudrun_provider.subprocess.run")
     def test_from_gcloud_fallback(self, mock_run):
         mock_run.return_value = MagicMock(stdout="gcloud-project\n", returncode=0)
-        assert _get_project_id() == "gcloud-project"
+        assert get_project_id() == "gcloud-project"
 
     @patch.dict("os.environ", {}, clear=True)
     @patch("tuna.providers.cloudrun_provider.subprocess.run")
     def test_raises_when_not_found(self, mock_run):
         mock_run.return_value = MagicMock(stdout="(unset)\n", returncode=0)
         with pytest.raises(RuntimeError, match="Cannot determine Google Cloud project"):
-            _get_project_id()
+            get_project_id()
 
 
 class TestCloudRunPlan:

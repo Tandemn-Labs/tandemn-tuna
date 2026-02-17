@@ -676,10 +676,10 @@ def destroy_hybrid(service_name: str, record: "DeploymentRecord | None" = None) 
             if serverless_name == "cloudrun":
                 if "project_id" not in serverless_meta:
                     try:
-                        from tuna.providers.cloudrun_provider import _get_project_id
-                        serverless_meta["project_id"] = _get_project_id()
-                    except Exception:
-                        pass
+                        from tuna.providers.cloudrun_provider import get_project_id
+                        serverless_meta["project_id"] = get_project_id()
+                    except Exception as e:
+                        logger.debug("Failed to get GCP project ID for destroy fallback: %s", e)
                 if "region" not in serverless_meta:
                     serverless_meta["region"] = os.environ.get(
                         "GOOGLE_CLOUD_REGION", "us-central1"
