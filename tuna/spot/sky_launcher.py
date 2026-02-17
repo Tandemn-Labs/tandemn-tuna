@@ -131,7 +131,8 @@ class SkyLauncher(InferenceProvider):
 
         logger.info("Tearing down SkyServe service %s", service_name)
 
-        for attempt in range(6):
+        max_attempts = 12  # 12 attempts × 15s = ~3 minutes of retries
+        for attempt in range(max_attempts):
             subprocess.run(
                 ["sky", "serve", "down", service_name, "-y"],
                 capture_output=True,
@@ -145,10 +146,10 @@ class SkyLauncher(InferenceProvider):
 
             logger.warning(
                 "Service %s still exists after sky serve down "
-                "(attempt %d/6, controller may still be starting), retrying...",
-                service_name, attempt + 1,
+                "(attempt %d/%d, controller may still be starting), retrying...",
+                service_name, attempt + 1, max_attempts,
             )
-            time.sleep(10)
+            time.sleep(15)
 
         logger.warning("Could not confirm deletion of %s after retries", service_name)
 
