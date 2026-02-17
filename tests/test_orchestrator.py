@@ -4,9 +4,11 @@ import subprocess
 from unittest.mock import MagicMock, patch
 
 from tuna.models import DeployRequest, DeploymentResult
+from tuna.models import PreflightCheck, PreflightResult
 from tuna.orchestrator import (
     build_vllm_cmd,
     destroy_hybrid,
+    launch_hybrid,
     push_url_to_router,
     status_hybrid,
     _find_controller_cluster,
@@ -180,17 +182,11 @@ class TestDestroyHybrid:
     @patch("tuna.orchestrator.subprocess")
     @patch("tuna.orchestrator.get_provider")
     def test_fallback_without_record(self, mock_get_provider, mock_subprocess):
-        """Without a record, falls back to hardcoded provider names."""
-        mock_spot = MagicMock()
-        mock_spot.name.return_value = "skyserve"
-        mock_modal = MagicMock()
-        mock_modal.name.return_value = "modal"
-        mock_get_provider.side_effect = lambda name: {"skyserve": mock_spot, "modal": mock_modal}[name]
-
+        """Without a record (no provider names), skips spot/serverless teardown."""
         destroy_hybrid("my-svc")
 
-        mock_get_provider.assert_any_call("skyserve")
-        mock_get_provider.assert_any_call("modal")
+        # No providers should be looked up since record has no provider names
+        mock_get_provider.assert_not_called()
 
 
 class TestStatusHybrid:
@@ -445,3 +441,42 @@ class TestDestroyHybridColocated:
                 if "pkill" in cmd and "gunicorn" in cmd:
                     found_pkill = True
         assert found_pkill, "Should SSH pkill the colocated gunicorn process"
+
+
+class TestLaunchHybridPreflightGate:
+    @patch("tuna.orchestrator.get_provider")
+    def test_serverless_preflight_failure_aborts_before_spot(self, mock_get_provider):
+        """If serverless preflight fails, launch_hybrid should return immediately without launching spot."""
+        mock_serverless = MagicMock()
+        mock_serverless.vllm_version.return_value = "0.15.1"
+        mock_serverless.auth_token.return_value = ""
+        mock_serverless.preflight.return_value = PreflightResult(
+            provider="baseten",
+            checks=[PreflightCheck(
+                name="api_key",
+                passed=False,
+                message="BASETEN_API_KEY environment variable not set",
+                fix_command="export BASETEN_API_KEY=<your-api-key>",
+            )],
+        )
+
+        mock_spot = MagicMock()
+        mock_get_provider.side_effect = lambda name: {
+            "baseten": mock_serverless,
+            "skyserve": mock_spot,
+        }[name]
+
+        request = DeployRequest(
+            model_name="Qwen/Qwen3-0.6B",
+            gpu="T4",
+            service_name="test-svc",
+            serverless_provider="baseten",
+        )
+        result = launch_hybrid(request)
+
+        assert result.serverless is not None
+        assert result.serverless.error is not None
+        assert "Preflight failed" in result.serverless.error
+        assert result.spot is None
+        assert result.router is None
+        mock_spot.deploy.assert_not_called()

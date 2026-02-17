@@ -286,16 +286,18 @@ class TestBasetenModelCache:
         assert parsed["model_cache"][0]["repo_id"] == "Qwen/Qwen3-0.6B"
         assert parsed["model_cache"][0]["revision"] == "main"
         assert parsed["model_cache"][0]["use_volume"] is True
+        assert parsed["model_cache"][0]["volume_folder"] == "Qwen--Qwen3-0.6B"
 
     def test_template_has_truss_transfer_cli(self, provider, request_l4, vllm_cmd):
         plan = provider.plan(request_l4, vllm_cmd)
         assert "truss-transfer-cli &&" in plan.rendered_script
 
-    def test_start_command_begins_with_truss_transfer(self, provider, request_l4, vllm_cmd):
+    def test_start_command_begins_with_bash_truss_transfer(self, provider, request_l4, vllm_cmd):
         plan = provider.plan(request_l4, vllm_cmd)
         parsed = yaml.safe_load(plan.rendered_script)
         start_cmd = parsed["docker_server"]["start_command"]
-        assert start_cmd.strip().startswith("truss-transfer-cli")
+        assert start_cmd.strip().startswith("bash -c")
+        assert "truss-transfer-cli &&" in start_cmd
 
     def test_model_cache_repo_id_matches_model(self, provider, vllm_cmd):
         req = DeployRequest(
