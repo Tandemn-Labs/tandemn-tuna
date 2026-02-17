@@ -97,22 +97,19 @@ def cmd_deploy(args: argparse.Namespace) -> None:
             result = HybridDeployment()
         save_deployment(request, result)
 
-    # Check for any component errors
+    # Check component outcomes
+    serverless_ok = result.serverless and not result.serverless.error
+    spot_ok = result.spot and not result.spot.error
+    router_ok = result.router and not result.router.error
     has_error = (
         (result.serverless and result.serverless.error)
         or (result.spot and result.spot.error)
         or (result.router and result.router.error)
     )
-    total_failure = (
-        not result.serverless and not result.spot and not result.router
-    ) or (
-        result.serverless and result.serverless.error
-        and not result.spot and not result.router
-    )
+    total_failure = not (serverless_ok or spot_ok or router_ok)
 
     if total_failure:
-        error_msg = result.serverless.error if result.serverless else "interrupted or crashed"
-        print(f"\nDeployment failed: {error_msg}", file=sys.stderr)
+        print("\nDeployment failed: no components launched successfully.", file=sys.stderr)
         print(f"Run: tuna destroy --service-name {request.service_name}", file=sys.stderr)
         sys.exit(1)
 
