@@ -130,12 +130,50 @@ class SkyLauncher(InferenceProvider):
             return
 
         logger.info("Tearing down SkyServe service %s", service_name)
-        subprocess.run(
-            ["sky", "serve", "down", service_name, "-y"],
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
+
+        for attempt in range(6):
+            subprocess.run(
+                ["sky", "serve", "down", service_name, "-y"],
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+
+            # Verify the service is actually gone
+            if self._service_is_gone(service_name):
+                return
+
+            logger.warning(
+                "Service %s still exists after sky serve down "
+                "(attempt %d/6, controller may still be starting), retrying...",
+                service_name, attempt + 1,
+            )
+            time.sleep(10)
+
+        logger.warning("Could not confirm deletion of %s after retries", service_name)
+
+    def _service_is_gone(self, service_name: str) -> bool:
+        """Check whether a SkyServe service has been fully removed."""
+        try:
+            check = subprocess.run(
+                ["sky", "serve", "status", service_name],
+                capture_output=True, text=True, timeout=30,
+            )
+            output = check.stdout + check.stderr
+            # Gone if sky says no services or doesn't mention it at all
+            if "No existing services" in output:
+                return True
+            if service_name not in check.stdout:
+                return True
+            # Still shutting down — not gone yet
+            if "SHUTTING_DOWN" in check.stdout:
+                logger.info("Service %s still shutting down, waiting...", service_name)
+                return False
+            # Service still listed — not gone
+            return False
+        except Exception:
+            # Can't reach sky CLI — controller probably still INIT
+            return False
 
     def status(self, service_name: str) -> dict:
         spot_service = f"{service_name}-spot"
