@@ -511,32 +511,34 @@ class TestLaunchHybridPreflightGate:
         assert result.serverless.metadata.get("service_name") == "test-svc-serverless"
 
 
-class TestPartialFailureMetadata:
-    """Tests that error-path DeploymentResults preserve plan metadata."""
-
-    def _make_mock_provider(self, name, plan_metadata=None, deploy_raises=None):
-        provider = MagicMock()
-        provider.name.return_value = name
-        provider.vllm_version.return_value = "0.15.1"
-        provider.auth_token.return_value = ""
-        provider.preflight.return_value = PreflightResult(
-            provider=name, checks=[PreflightCheck(name="ok", passed=True, message="ok")]
-        )
-        plan = ProviderPlan(
+def _make_mock_provider(name, plan_metadata=None, deploy_raises=None):
+    """Create a mock provider with plan/deploy/preflight wired up."""
+    provider = MagicMock()
+    provider.name.return_value = name
+    provider.vllm_version.return_value = "0.15.1"
+    provider.auth_token.return_value = ""
+    provider.preflight.return_value = PreflightResult(
+        provider=name, checks=[PreflightCheck(name="ok", passed=True, message="ok")]
+    )
+    plan = ProviderPlan(
+        provider=name,
+        rendered_script="# script",
+        metadata=plan_metadata or {},
+    )
+    provider.plan.return_value = plan
+    if deploy_raises:
+        provider.deploy.side_effect = deploy_raises
+    else:
+        provider.deploy.return_value = DeploymentResult(
             provider=name,
-            rendered_script="# script",
+            endpoint_url="https://example.com",
             metadata=plan_metadata or {},
         )
-        provider.plan.return_value = plan
-        if deploy_raises:
-            provider.deploy.side_effect = deploy_raises
-        else:
-            provider.deploy.return_value = DeploymentResult(
-                provider=name,
-                endpoint_url="https://example.com",
-                metadata=plan_metadata or {},
-            )
-        return provider
+    return provider
+
+
+class TestPartialFailureMetadata:
+    """Tests that error-path DeploymentResults preserve plan metadata."""
 
     @patch("tuna.orchestrator.push_url_to_router", return_value=True)
     @patch("tuna.orchestrator._find_controller_cluster", return_value=None)
@@ -546,12 +548,12 @@ class TestPartialFailureMetadata:
         self, mock_get_provider, mock_launch_router, mock_find_ctrl, mock_push,
     ):
         """When serverless deploy() raises, the error result should include plan metadata."""
-        mock_serverless = self._make_mock_provider(
+        mock_serverless = _make_mock_provider(
             "modal",
             plan_metadata={"app_name": "test-svc-serverless"},
             deploy_raises=RuntimeError("Modal crashed"),
         )
-        mock_spot = self._make_mock_provider(
+        mock_spot = _make_mock_provider(
             "skyserve",
             plan_metadata={"service_name": "test-svc-spot"},
         )
@@ -581,11 +583,11 @@ class TestPartialFailureMetadata:
         self, mock_get_provider, mock_launch_router, mock_find_ctrl, mock_push,
     ):
         """When spot deploy() raises, the error result should include plan metadata."""
-        mock_serverless = self._make_mock_provider(
+        mock_serverless = _make_mock_provider(
             "modal",
             plan_metadata={"app_name": "test-svc-serverless"},
         )
-        mock_spot = self._make_mock_provider(
+        mock_spot = _make_mock_provider(
             "skyserve",
             plan_metadata={"service_name": "test-svc-spot"},
             deploy_raises=RuntimeError("SkyPilot crashed"),
@@ -622,40 +624,12 @@ class TestRouterFailureCollectsAll:
             provider="router", error="sky launch failed",
             metadata={"cluster_name": "test-router"},
         )
-        mock_serverless = MagicMock()
-        mock_serverless.name.return_value = "modal"
-        mock_serverless.vllm_version.return_value = "0.15.1"
-        mock_serverless.auth_token.return_value = ""
-        mock_serverless.preflight.return_value = PreflightResult(
-            provider="modal",
-            checks=[PreflightCheck(name="ok", passed=True, message="ok")],
+        mock_serverless = _make_mock_provider(
+            "modal", plan_metadata={"app_name": "test-svc-serverless"},
         )
-        mock_serverless.plan.return_value = ProviderPlan(
-            provider="modal", rendered_script="",
-            metadata={"app_name": "test-svc-serverless"},
+        mock_spot = _make_mock_provider(
+            "skyserve", plan_metadata={"service_name": "test-svc-spot"},
         )
-        mock_serverless.deploy.return_value = DeploymentResult(
-            provider="modal",
-            endpoint_url="https://modal.run/test",
-            metadata={"app_name": "test-svc-serverless"},
-        )
-
-        mock_spot = MagicMock()
-        mock_spot.name.return_value = "skyserve"
-        mock_spot.preflight.return_value = PreflightResult(
-            provider="skyserve",
-            checks=[PreflightCheck(name="ok", passed=True, message="ok")],
-        )
-        mock_spot.plan.return_value = ProviderPlan(
-            provider="skyserve", rendered_script="",
-            metadata={"service_name": "test-svc-spot"},
-        )
-        mock_spot.deploy.return_value = DeploymentResult(
-            provider="skyserve",
-            endpoint_url="http://spot:30001",
-            metadata={"service_name": "test-svc-spot"},
-        )
-
         mock_get_provider.side_effect = lambda name: {
             "modal": mock_serverless, "skyserve": mock_spot,
         }[name]
@@ -670,9 +644,9 @@ class TestRouterFailureCollectsAll:
         assert result.router is not None
         assert result.router.error is not None
         assert result.serverless is not None
-        assert result.serverless.endpoint_url == "https://modal.run/test"
+        assert result.serverless.endpoint_url == "https://example.com"
         assert result.spot is not None
-        assert result.spot.endpoint_url == "http://spot:30001"
+        assert result.spot.endpoint_url == "https://example.com"
 
 
 class TestDestroyWithStatusLookup:
