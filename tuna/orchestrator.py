@@ -527,18 +527,33 @@ def launch_hybrid(request: DeployRequest, *, separate_router_vm: bool = False) -
 def _cleanup_serve_controller() -> None:
     """Tear down the SkyServe controller VM if no services remain.
 
-    Polls ``sky serve status`` for up to 30 seconds waiting for in-progress
+    Polls ``sky serve status`` for up to 90 seconds waiting for in-progress
     teardowns to finish before deciding whether to remove the controller.
     """
+    from sky.serve import ServiceStatus
+
+    _TERMINAL = {
+        ServiceStatus.SHUTTING_DOWN,
+        ServiceStatus.NO_REPLICA,
+        ServiceStatus.FAILED,
+        ServiceStatus.FAILED_CLEANUP,
+    }
+
     try:
-        # Wait for any SHUTTING_DOWN services to finish
-        for _ in range(6):
+        # Wait for services to finish tearing down (up to ~90s)
+        for _ in range(18):
             statuses = serve_status(None)
             if not statuses:
                 break
-            time.sleep(5)
-        else:
-            # Still services remaining after polling — leave controller alone
+            # If every remaining service is in a terminal state, it will
+            # disappear soon — keep waiting instead of giving up.
+            if all(s.get("status") in _TERMINAL for s in statuses):
+                logger.debug(
+                    "All remaining services in terminal state, waiting for removal..."
+                )
+                time.sleep(5)
+                continue
+            # A service is still active — leave the controller alone
             return
 
         # Find and tear down the controller cluster

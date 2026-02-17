@@ -151,8 +151,14 @@ class SkyLauncher(InferenceProvider):
                 return False
             # Service still listed — not gone
             return False
-        except Exception:
-            # Can't reach SkyPilot — controller probably still INIT
+        except Exception as e:
+            # "No live services" means the controller has no record of
+            # this service — treat the same as an empty status list.
+            if "no live services" in str(e).lower():
+                if self._controller_is_init():
+                    return False
+                return True
+            # Any other error — controller probably still starting
             return False
 
     @staticmethod
