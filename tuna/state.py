@@ -119,7 +119,9 @@ def save_deployment(request, result, *, db_path=None) -> None:
             router_endpoint = result.router.endpoint_url
             router_metadata = json.dumps(result.router.metadata)
 
-        serverless_provider_name = None
+        # Always save provider names from the request so destroy can find
+        # resources even when the deploy was interrupted before results arrived.
+        serverless_provider_name = request.serverless_provider
         serverless_endpoint = None
         serverless_metadata = None
         if result.serverless:
@@ -127,7 +129,7 @@ def save_deployment(request, result, *, db_path=None) -> None:
             serverless_endpoint = result.serverless.endpoint_url
             serverless_metadata = json.dumps(result.serverless.metadata)
 
-        spot_provider_name = None
+        spot_provider_name = "skyserve"
         spot_endpoint = None
         spot_metadata = None
         if result.spot:

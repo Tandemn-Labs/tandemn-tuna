@@ -347,6 +347,7 @@ def launch_hybrid(request: DeployRequest, *, separate_router_vm: bool = False) -
             serverless=DeploymentResult(
                 provider=request.serverless_provider,
                 error=f"Preflight failed: {failures}",
+                metadata={"service_name": f"{request.service_name}-serverless"},
             ),
         )
 
@@ -354,14 +355,24 @@ def launch_hybrid(request: DeployRequest, *, separate_router_vm: bool = False) -
     serverless_result = None
     router_url = None
 
+    # Shared dicts for capturing plan metadata before deploy() is called,
+    # so error-path DeploymentResults still include provider-specific IDs.
+    _serverless_meta: dict[str, str] = {}
+    _spot_meta: dict[str, str] = {}
+
     def _launch_serverless():
         try:
             provider = get_provider(request.serverless_provider)
             plan = provider.plan(request, vllm_cmd)
+            _serverless_meta.update(plan.metadata)
             return provider.deploy(plan)
         except Exception as e:
             logger.error("Serverless launch failed: %s", e)
-            return DeploymentResult(provider=request.serverless_provider, error=str(e))
+            return DeploymentResult(
+                provider=request.serverless_provider,
+                error=str(e),
+                metadata=dict(_serverless_meta),
+            )
 
     def _launch_spot():
         try:
@@ -372,12 +383,18 @@ def launch_hybrid(request: DeployRequest, *, separate_router_vm: bool = False) -
                 return DeploymentResult(
                     provider="skyserve",
                     error=f"Preflight failed: {failures}",
+                    metadata={"service_name": f"{request.service_name}-spot"},
                 )
             plan = provider.plan(request, vllm_cmd)
+            _spot_meta.update(plan.metadata)
             return provider.deploy(plan)
         except Exception as e:
             logger.error("Spot launch failed: %s", e)
-            return DeploymentResult(provider="skyserve", error=str(e))
+            return DeploymentResult(
+                provider="skyserve",
+                error=str(e),
+                metadata=dict(_spot_meta),
+            )
 
     if separate_router_vm:
         # Legacy path: 3 VMs in parallel (router + serverless + spot)
@@ -394,20 +411,22 @@ def launch_hybrid(request: DeployRequest, *, separate_router_vm: bool = False) -
             except Exception as e:
                 logger.error("Router launch failed: %s", e)
                 router_result = DeploymentResult(provider="router", error=str(e))
-                return HybridDeployment(router=router_result)
             if router_result.error:
                 logger.error("Router launch failed: %s", router_result.error)
-                return HybridDeployment(router=router_result)
+                # Don't return early — collect serverless/spot results for cleanup
+
             router_url = router_result.endpoint_url
 
             try:
                 serverless_result = fut_serverless.result(timeout=600)
             except Exception as e:
                 serverless_result = DeploymentResult(
-                    provider=request.serverless_provider, error=str(e)
+                    provider=request.serverless_provider,
+                    error=str(e),
+                    metadata=dict(_serverless_meta),
                 )
 
-            if serverless_result and serverless_result.endpoint_url:
+            if router_url and serverless_result and serverless_result.endpoint_url:
                 logger.info("Pushing serverless URL to router: %s", serverless_result.endpoint_url)
                 push_url_to_router(
                     router_url,
@@ -419,9 +438,13 @@ def launch_hybrid(request: DeployRequest, *, separate_router_vm: bool = False) -
                 spot_result = fut_spot.result(timeout=900)
             except Exception as e:
                 logger.error("Spot launch failed: %s", e)
-                spot_result = DeploymentResult(provider="skyserve", error=str(e))
+                spot_result = DeploymentResult(
+                    provider="skyserve",
+                    error=str(e),
+                    metadata=dict(_spot_meta),
+                )
 
-            if spot_result and spot_result.endpoint_url:
+            if router_url and spot_result and spot_result.endpoint_url:
                 logger.info("Pushing spot URL to router: %s", spot_result.endpoint_url)
                 push_url_to_router(router_url, spot_url=spot_result.endpoint_url)
             elif spot_result and spot_result.error:
@@ -449,7 +472,9 @@ def launch_hybrid(request: DeployRequest, *, separate_router_vm: bool = False) -
             spot_result = fut_spot.result(timeout=900)
         except Exception as e:
             logger.error("Spot launch failed: %s", e)
-            spot_result = DeploymentResult(provider="skyserve", error=str(e))
+            spot_result = DeploymentResult(
+                provider="skyserve", error=str(e), metadata=dict(_spot_meta),
+            )
 
         # Check if serverless is done yet
         serverless_url = ""
@@ -491,7 +516,9 @@ def launch_hybrid(request: DeployRequest, *, separate_router_vm: bool = False) -
                 serverless_result = fut_serverless.result(timeout=600)
             except Exception as e:
                 serverless_result = DeploymentResult(
-                    provider=request.serverless_provider, error=str(e)
+                    provider=request.serverless_provider,
+                    error=str(e),
+                    metadata=dict(_serverless_meta),
                 )
 
         # Push serverless URL if router is up and serverless wasn't baked in at launch
@@ -627,8 +654,39 @@ def destroy_hybrid(service_name: str, record: "DeploymentRecord | None" = None) 
     serverless_name = record.serverless_provider_name
     if serverless_name:
         serverless_meta = (record.serverless_metadata or {}).copy()
-        serverless_meta.setdefault("app_name", f"{service_name}-serverless")
+        svc = f"{service_name}-serverless"
+        serverless_meta.setdefault("app_name", svc)       # Modal
+        serverless_meta.setdefault("service_name", svc)    # CloudRun, Baseten
         serverless_provider = get_provider(serverless_name)
+
+        # If provider needs IDs we don't have, try status() lookup
+        try:
+            if serverless_name == "baseten" and "model_id" not in serverless_meta:
+                status = serverless_provider.status(service_name)
+                if status.get("model_id"):
+                    serverless_meta["model_id"] = status["model_id"]
+
+            if serverless_name == "runpod" and "endpoint_id" not in serverless_meta:
+                status = serverless_provider.status(service_name)
+                if status.get("endpoint_id"):
+                    serverless_meta["endpoint_id"] = status["endpoint_id"]
+                if status.get("template_id"):
+                    serverless_meta["template_id"] = status["template_id"]
+
+            if serverless_name == "cloudrun":
+                if "project_id" not in serverless_meta:
+                    try:
+                        from tuna.providers.cloudrun_provider import _get_project_id
+                        serverless_meta["project_id"] = _get_project_id()
+                    except Exception:
+                        pass
+                if "region" not in serverless_meta:
+                    serverless_meta["region"] = os.environ.get(
+                        "GOOGLE_CLOUD_REGION", "us-central1"
+                    )
+        except Exception as e:
+            logger.debug("Status lookup for destroy fallback failed (non-fatal): %s", e)
+
         serverless_result = DeploymentResult(
             provider=serverless_provider.name(),
             metadata=serverless_meta,

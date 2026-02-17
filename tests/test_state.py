@@ -112,7 +112,8 @@ class TestSaveAndLoad:
         save_deployment(req, result, db_path=db_path)
 
         record = load_deployment("test-svc", db_path=db_path)
-        assert record.spot_provider_name is None
+        # Provider name is always saved from request for cleanup
+        assert record.spot_provider_name == "skyserve"
         assert record.spot_endpoint is None
         assert record.spot_metadata == {}
 
@@ -122,7 +123,8 @@ class TestSaveAndLoad:
         save_deployment(req, result, db_path=db_path)
 
         record = load_deployment("test-svc", db_path=db_path)
-        assert record.serverless_provider_name is None
+        # Provider name is always saved from request for cleanup
+        assert record.serverless_provider_name == "modal"
         assert record.serverless_endpoint is None
 
     def test_save_replaces_existing(self, db_path):
@@ -134,7 +136,8 @@ class TestSaveAndLoad:
         save_deployment(req, result2, db_path=db_path)
 
         record = load_deployment("test-svc", db_path=db_path)
-        assert record.spot_provider_name is None
+        # Provider name is always saved from request for cleanup
+        assert record.spot_provider_name == "skyserve"
 
     def test_request_json_stored(self, db_path):
         req = _make_request()

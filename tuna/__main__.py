@@ -83,10 +83,38 @@ def cmd_deploy(args: argparse.Namespace) -> None:
     print(f"Spot cloud: {request.spots_cloud}")
     print()
 
-    result = launch_hybrid(request, separate_router_vm=args.use_different_vm_for_lb)
+    from tuna.models import HybridDeployment
 
-    # Persist deployment metadata
-    save_deployment(request, result)
+    result = None
+    try:
+        result = launch_hybrid(request, separate_router_vm=args.use_different_vm_for_lb)
+    except KeyboardInterrupt:
+        print("\nDeployment interrupted! Saving partial state for cleanup...", file=sys.stderr)
+    except Exception as e:
+        print(f"\nDeployment failed: {e}", file=sys.stderr)
+    finally:
+        if result is None:
+            result = HybridDeployment()
+        save_deployment(request, result)
+
+    # Check for any component errors
+    has_error = (
+        (result.serverless and result.serverless.error)
+        or (result.spot and result.spot.error)
+        or (result.router and result.router.error)
+    )
+    total_failure = (
+        not result.serverless and not result.spot and not result.router
+    ) or (
+        result.serverless and result.serverless.error
+        and not result.spot and not result.router
+    )
+
+    if total_failure:
+        error_msg = result.serverless.error if result.serverless else "interrupted or crashed"
+        print(f"\nDeployment failed: {error_msg}", file=sys.stderr)
+        print(f"Run: tuna destroy --service-name {request.service_name}", file=sys.stderr)
+        sys.exit(1)
 
     print()
     print("=" * 60)
@@ -115,6 +143,11 @@ def cmd_deploy(args: argparse.Namespace) -> None:
     if result.router_url:
         print(f"All traffic -> {result.router_url}")
     print("=" * 60)
+
+    if has_error:
+        print()
+        print(f"Some components failed. To clean up: tuna destroy --service-name {request.service_name}",
+              file=sys.stderr)
 
 
 def cmd_destroy(args: argparse.Namespace) -> None:

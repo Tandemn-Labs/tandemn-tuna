@@ -3,7 +3,7 @@
 import subprocess
 from unittest.mock import MagicMock, patch
 
-from tuna.models import DeployRequest, DeploymentResult
+from tuna.models import DeployRequest, DeploymentResult, HybridDeployment, ProviderPlan
 from tuna.models import PreflightCheck, PreflightResult
 from tuna.orchestrator import (
     build_vllm_cmd,
@@ -104,9 +104,10 @@ class TestDestroyHybrid:
         defaults.update(kwargs)
         return DeploymentRecord(**defaults)
 
+    @patch("tuna.orchestrator._cleanup_serve_controller")
     @patch("tuna.orchestrator.subprocess")
     @patch("tuna.orchestrator.get_provider")
-    def test_calls_provider_destroy_for_spot(self, mock_get_provider, mock_subprocess):
+    def test_calls_provider_destroy_for_spot(self, mock_get_provider, mock_subprocess, mock_cleanup):
         mock_spot = MagicMock()
         mock_spot.name.return_value = "skyserve"
         mock_modal = MagicMock()
@@ -120,9 +121,10 @@ class TestDestroyHybrid:
         result_arg = mock_spot.destroy.call_args[0][0]
         assert result_arg.metadata["service_name"] == "my-svc-spot"
 
+    @patch("tuna.orchestrator._cleanup_serve_controller")
     @patch("tuna.orchestrator.subprocess")
     @patch("tuna.orchestrator.get_provider")
-    def test_calls_provider_destroy_for_serverless(self, mock_get_provider, mock_subprocess):
+    def test_calls_provider_destroy_for_serverless(self, mock_get_provider, mock_subprocess, mock_cleanup):
         mock_spot = MagicMock()
         mock_spot.name.return_value = "skyserve"
         mock_modal = MagicMock()
@@ -136,9 +138,10 @@ class TestDestroyHybrid:
         result_arg = mock_modal.destroy.call_args[0][0]
         assert result_arg.metadata["app_name"] == "my-svc-serverless"
 
+    @patch("tuna.orchestrator._cleanup_serve_controller")
     @patch("tuna.orchestrator.subprocess")
     @patch("tuna.orchestrator.get_provider")
-    def test_router_teardown_uses_sky_down(self, mock_get_provider, mock_subprocess):
+    def test_router_teardown_uses_sky_down(self, mock_get_provider, mock_subprocess, mock_cleanup):
         mock_spot = MagicMock()
         mock_spot.name.return_value = "skyserve"
         mock_modal = MagicMock()
@@ -155,9 +158,10 @@ class TestDestroyHybrid:
         assert "down" in first_call[0][0]
         assert "my-svc-router" in first_call[0][0]
 
+    @patch("tuna.orchestrator._cleanup_serve_controller")
     @patch("tuna.orchestrator.subprocess")
     @patch("tuna.orchestrator.get_provider")
-    def test_record_provider_names_used(self, mock_get_provider, mock_subprocess):
+    def test_record_provider_names_used(self, mock_get_provider, mock_subprocess, mock_cleanup):
         """Verify that provider names come from the record, not hardcoded."""
         mock_custom_spot = MagicMock()
         mock_custom_spot.name.return_value = "custom_spot"
@@ -179,9 +183,10 @@ class TestDestroyHybrid:
         mock_get_provider.assert_any_call("custom_spot")
         mock_get_provider.assert_any_call("custom_sl")
 
+    @patch("tuna.orchestrator._cleanup_serve_controller")
     @patch("tuna.orchestrator.subprocess")
     @patch("tuna.orchestrator.get_provider")
-    def test_fallback_without_record(self, mock_get_provider, mock_subprocess):
+    def test_fallback_without_record(self, mock_get_provider, mock_subprocess, mock_cleanup):
         """Without a record (no provider names), skips spot/serverless teardown."""
         destroy_hybrid("my-svc")
 
@@ -406,13 +411,14 @@ class TestDestroyHybridColocated:
         defaults.update(kwargs)
         return DeploymentRecord(**defaults)
 
+    @patch("tuna.orchestrator._cleanup_serve_controller")
     @patch("tuna.orchestrator._get_ssh_user", return_value="ubuntu")
     @patch("tuna.orchestrator._get_ssh_key_path", return_value="/home/user/.ssh/sky-key")
     @patch("tuna.orchestrator._get_cluster_ip", return_value="10.0.0.1")
     @patch("tuna.orchestrator.subprocess")
     @patch("tuna.orchestrator.get_provider")
     def test_colocated_router_skips_sky_down(
-        self, mock_get_provider, mock_subprocess, mock_ip, mock_key, mock_user,
+        self, mock_get_provider, mock_subprocess, mock_ip, mock_key, mock_user, mock_cleanup,
     ):
         """Colocated router should use SSH pkill, not sky down."""
         mock_spot = MagicMock()
@@ -480,3 +486,327 @@ class TestLaunchHybridPreflightGate:
         assert result.spot is None
         assert result.router is None
         mock_spot.deploy.assert_not_called()
+
+    @patch("tuna.orchestrator.get_provider")
+    def test_preflight_failure_includes_service_name_metadata(self, mock_get_provider):
+        """Preflight failure result should include service_name in metadata for destroy."""
+        mock_serverless = MagicMock()
+        mock_serverless.vllm_version.return_value = "0.15.1"
+        mock_serverless.auth_token.return_value = ""
+        mock_serverless.preflight.return_value = PreflightResult(
+            provider="modal",
+            checks=[PreflightCheck(name="check", passed=False, message="fail")],
+        )
+        mock_get_provider.side_effect = lambda name: {
+            "modal": mock_serverless,
+            "skyserve": MagicMock(),
+        }[name]
+
+        request = DeployRequest(
+            model_name="m", gpu="g", service_name="test-svc",
+            serverless_provider="modal",
+        )
+        result = launch_hybrid(request)
+
+        assert result.serverless.metadata.get("service_name") == "test-svc-serverless"
+
+
+class TestPartialFailureMetadata:
+    """Tests that error-path DeploymentResults preserve plan metadata."""
+
+    def _make_mock_provider(self, name, plan_metadata=None, deploy_raises=None):
+        provider = MagicMock()
+        provider.name.return_value = name
+        provider.vllm_version.return_value = "0.15.1"
+        provider.auth_token.return_value = ""
+        provider.preflight.return_value = PreflightResult(
+            provider=name, checks=[PreflightCheck(name="ok", passed=True, message="ok")]
+        )
+        plan = ProviderPlan(
+            provider=name,
+            rendered_script="# script",
+            metadata=plan_metadata or {},
+        )
+        provider.plan.return_value = plan
+        if deploy_raises:
+            provider.deploy.side_effect = deploy_raises
+        else:
+            provider.deploy.return_value = DeploymentResult(
+                provider=name,
+                endpoint_url="https://example.com",
+                metadata=plan_metadata or {},
+            )
+        return provider
+
+    @patch("tuna.orchestrator.push_url_to_router", return_value=True)
+    @patch("tuna.orchestrator._find_controller_cluster", return_value=None)
+    @patch("tuna.orchestrator._launch_router_vm")
+    @patch("tuna.orchestrator.get_provider")
+    def test_serverless_deploy_error_preserves_metadata(
+        self, mock_get_provider, mock_launch_router, mock_find_ctrl, mock_push,
+    ):
+        """When serverless deploy() raises, the error result should include plan metadata."""
+        mock_serverless = self._make_mock_provider(
+            "modal",
+            plan_metadata={"app_name": "test-svc-serverless"},
+            deploy_raises=RuntimeError("Modal crashed"),
+        )
+        mock_spot = self._make_mock_provider(
+            "skyserve",
+            plan_metadata={"service_name": "test-svc-spot"},
+        )
+        mock_get_provider.side_effect = lambda name: {
+            "modal": mock_serverless, "skyserve": mock_spot,
+        }[name]
+        mock_launch_router.return_value = DeploymentResult(
+            provider="router", endpoint_url="http://1.2.3.4:8080",
+            metadata={"cluster_name": "ctrl"},
+        )
+
+        request = DeployRequest(
+            model_name="m", gpu="g", service_name="test-svc",
+            serverless_provider="modal",
+        )
+        result = launch_hybrid(request, separate_router_vm=True)
+
+        assert result.serverless.error is not None
+        assert "Modal crashed" in result.serverless.error
+        assert result.serverless.metadata.get("app_name") == "test-svc-serverless"
+
+    @patch("tuna.orchestrator.push_url_to_router", return_value=True)
+    @patch("tuna.orchestrator._find_controller_cluster", return_value=None)
+    @patch("tuna.orchestrator._launch_router_vm")
+    @patch("tuna.orchestrator.get_provider")
+    def test_spot_deploy_error_preserves_metadata(
+        self, mock_get_provider, mock_launch_router, mock_find_ctrl, mock_push,
+    ):
+        """When spot deploy() raises, the error result should include plan metadata."""
+        mock_serverless = self._make_mock_provider(
+            "modal",
+            plan_metadata={"app_name": "test-svc-serverless"},
+        )
+        mock_spot = self._make_mock_provider(
+            "skyserve",
+            plan_metadata={"service_name": "test-svc-spot"},
+            deploy_raises=RuntimeError("SkyPilot crashed"),
+        )
+        mock_get_provider.side_effect = lambda name: {
+            "modal": mock_serverless, "skyserve": mock_spot,
+        }[name]
+        mock_launch_router.return_value = DeploymentResult(
+            provider="router", endpoint_url="http://1.2.3.4:8080",
+            metadata={"cluster_name": "ctrl"},
+        )
+
+        request = DeployRequest(
+            model_name="m", gpu="g", service_name="test-svc",
+            serverless_provider="modal",
+        )
+        result = launch_hybrid(request, separate_router_vm=True)
+
+        assert result.spot.error is not None
+        assert "SkyPilot crashed" in result.spot.error
+        assert result.spot.metadata.get("service_name") == "test-svc-spot"
+
+
+class TestRouterFailureCollectsAll:
+    """Router failure in separate_router_vm mode should still collect serverless/spot results."""
+
+    @patch("tuna.orchestrator.push_url_to_router", return_value=True)
+    @patch("tuna.orchestrator.get_provider")
+    @patch("tuna.orchestrator._launch_router_vm")
+    def test_router_failure_still_collects_serverless_spot(
+        self, mock_launch_router, mock_get_provider, mock_push,
+    ):
+        mock_launch_router.return_value = DeploymentResult(
+            provider="router", error="sky launch failed",
+            metadata={"cluster_name": "test-router"},
+        )
+        mock_serverless = MagicMock()
+        mock_serverless.name.return_value = "modal"
+        mock_serverless.vllm_version.return_value = "0.15.1"
+        mock_serverless.auth_token.return_value = ""
+        mock_serverless.preflight.return_value = PreflightResult(
+            provider="modal",
+            checks=[PreflightCheck(name="ok", passed=True, message="ok")],
+        )
+        mock_serverless.plan.return_value = ProviderPlan(
+            provider="modal", rendered_script="",
+            metadata={"app_name": "test-svc-serverless"},
+        )
+        mock_serverless.deploy.return_value = DeploymentResult(
+            provider="modal",
+            endpoint_url="https://modal.run/test",
+            metadata={"app_name": "test-svc-serverless"},
+        )
+
+        mock_spot = MagicMock()
+        mock_spot.name.return_value = "skyserve"
+        mock_spot.preflight.return_value = PreflightResult(
+            provider="skyserve",
+            checks=[PreflightCheck(name="ok", passed=True, message="ok")],
+        )
+        mock_spot.plan.return_value = ProviderPlan(
+            provider="skyserve", rendered_script="",
+            metadata={"service_name": "test-svc-spot"},
+        )
+        mock_spot.deploy.return_value = DeploymentResult(
+            provider="skyserve",
+            endpoint_url="http://spot:30001",
+            metadata={"service_name": "test-svc-spot"},
+        )
+
+        mock_get_provider.side_effect = lambda name: {
+            "modal": mock_serverless, "skyserve": mock_spot,
+        }[name]
+
+        request = DeployRequest(
+            model_name="m", gpu="g", service_name="test-svc",
+            serverless_provider="modal",
+        )
+        result = launch_hybrid(request, separate_router_vm=True)
+
+        # Router failed, but serverless and spot should still be collected
+        assert result.router is not None
+        assert result.router.error is not None
+        assert result.serverless is not None
+        assert result.serverless.endpoint_url == "https://modal.run/test"
+        assert result.spot is not None
+        assert result.spot.endpoint_url == "http://spot:30001"
+
+
+class TestDestroyWithStatusLookup:
+    """Tests that destroy_hybrid uses status() lookup when metadata is missing."""
+
+    def _make_record(self, **kwargs):
+        defaults = dict(
+            service_name="my-svc",
+            serverless_provider_name="modal",
+            serverless_metadata={},
+            spot_provider_name="skyserve",
+            spot_metadata={"service_name": "my-svc-spot"},
+        )
+        defaults.update(kwargs)
+        return DeploymentRecord(**defaults)
+
+    @patch("tuna.orchestrator._cleanup_serve_controller")
+    @patch("tuna.orchestrator.subprocess")
+    @patch("tuna.orchestrator.get_provider")
+    def test_destroy_baseten_uses_status_lookup_for_model_id(
+        self, mock_get_provider, mock_subprocess, mock_cleanup,
+    ):
+        """When baseten metadata has no model_id, destroy should call status() to find it."""
+        mock_baseten = MagicMock()
+        mock_baseten.name.return_value = "baseten"
+        mock_baseten.status.return_value = {
+            "provider": "baseten",
+            "model_id": "mdl_abc123",
+            "status": "running",
+        }
+        mock_spot = MagicMock()
+        mock_spot.name.return_value = "skyserve"
+        mock_get_provider.side_effect = lambda name: {
+            "baseten": mock_baseten, "skyserve": mock_spot,
+        }[name]
+
+        record = self._make_record(
+            serverless_provider_name="baseten",
+            serverless_metadata={},  # no model_id!
+        )
+        destroy_hybrid("my-svc", record=record)
+
+        # status() should have been called to find the model_id
+        mock_baseten.status.assert_called_once_with("my-svc")
+        # destroy() should have been called with the discovered model_id
+        mock_baseten.destroy.assert_called_once()
+        meta = mock_baseten.destroy.call_args[0][0].metadata
+        assert meta["model_id"] == "mdl_abc123"
+
+    @patch("tuna.orchestrator._cleanup_serve_controller")
+    @patch("tuna.orchestrator.subprocess")
+    @patch("tuna.orchestrator.get_provider")
+    def test_destroy_runpod_uses_status_lookup_for_endpoint_id(
+        self, mock_get_provider, mock_subprocess, mock_cleanup,
+    ):
+        """When runpod metadata has no endpoint_id, destroy should call status() to find it."""
+        mock_runpod = MagicMock()
+        mock_runpod.name.return_value = "runpod"
+        mock_runpod.status.return_value = {
+            "provider": "runpod",
+            "endpoint_id": "ep_xyz789",
+            "status": "running",
+        }
+        mock_spot = MagicMock()
+        mock_spot.name.return_value = "skyserve"
+        mock_get_provider.side_effect = lambda name: {
+            "runpod": mock_runpod, "skyserve": mock_spot,
+        }[name]
+
+        record = self._make_record(
+            serverless_provider_name="runpod",
+            serverless_metadata={},  # no endpoint_id!
+        )
+        destroy_hybrid("my-svc", record=record)
+
+        mock_runpod.status.assert_called_once_with("my-svc")
+        mock_runpod.destroy.assert_called_once()
+        meta = mock_runpod.destroy.call_args[0][0].metadata
+        assert meta["endpoint_id"] == "ep_xyz789"
+
+    @patch("tuna.orchestrator._cleanup_serve_controller")
+    @patch("tuna.orchestrator.subprocess")
+    @patch("tuna.orchestrator.get_provider")
+    def test_destroy_modal_with_empty_metadata_uses_default_app_name(
+        self, mock_get_provider, mock_subprocess, mock_cleanup,
+    ):
+        """Modal destroy with empty metadata should fall back to default app_name."""
+        mock_modal = MagicMock()
+        mock_modal.name.return_value = "modal"
+        mock_spot = MagicMock()
+        mock_spot.name.return_value = "skyserve"
+        mock_get_provider.side_effect = lambda name: {
+            "modal": mock_modal, "skyserve": mock_spot,
+        }[name]
+
+        record = self._make_record(
+            serverless_provider_name="modal",
+            serverless_metadata={},  # empty!
+        )
+        destroy_hybrid("my-svc", record=record)
+
+        mock_modal.destroy.assert_called_once()
+        meta = mock_modal.destroy.call_args[0][0].metadata
+        assert meta["app_name"] == "my-svc-serverless"
+        assert meta["service_name"] == "my-svc-serverless"
+
+
+class TestCmdDeployKeyboardInterrupt:
+    """Tests that cmd_deploy saves deployment state even on interruption."""
+
+    @patch("tuna.providers.registry.ensure_provider_registered")
+    @patch("tuna.state.save_deployment")
+    @patch("tuna.orchestrator.launch_hybrid", side_effect=KeyboardInterrupt)
+    def test_ctrl_c_during_deploy_saves_record(
+        self, mock_launch, mock_save, mock_ensure,
+    ):
+        """KeyboardInterrupt during launch_hybrid should still call save_deployment."""
+        import argparse
+        from tuna.__main__ import cmd_deploy
+
+        args = argparse.Namespace(
+            model="m", gpu="g", gpu_count=1, tp_size=1, max_model_len=4096,
+            serverless_provider="modal", spots_cloud="aws", region=None,
+            concurrency=None, workers_max=None, no_scale_to_zero=False,
+            scaling_policy=None, service_name="test-svc", public=False,
+            use_different_vm_for_lb=False, gcp_project=None, gcp_region=None,
+            cold_start_mode="fast_boot",
+        )
+
+        try:
+            cmd_deploy(args)
+        except SystemExit:
+            pass  # Expected — total failure exits
+
+        mock_save.assert_called_once()
+        _, result = mock_save.call_args[0]
+        assert isinstance(result, HybridDeployment)
