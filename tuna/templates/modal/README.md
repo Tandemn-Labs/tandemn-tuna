@@ -10,7 +10,7 @@
 | `gpu` | str | Modal GPU identifier | `T4`, `A100` |
 | `port` | str | vLLM server port (always 8000 on Modal) | `8000` |
 | `vllm_cmd` | str | Full vLLM serve command | `vllm serve meta-llama/...` |
-| `vllm_version` | str | vLLM pip version | `0.15.1` |
+| `vllm_version` | str | vLLM pip version | e.g., `0.15.1` |
 | `max_concurrency` | str | Max concurrent inputs per container (burst limit for `@modal.concurrent`) | `32` |
 | `timeout_s` | str | Max execution time per input in seconds | `3600` |
 | `scaledown_window_s` | str | Max idle time (seconds) a container stays warm before scaling down | `60` |
