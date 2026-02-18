@@ -565,7 +565,11 @@ def _cleanup_serve_controller() -> None:
         logger.debug("Controller cleanup check failed (non-fatal): %s", e)
 
 
-def destroy_hybrid(service_name: str, record: "DeploymentRecord | None" = None) -> None:
+def destroy_hybrid(
+    service_name: str,
+    record: "DeploymentRecord | None" = None,
+    skip_controller_cleanup: bool = False,
+) -> None:
     """Tear down all components of a hybrid deployment.
 
     Parameters
@@ -575,6 +579,10 @@ def destroy_hybrid(service_name: str, record: "DeploymentRecord | None" = None) 
     record : DeploymentRecord | None
         If provided, provider names and metadata are read from the record
         instead of using hardcoded defaults.
+    skip_controller_cleanup : bool
+        If True, skip the SkyServe controller cleanup at the end.  Useful
+        when tearing down multiple deployments in a loop — the caller can
+        run cleanup once after all teardowns finish.
     """
     from tuna.state import DeploymentRecord
 
@@ -676,7 +684,8 @@ def destroy_hybrid(service_name: str, record: "DeploymentRecord | None" = None) 
         logger.info("No serverless deployment to tear down")
 
     # Clean up SkyServe controller if no services remain
-    _cleanup_serve_controller()
+    if not skip_controller_cleanup:
+        _cleanup_serve_controller()
 
     logger.info("Destroy complete for %s", service_name)
 

@@ -150,15 +150,43 @@ def cmd_deploy(args: argparse.Namespace) -> None:
 def cmd_destroy(args: argparse.Namespace) -> None:
     from tuna.orchestrator import destroy_hybrid
     from tuna.providers.registry import ensure_providers_for_deployment
-    from tuna.state import load_deployment, update_deployment_status
+    from tuna.state import list_deployments, load_deployment, update_deployment_status
 
+    if args.destroy_all:
+        from tuna.orchestrator import _cleanup_serve_controller
+
+        records = list_deployments(status="active")
+        if not records:
+            print("No active deployments to destroy.")
+            return
+        print(f"Destroying {len(records)} active deployment(s)...")
+        errors = []
+        for record in records:
+            print(f"\n--- {record.service_name} ---")
+            try:
+                ensure_providers_for_deployment(record)
+                destroy_hybrid(record.service_name, record=record,
+                               skip_controller_cleanup=True)
+                update_deployment_status(record.service_name, "destroyed")
+                print(f"Destroyed: {record.service_name}")
+            except Exception as e:
+                print(f"Failed to destroy {record.service_name}: {e}", file=sys.stderr)
+                errors.append(record.service_name)
+        # Clean up the SkyServe controller once after all teardowns
+        _cleanup_serve_controller()
+        if errors:
+            print(f"\nFailed to destroy: {', '.join(errors)}", file=sys.stderr)
+            sys.exit(1)
+        print("\nDone.")
+        return
+
+    # Single-service path (unchanged)
     record = load_deployment(args.service_name)
     if record is None:
         print(f"Error: no deployment record found for '{args.service_name}'.", file=sys.stderr)
         sys.exit(1)
 
     ensure_providers_for_deployment(record)
-
     print(f"Destroying deployment: {args.service_name}")
     destroy_hybrid(args.service_name, record=record)
     update_deployment_status(args.service_name, "destroyed")
@@ -843,7 +871,10 @@ def main() -> None:
 
     # -- destroy --
     p_destroy = subparsers.add_parser("destroy", help="Tear down a deployment")
-    p_destroy.add_argument("--service-name", required=True)
+    destroy_group = p_destroy.add_mutually_exclusive_group(required=True)
+    destroy_group.add_argument("--service-name", default=None)
+    destroy_group.add_argument("--all", action="store_true", dest="destroy_all",
+                               help="Destroy all active deployments")
     p_destroy.set_defaults(func=cmd_destroy)
 
     # -- status --
