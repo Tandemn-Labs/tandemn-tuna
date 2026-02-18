@@ -165,7 +165,8 @@ curl http://<router-ip>:8080/v1/chat/completions \
 tuna status --service-name my-first-deploy    # check deployment status
 tuna cost --service-name my-first-deploy      # real-time cost dashboard
 tuna list                                     # list all deployments
-tuna destroy --service-name my-first-deploy   # tear down everything
+tuna destroy --service-name my-first-deploy   # tear down a specific deployment
+tuna destroy --all                            # tear down all active deployments
 ```
 
 > **Tip:** If you don't pass `--service-name` during deploy, Tuna auto-generates a name like `tuna-a3f8c21b`. Use `tuna list` to find it.
@@ -216,7 +217,7 @@ The router:
 | Command | Description |
 |---------|-------------|
 | `deploy` | Deploy a model across serverless + spot |
-| `destroy` | Tear down a deployment |
+| `destroy` | Tear down a deployment (`--service-name <name>` or `--all` for all active) |
 | `status` | Check deployment status |
 | `cost` | Show cost dashboard (requires running deployment) |
 | `list` | List all deployments (filter with `--status active\|destroyed\|failed`) |
