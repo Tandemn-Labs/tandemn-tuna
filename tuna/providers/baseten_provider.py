@@ -26,7 +26,7 @@ from tuna.template_engine import render_template
 
 logger = logging.getLogger(__name__)
 
-TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
+TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates" / "baseten"
 _API_BASE = "https://api.baseten.co/v1"
 
 
@@ -211,7 +211,7 @@ class BasetenProvider(InferenceProvider):
         }
 
         rendered = render_template(
-            str(TEMPLATES_DIR / "baseten_config.yaml.tpl"), replacements
+            str(TEMPLATES_DIR / "config.yaml.tpl"), replacements
         )
 
         metadata = {
