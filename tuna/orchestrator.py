@@ -585,7 +585,7 @@ def launch_serverless_only(request: DeployRequest) -> HybridDeployment:
             serverless=DeploymentResult(
                 provider=request.serverless_provider,
                 error=str(e),
-                metadata=dict(_meta),
+                metadata=_meta,
             )
         )
 
