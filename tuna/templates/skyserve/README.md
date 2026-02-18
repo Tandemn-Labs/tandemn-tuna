@@ -10,7 +10,7 @@
 | `gpu_count` | str | Number of GPUs per replica | `1` |
 | `port` | str | vLLM server port | `8001` |
 | `vllm_cmd` | str | Full vLLM serve command | `vllm serve meta-llama/...` |
-| `vllm_version` | str | vLLM pip version | `0.15.1` |
+| `vllm_version` | str | vLLM pip version | e.g., `0.15.1` |
 | `min_replicas` | str | Minimum number of spot replicas | `1` |
 | `max_replicas` | str | Maximum number of spot replicas | `3` |
 | `target_qps` | str | Target QPS per replica for autoscaling | `1` |
