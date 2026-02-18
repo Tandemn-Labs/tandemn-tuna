@@ -29,6 +29,7 @@ class DeployRequest:
     serverless_only: bool = False  # skip spot + router
 
     def __post_init__(self):
+        import re
         from tuna.catalog import normalize_gpu_name
         try:
             self.gpu = normalize_gpu_name(self.gpu)
@@ -37,6 +38,11 @@ class DeployRequest:
         if self.service_name is None:
             short_id = uuid.uuid4().hex[:8]
             self.service_name = f"tuna-{short_id}"
+        elif not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9._-]*", self.service_name):
+            raise ValueError(
+                f"Invalid service name '{self.service_name}': "
+                "must contain only alphanumeric characters, hyphens, dots, and underscores"
+            )
 
 
 @dataclass

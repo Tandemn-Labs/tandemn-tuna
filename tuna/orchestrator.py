@@ -529,8 +529,6 @@ def _warmup_serverless(health_url: str, timeout: int = 300, interval: float = 5.
 
     Returns True if the endpoint became healthy, False on timeout.
     """
-    import sys
-
     logger.info("Warming up serverless container: %s", health_url)
     print("Warming up container...", end="", flush=True)
 
@@ -542,7 +540,7 @@ def _warmup_serverless(health_url: str, timeout: int = 300, interval: float = 5.
                 print(" ready!")
                 logger.info("Serverless container is healthy")
                 return True
-        except Exception:
+        except requests.exceptions.RequestException:
             pass
         print(".", end="", flush=True)
         time.sleep(interval)

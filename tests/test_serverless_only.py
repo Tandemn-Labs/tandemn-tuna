@@ -157,9 +157,14 @@ class TestWarmupServerless:
     @patch("tuna.orchestrator.time.sleep")
     @patch("tuna.orchestrator.requests")
     def test_healthy_after_retries(self, mock_requests, mock_sleep):
-        mock_fail = MagicMock(status_code=503)
+        import requests as real_requests
+        mock_requests.exceptions = real_requests.exceptions
         mock_ok = MagicMock(status_code=200)
-        mock_requests.get.side_effect = [mock_fail, mock_fail, mock_ok]
+        mock_requests.get.side_effect = [
+            real_requests.exceptions.ConnectionError("not ready"),
+            MagicMock(status_code=503),
+            mock_ok,
+        ]
 
         result = _warmup_serverless("https://example.com/health", timeout=60)
 
@@ -168,7 +173,9 @@ class TestWarmupServerless:
 
     @patch("tuna.orchestrator.requests")
     def test_timeout(self, mock_requests):
-        mock_requests.get.side_effect = Exception("connection refused")
+        import requests as real_requests
+        mock_requests.get.side_effect = real_requests.exceptions.ConnectionError("refused")
+        mock_requests.exceptions = real_requests.exceptions
 
         # Use a tiny timeout so it exits after one failed attempt
         result = _warmup_serverless("https://example.com/health", timeout=0)
