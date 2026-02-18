@@ -48,7 +48,7 @@ register("myprovider", MyProvider)
 Optional overrides:
 - `preflight(request)` — validate environment (API keys, CLI tools, GPU support) before deploy
 - `status(service_name)` — check deployment status via provider API
-- `vllm_version()` — pin the vLLM version (default: `0.15.1`)
+- `vllm_version()` — pin the vLLM version (default: see `InferenceProvider.vllm_version()` in `tuna/providers/base.py`)
 - `auth_token()` — return auth token the router needs when proxying to this backend
 
 ### 2. Add GPU mappings to `tuna/catalog.py`
