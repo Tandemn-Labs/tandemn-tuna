@@ -524,6 +524,34 @@ def launch_hybrid(request: DeployRequest, *, separate_router_vm: bool = False) -
     )
 
 
+def _warmup_serverless(health_url: str, timeout: int = 300, interval: float = 5.0) -> bool:
+    """Poll the health endpoint to trigger cold start and wait until ready.
+
+    Returns True if the endpoint became healthy, False on timeout.
+    """
+    import sys
+
+    logger.info("Warming up serverless container: %s", health_url)
+    print("Warming up container...", end="", flush=True)
+
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            resp = requests.get(health_url, timeout=10)
+            if resp.status_code == 200:
+                print(" ready!")
+                logger.info("Serverless container is healthy")
+                return True
+        except Exception:
+            pass
+        print(".", end="", flush=True)
+        time.sleep(interval)
+
+    print(" timed out (container may still be starting)")
+    logger.warning("Warmup timed out after %ds for %s", timeout, health_url)
+    return False
+
+
 def launch_serverless_only(request: DeployRequest) -> HybridDeployment:
     """Deploy only serverless, skip spot + router."""
     serverless_prov = get_provider(request.serverless_provider)
@@ -567,6 +595,10 @@ def launch_serverless_only(request: DeployRequest) -> HybridDeployment:
         return HybridDeployment(serverless=serverless_result)
 
     logger.info("Serverless endpoint: %s", serverless_result.endpoint_url)
+
+    # Warm up the container — trigger cold start so the endpoint is ready
+    health_url = serverless_result.health_url or f"{serverless_result.endpoint_url}/health"
+    _warmup_serverless(health_url)
 
     return HybridDeployment(
         serverless=serverless_result,

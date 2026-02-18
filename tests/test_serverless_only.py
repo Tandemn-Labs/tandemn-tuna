@@ -14,7 +14,7 @@ from tuna.models import (
     PreflightResult,
     ProviderPlan,
 )
-from tuna.orchestrator import launch_serverless_only, status_hybrid, destroy_hybrid
+from tuna.orchestrator import launch_serverless_only, status_hybrid, destroy_hybrid, _warmup_serverless
 from tuna.state import DeploymentRecord, save_deployment, load_deployment
 
 
@@ -46,8 +46,9 @@ class TestLaunchServerlessOnly:
             )
         return provider
 
+    @patch("tuna.orchestrator._warmup_serverless", return_value=True)
     @patch("tuna.orchestrator.get_provider")
-    def test_success(self, mock_get_provider):
+    def test_success(self, mock_get_provider, mock_warmup):
         mock_prov = self._mock_provider()
         mock_get_provider.return_value = mock_prov
 
@@ -68,6 +69,7 @@ class TestLaunchServerlessOnly:
         mock_prov.preflight.assert_called_once()
         mock_prov.plan.assert_called_once()
         mock_prov.deploy.assert_called_once()
+        mock_warmup.assert_called_once_with("https://modal.run/test/health")
 
     @patch("tuna.orchestrator.get_provider")
     def test_preflight_fail(self, mock_get_provider):
@@ -134,6 +136,44 @@ class TestLaunchServerlessOnly:
         assert result.serverless is not None
         assert "bad GPU" in result.serverless.error
         mock_prov.deploy.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# _warmup_serverless
+# ---------------------------------------------------------------------------
+
+
+class TestWarmupServerless:
+    @patch("tuna.orchestrator.requests")
+    def test_healthy_on_first_try(self, mock_requests):
+        mock_resp = MagicMock(status_code=200)
+        mock_requests.get.return_value = mock_resp
+
+        result = _warmup_serverless("https://example.com/health", timeout=10)
+
+        assert result is True
+        mock_requests.get.assert_called_once_with("https://example.com/health", timeout=10)
+
+    @patch("tuna.orchestrator.time.sleep")
+    @patch("tuna.orchestrator.requests")
+    def test_healthy_after_retries(self, mock_requests, mock_sleep):
+        mock_fail = MagicMock(status_code=503)
+        mock_ok = MagicMock(status_code=200)
+        mock_requests.get.side_effect = [mock_fail, mock_fail, mock_ok]
+
+        result = _warmup_serverless("https://example.com/health", timeout=60)
+
+        assert result is True
+        assert mock_requests.get.call_count == 3
+
+    @patch("tuna.orchestrator.requests")
+    def test_timeout(self, mock_requests):
+        mock_requests.get.side_effect = Exception("connection refused")
+
+        # Use a tiny timeout so it exits after one failed attempt
+        result = _warmup_serverless("https://example.com/health", timeout=0)
+
+        assert result is False
 
 
 # ---------------------------------------------------------------------------
