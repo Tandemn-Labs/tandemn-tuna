@@ -524,30 +524,29 @@ def launch_hybrid(request: DeployRequest, *, separate_router_vm: bool = False) -
     )
 
 
-def _warmup_serverless(health_url: str, timeout: int = 300, interval: float = 5.0) -> bool:
-    """Poll the health endpoint to trigger cold start and wait until ready.
+def _warmup_serverless(health_url: str, timeout: int = 300) -> bool:
+    """Send a single health request to trigger the cold start and wait for it.
 
     Returns True if the endpoint became healthy, False on timeout.
+    One request is enough — serverless providers queue it and boot a
+    container to serve it, so polling just adds billable invocations.
     """
     logger.info("Warming up serverless container: %s", health_url)
     print("Warming up container...", end="", flush=True)
 
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        try:
-            resp = requests.get(health_url, timeout=10)
-            if resp.status_code == 200:
-                print(" ready!")
-                logger.info("Serverless container is healthy")
-                return True
-        except requests.exceptions.RequestException:
-            pass
-        print(".", end="", flush=True)
-        time.sleep(interval)
-
-    print(" timed out (container may still be starting)")
-    logger.warning("Warmup timed out after %ds for %s", timeout, health_url)
-    return False
+    try:
+        resp = requests.get(health_url, timeout=timeout)
+        if resp.status_code == 200:
+            print(" ready!")
+            logger.info("Serverless container is healthy")
+            return True
+        print(" unhealthy (status %d)" % resp.status_code)
+        logger.warning("Warmup returned %d for %s", resp.status_code, health_url)
+        return False
+    except requests.exceptions.RequestException as e:
+        print(" timed out (container may still be starting)")
+        logger.warning("Warmup failed for %s: %s", health_url, e)
+        return False
 
 
 def launch_serverless_only(request: DeployRequest) -> HybridDeployment:
