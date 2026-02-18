@@ -23,7 +23,7 @@ from tuna.template_engine import render_template
 
 logger = logging.getLogger(__name__)
 
-TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
+TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates" / "skyserve"
 
 
 class SkyLauncher(InferenceProvider):
@@ -60,7 +60,7 @@ class SkyLauncher(InferenceProvider):
         }
 
         rendered = render_template(
-            str(TEMPLATES_DIR / "skyserve_vllm.yaml.tpl"), replacements
+            str(TEMPLATES_DIR / "vllm.yaml.tpl"), replacements
         )
 
         return ProviderPlan(

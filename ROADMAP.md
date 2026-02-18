@@ -8,7 +8,7 @@ Current state: v0.0.1a5 | 4 serverless providers (Modal, RunPod, Cloud Run, Base
 
 ## Phase 1: Stability & Developer Experience
 
-- Segregate templates per provider — each provider gets its own `templates/<provider>/` directory with a README explaining template variables, so contributors can add/modify a provider without touching others
+- ~~Segregate templates per provider — each provider gets its own `templates/<provider>/` directory with a README explaining template variables, so contributors can add/modify a provider without touching others~~
 - ~~Use SkyPilot SDK instead of CLI — replace `subprocess.run(["sky", ...])` with the Python SDK for structured error handling and no PATH dependency~~
 - ~~`tuna destroy --all` — tear down every active deployment in one shot~~
 - ~~Partial deployment cleanup — when a deploy fails midway (serverless deployed but spot didn't), `tuna destroy` should clean up whatever was created~~
@@ -131,13 +131,4 @@ Spot (via SkyPilot):
 
 ## Contributing
 
-Each provider lives in its own file under `tuna/providers/` with a corresponding test file in `tests/`. To add a new provider:
-
-1. Implement the `InferenceProvider` interface (`tuna/providers/base.py`)
-2. Add GPU mappings to `tuna/catalog.py`
-3. Create a template in `tuna/templates/`
-4. Register in `tuna/providers/registry.py`
-5. Add tests in `tests/test_<provider>_provider.py`
-6. Run `uv run pytest tests/ -v` to verify
-
-See existing providers for patterns. Start with RunPod as a reference.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full contributor guide — setup, adding providers, testing patterns, and project structure.

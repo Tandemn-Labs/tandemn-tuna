@@ -16,7 +16,7 @@ from tuna.template_engine import render_template
 
 logger = logging.getLogger(__name__)
 
-TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
+TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates" / "modal"
 
 
 class ModalProvider(InferenceProvider):
@@ -53,7 +53,7 @@ class ModalProvider(InferenceProvider):
         }
 
         rendered = render_template(
-            str(TEMPLATES_DIR / "modal_vllm_server.py.tpl"), replacements
+            str(TEMPLATES_DIR / "vllm_server.py.tpl"), replacements
         )
 
         return ProviderPlan(
