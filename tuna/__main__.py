@@ -78,6 +78,18 @@ def cmd_deploy(args: argparse.Namespace) -> None:
         print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)
 
+    # Warn about flags that are ignored in serverless-only mode
+    if args.serverless_only:
+        ignored = []
+        if args.use_different_vm_for_lb:
+            ignored.append("--use-different-vm-for-lb")
+        if args.no_scale_to_zero:
+            ignored.append("--no-scale-to-zero")
+        if args.spots_cloud != "aws":
+            ignored.append(f"--spots-cloud {args.spots_cloud}")
+        if ignored:
+            print(f"Warning: {', '.join(ignored)} ignored in serverless-only mode", file=sys.stderr)
+
     print(f"Deploying {request.model_name} on {request.gpu}")
     print(f"Service name: {request.service_name}")
     if not auto_selected:
@@ -404,8 +416,12 @@ def cmd_cost(args: argparse.Namespace) -> None:
 
     ensure_providers_for_deployment(record)
 
-    # Detect serverless-only deployment
-    is_serverless_only = not record.spot_provider_name and not record.router_endpoint
+    # Detect serverless-only deployment (same heuristic as status_hybrid)
+    is_serverless_only = (
+        record.serverless_provider_name
+        and not record.spot_provider_name
+        and not record.router_endpoint
+    )
 
     if is_serverless_only:
         _print_serverless_only_cost(record)
@@ -504,11 +520,13 @@ def _print_serverless_only_cost(record) -> None:
     gpu_label = f"{record.gpu} ({spec.vram_gb} GB)" if spec else record.gpu
 
     # Compute uptime from created_at
-    created = datetime.fromisoformat(record.created_at)
     now = datetime.now(timezone.utc)
-    if created.tzinfo is None:
-        created = created.replace(tzinfo=timezone.utc)
-    uptime_s = (now - created).total_seconds()
+    uptime_s = 0.0
+    if record.created_at:
+        created = datetime.fromisoformat(record.created_at)
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=timezone.utc)
+        uptime_s = (now - created).total_seconds()
 
     console.print()
     console.print(f"[bold]Cost Dashboard: {record.service_name}[/bold]  [dim](serverless-only)[/dim]")

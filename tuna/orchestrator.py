@@ -546,9 +546,21 @@ def launch_serverless_only(request: DeployRequest) -> HybridDeployment:
     logger.info("vLLM version: %s (from %s)", request.vllm_version, request.serverless_provider)
     vllm_cmd = build_vllm_cmd(request)
 
-    # Plan + deploy
-    plan = serverless_prov.plan(request, vllm_cmd)
-    serverless_result = serverless_prov.deploy(plan)
+    # Plan + deploy (catch exceptions to preserve plan metadata for cleanup)
+    _meta: dict[str, str] = {}
+    try:
+        plan = serverless_prov.plan(request, vllm_cmd)
+        _meta.update(plan.metadata)
+        serverless_result = serverless_prov.deploy(plan)
+    except Exception as e:
+        logger.error("Serverless deploy failed: %s", e)
+        return HybridDeployment(
+            serverless=DeploymentResult(
+                provider=request.serverless_provider,
+                error=str(e),
+                metadata=dict(_meta),
+            )
+        )
 
     if serverless_result.error:
         return HybridDeployment(serverless=serverless_result)
@@ -631,7 +643,9 @@ def destroy_hybrid(
 
     # Tear down router — check if colocated or separate VM
     router_meta = record.router_metadata or {}
-    if router_meta.get("colocated") == "true":
+    if not router_meta and not record.router_endpoint and not record.spot_provider_name:
+        logger.info("No router to tear down (serverless-only deployment)")
+    elif router_meta.get("colocated") == "true":
         # Router is colocated on the controller — kill the gunicorn process.
         # The process also dies when the controller is torn down below.
         controller_cluster = router_meta.get("cluster_name")

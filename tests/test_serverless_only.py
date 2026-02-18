@@ -100,6 +100,41 @@ class TestLaunchServerlessOnly:
         assert result.serverless.error == "deploy crashed"
         assert result.router_url is None  # Not set on error
 
+    @patch("tuna.orchestrator.get_provider")
+    def test_deploy_exception_preserves_metadata(self, mock_get_provider):
+        """When deploy() raises (not returns error), plan metadata is preserved."""
+        mock_prov = self._mock_provider()
+        mock_prov.deploy.side_effect = RuntimeError("connection reset")
+        mock_get_provider.return_value = mock_prov
+
+        request = DeployRequest(
+            model_name="m", gpu="g", service_name="test-svc",
+            serverless_provider="modal", serverless_only=True,
+        )
+        result = launch_serverless_only(request)
+
+        assert result.serverless is not None
+        assert "connection reset" in result.serverless.error
+        assert result.serverless.metadata.get("app_name") == "test-serverless"
+        assert result.router_url is None
+
+    @patch("tuna.orchestrator.get_provider")
+    def test_plan_exception_returns_error(self, mock_get_provider):
+        """When plan() raises, error result is returned (no metadata to preserve)."""
+        mock_prov = self._mock_provider()
+        mock_prov.plan.side_effect = ValueError("bad GPU")
+        mock_get_provider.return_value = mock_prov
+
+        request = DeployRequest(
+            model_name="m", gpu="g", service_name="test-svc",
+            serverless_provider="modal", serverless_only=True,
+        )
+        result = launch_serverless_only(request)
+
+        assert result.serverless is not None
+        assert "bad GPU" in result.serverless.error
+        mock_prov.deploy.assert_not_called()
+
 
 # ---------------------------------------------------------------------------
 # status_hybrid — serverless-only path
@@ -155,8 +190,8 @@ class TestDestroyServerlessOnly:
 
         # Serverless should be destroyed
         mock_modal.destroy.assert_called_once()
-        # cluster_down called for legacy router path with "test-svc-router" — this is fine,
-        # it will fail silently. The important thing is spot is not called.
+        # cluster_down should NOT be called — no router was deployed
+        mock_cluster_down.assert_not_called()
         # No spot provider should be looked up
         mock_get_provider.assert_called_once_with("modal")
 
@@ -214,30 +249,41 @@ class TestSaveDeploymentServerlessOnly:
 
 
 class TestCliServerlessOnlyFlag:
+    """Use the real CLI parser to ensure the flag actually exists."""
+
     def test_flag_parsed(self):
-        from tuna.__main__ import main
+        """--serverless-only sets args.serverless_only = True on the real parser."""
         import sys
+        from unittest.mock import patch as _patch
 
-        parser = argparse.ArgumentParser()
-        subparsers = parser.add_subparsers(dest="command")
-        p_deploy = subparsers.add_parser("deploy")
-        p_deploy.add_argument("--model", required=True)
-        p_deploy.add_argument("--gpu", required=True)
-        p_deploy.add_argument("--serverless-only", action="store_true", default=False)
+        captured_args = {}
 
-        args = parser.parse_args(["deploy", "--model", "m", "--gpu", "g", "--serverless-only"])
-        assert args.serverless_only is True
+        def fake_deploy(args):
+            captured_args.update(vars(args))
+
+        with _patch("tuna.__main__.cmd_deploy", fake_deploy), \
+             _patch.object(sys, "argv", ["tuna", "deploy", "--model", "m", "--gpu", "g", "--serverless-only"]):
+            from tuna.__main__ import main
+            main()
+
+        assert captured_args["serverless_only"] is True
 
     def test_flag_default_false(self):
-        parser = argparse.ArgumentParser()
-        subparsers = parser.add_subparsers(dest="command")
-        p_deploy = subparsers.add_parser("deploy")
-        p_deploy.add_argument("--model", required=True)
-        p_deploy.add_argument("--gpu", required=True)
-        p_deploy.add_argument("--serverless-only", action="store_true", default=False)
+        """Omitting --serverless-only defaults to False on the real parser."""
+        import sys
+        from unittest.mock import patch as _patch
 
-        args = parser.parse_args(["deploy", "--model", "m", "--gpu", "g"])
-        assert args.serverless_only is False
+        captured_args = {}
+
+        def fake_deploy(args):
+            captured_args.update(vars(args))
+
+        with _patch("tuna.__main__.cmd_deploy", fake_deploy), \
+             _patch.object(sys, "argv", ["tuna", "deploy", "--model", "m", "--gpu", "g"]):
+            from tuna.__main__ import main
+            main()
+
+        assert captured_args["serverless_only"] is False
 
 
 # ---------------------------------------------------------------------------
