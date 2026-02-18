@@ -35,7 +35,7 @@ Tuna is a smart router that combines both behind a single OpenAI-compatible endp
 - At least one serverless provider account: [Modal](https://modal.com/), [RunPod](https://www.runpod.io/), [Google Cloud](https://cloud.google.com/), or [Baseten](https://www.baseten.co/)
 - For gated models (Llama, Mistral, Gemma, etc.): a [HuggingFace token](https://huggingface.co/settings/tokens) with access to the model
 
-> **Note:** Tuna always deploys both a serverless backend and a spot backend. AWS credentials are required even if your serverless provider is Modal or RunPod, because spot instances run on AWS via [SkyPilot](https://github.com/skypilot-org/skypilot).
+> **Note:** By default Tuna deploys both a serverless backend and a spot backend. AWS credentials are required for spot instances, which run on AWS via [SkyPilot](https://github.com/skypilot-org/skypilot). Use `--serverless-only` to skip spot + router (no AWS needed).
 
 ## Quick Start
 
@@ -151,6 +151,16 @@ tuna deploy --model Qwen/Qwen3-0.6B --gpu L4 --service-name my-first-deploy
 
 Tuna auto-selects the cheapest serverless provider for your GPU, launches spot instances on AWS, and gives you a single endpoint. The router handles everything — serverless covers traffic immediately while spot boots up in the background.
 
+**6a. (Alternative) Deploy serverless-only**
+
+Skip spot + router for dev/test or low-traffic:
+
+```bash
+tuna deploy --model Qwen/Qwen3-0.6B --gpu L4 --serverless-only
+```
+
+Returns the provider's direct endpoint. No AWS credentials needed.
+
 **7. Send requests** (OpenAI-compatible)
 
 ```bash
@@ -242,6 +252,7 @@ The router:
 | `--no-scale-to-zero` | off | Keep minimum 1 spot replica running |
 | `--scaling-policy` | — | Path to scaling YAML (see below) |
 | `--service-name` | auto-generated | Custom service name (recommended — makes status/destroy easier) |
+| `--serverless-only` | off | Serverless only (no spot, no router). No AWS needed. |
 | `--public` | off | Make service publicly accessible (no auth) |
 | `--use-different-vm-for-lb` | off | Launch router on a separate VM instead of colocating on controller |
 | `--gcp-project` | — | Google Cloud project ID |

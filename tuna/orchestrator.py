@@ -524,6 +524,43 @@ def launch_hybrid(request: DeployRequest, *, separate_router_vm: bool = False) -
     )
 
 
+def launch_serverless_only(request: DeployRequest) -> HybridDeployment:
+    """Deploy only serverless, skip spot + router."""
+    serverless_prov = get_provider(request.serverless_provider)
+
+    logger.info("Deploying serverless-only via %s", request.serverless_provider)
+
+    # Preflight
+    preflight = serverless_prov.preflight(request)
+    if not preflight.ok:
+        failures = "; ".join(c.message for c in preflight.failed)
+        return HybridDeployment(
+            serverless=DeploymentResult(
+                provider=request.serverless_provider,
+                error=f"Preflight failed: {failures}",
+            )
+        )
+
+    # vLLM command
+    request.vllm_version = serverless_prov.vllm_version()
+    logger.info("vLLM version: %s (from %s)", request.vllm_version, request.serverless_provider)
+    vllm_cmd = build_vllm_cmd(request)
+
+    # Plan + deploy
+    plan = serverless_prov.plan(request, vllm_cmd)
+    serverless_result = serverless_prov.deploy(plan)
+
+    if serverless_result.error:
+        return HybridDeployment(serverless=serverless_result)
+
+    logger.info("Serverless endpoint: %s", serverless_result.endpoint_url)
+
+    return HybridDeployment(
+        serverless=serverless_result,
+        router_url=serverless_result.endpoint_url,  # Direct serverless URL
+    )
+
+
 def _cleanup_serve_controller() -> None:
     """Tear down the SkyServe controller VM if no services remain.
 
@@ -706,6 +743,18 @@ def status_hybrid(service_name: str, record: "DeploymentRecord | None" = None) -
     if record is None:
         logger.warning("No deployment record for %s, falling back to hardcoded providers", service_name)
         record = DeploymentRecord(service_name=service_name)
+
+    # Detect serverless-only: has serverless provider but no spot and no router
+    if record.serverless_provider_name and not record.spot_provider_name and not record.router_endpoint:
+        serverless_name = record.serverless_provider_name
+        serverless_provider = get_provider(serverless_name)
+        return {
+            "service_name": service_name,
+            "mode": "serverless-only",
+            "router": None,
+            "serverless": serverless_provider.status(service_name),
+            "spot": None,
+        }
 
     status = {
         "service_name": service_name,

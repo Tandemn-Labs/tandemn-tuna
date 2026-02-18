@@ -129,7 +129,7 @@ def save_deployment(request, result, *, db_path=None) -> None:
             serverless_endpoint = result.serverless.endpoint_url
             serverless_metadata = json.dumps(result.serverless.metadata)
 
-        spot_provider_name = "skyserve"
+        spot_provider_name = None if request.serverless_only else "skyserve"
         spot_endpoint = None
         spot_metadata = None
         if result.spot:

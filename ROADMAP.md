@@ -13,10 +13,7 @@ Current state: v0.0.1a5 | 4 serverless providers (Modal, RunPod, Cloud Run, Base
 - ~~`tuna destroy --all` — tear down every active deployment in one shot~~
 - ~~Partial deployment cleanup — when a deploy fails midway (serverless deployed but spot didn't), `tuna destroy` should clean up whatever was created~~
 - Storage cleanups after destroy — remove orphaned provider-side artifacts (SkyPilot buckets, Cloud Run images, Baseten models, Modal volumes)
-- `--serverless` mode — deploy to serverless only, no spot, no router. Single endpoint, simplest path for dev/test or low-traffic models
-  ```
-  tuna deploy meta-llama/Llama-3-8B --gpu L4 --serverless
-  ```
+- ~~`--serverless` mode — deploy to serverless only, no spot, no router. Single endpoint, simplest path for dev/test or low-traffic models~~
 
 ---
 
