@@ -66,12 +66,14 @@ def cmd_deploy(args: argparse.Namespace) -> None:
         scaling=scaling,
         service_name=args.service_name,
         public=args.public,
+        serverless_only=args.serverless_only,
     )
 
     # Register only the providers we actually need
     try:
         ensure_provider_registered(serverless_provider)
-        ensure_provider_registered("skyserve")
+        if not args.serverless_only:
+            ensure_provider_registered("skyserve")
     except ImportError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)
@@ -80,14 +82,21 @@ def cmd_deploy(args: argparse.Namespace) -> None:
     print(f"Service name: {request.service_name}")
     if not auto_selected:
         print(f"Serverless provider: {request.serverless_provider}")
-    print(f"Spot cloud: {request.spots_cloud}")
+    if args.serverless_only:
+        print(f"Mode: serverless-only")
+    else:
+        print(f"Spot cloud: {request.spots_cloud}")
     print()
 
     from tuna.models import HybridDeployment
 
     result = None
     try:
-        result = launch_hybrid(request, separate_router_vm=args.use_different_vm_for_lb)
+        if args.serverless_only:
+            from tuna.orchestrator import launch_serverless_only
+            result = launch_serverless_only(request)
+        else:
+            result = launch_hybrid(request, separate_router_vm=args.use_different_vm_for_lb)
     except KeyboardInterrupt:
         print("\nDeployment interrupted! Saving partial state for cleanup...", file=sys.stderr)
     except Exception as e:
@@ -138,7 +147,11 @@ def cmd_deploy(args: argparse.Namespace) -> None:
 
     print()
     if result.router_url:
-        print(f"All traffic -> {result.router_url}")
+        if result.router and result.router.endpoint_url:
+            print(f"All traffic -> {result.router_url}")
+        else:
+            # Serverless-only: router_url is the direct serverless endpoint
+            print(f"Endpoint -> {result.router_url}")
     print("=" * 60)
 
     if has_error:
@@ -217,7 +230,11 @@ def _print_status(status: dict) -> None:
 
     console = Console()
     service_name = status.get("service_name", "?")
-    console.print(f"\n[bold]{service_name}[/bold]\n")
+    mode = status.get("mode", "")
+    mode_suffix = f"  [dim]({mode})[/dim]" if mode else ""
+    console.print(f"\n[bold]{service_name}[/bold]{mode_suffix}\n")
+
+    is_serverless_only = mode == "serverless-only"
 
     # -- Components table --
     table = Table(show_header=True, header_style="bold", expand=True)
@@ -226,12 +243,13 @@ def _print_status(status: dict) -> None:
     table.add_column("Endpoint")
 
     # Router
-    router = status.get("router") or {}
-    router_status = router.get("status", "unknown")
-    if router.get("url") and router_status != "unreachable":
-        router_status = "running"
-    router_url = router.get("url", "-")
-    _add_status_row(table, "Router", router_status, router_url)
+    if not is_serverless_only:
+        router = status.get("router") or {}
+        router_status = router.get("status", "unknown")
+        if router.get("url") and router_status != "unreachable":
+            router_status = "running"
+        router_url = router.get("url", "-")
+        _add_status_row(table, "Router", router_status, router_url)
 
     # Serverless
     sl = status.get("serverless") or {}
@@ -245,16 +263,18 @@ def _print_status(status: dict) -> None:
     _add_status_row(table, sl_label, sl_status, sl_endpoint)
 
     # Spot
-    spot = status.get("spot") or {}
-    spot_status = spot.get("status", "unknown")
-    spot_provider = spot.get("provider", "")
-    spot_label = f"Spot ({spot_provider})" if spot_provider else "Spot"
-    spot_endpoint = spot.get("endpoint", "-")
-    _add_status_row(table, spot_label, spot_status, spot_endpoint)
+    if not is_serverless_only:
+        spot = status.get("spot") or {}
+        spot_status = spot.get("status", "unknown")
+        spot_provider = spot.get("provider", "")
+        spot_label = f"Spot ({spot_provider})" if spot_provider else "Spot"
+        spot_endpoint = spot.get("endpoint", "-")
+        _add_status_row(table, spot_label, spot_status, spot_endpoint)
 
     console.print(table)
 
     # -- Route stats --
+    router = status.get("router") or {}
     route_stats = router.get("route_stats")
     if route_stats and route_stats.get("total", 0) > 0:
         console.print()
@@ -267,6 +287,7 @@ def _print_status(status: dict) -> None:
         console.print(stats_table)
 
     # -- Spot replica details (parse the raw sky output) --
+    spot = status.get("spot") or {}
     raw = spot.get("raw", "")
     if raw:
         # Extract just the replica lines for a cleaner view
@@ -383,6 +404,13 @@ def cmd_cost(args: argparse.Namespace) -> None:
 
     ensure_providers_for_deployment(record)
 
+    # Detect serverless-only deployment
+    is_serverless_only = not record.spot_provider_name and not record.router_endpoint
+
+    if is_serverless_only:
+        _print_serverless_only_cost(record)
+        return
+
     # Fetch router health for route_stats with cost fields
     status = status_hybrid(args.service_name, record=record)
     router = status.get("router") or {}
@@ -462,6 +490,50 @@ def _format_duration(seconds: float) -> str:
     hours = int(minutes // 60)
     remaining_min = int(minutes % 60)
     return f"{hours}h {remaining_min:02d}m"
+
+
+def _print_serverless_only_cost(record) -> None:
+    from datetime import datetime, timezone
+    from rich.console import Console
+    from rich.table import Table
+    from tuna.catalog import get_provider_price, GPU_SPECS
+
+    console = Console()
+    serverless_price = get_provider_price(record.gpu, record.serverless_provider)
+    spec = GPU_SPECS.get(record.gpu)
+    gpu_label = f"{record.gpu} ({spec.vram_gb} GB)" if spec else record.gpu
+
+    # Compute uptime from created_at
+    created = datetime.fromisoformat(record.created_at)
+    now = datetime.now(timezone.utc)
+    if created.tzinfo is None:
+        created = created.replace(tzinfo=timezone.utc)
+    uptime_s = (now - created).total_seconds()
+
+    console.print()
+    console.print(f"[bold]Cost Dashboard: {record.service_name}[/bold]  [dim](serverless-only)[/dim]")
+    console.print(f"GPU: {gpu_label} · Provider: {record.serverless_provider}")
+    console.print(f"Uptime: {_format_duration(uptime_s)}")
+    console.print()
+
+    # Pricing table
+    table = Table(title="Serverless Pricing", show_header=True, header_style="bold", expand=True)
+    table.add_column("Metric")
+    table.add_column("Value", justify="right")
+
+    table.add_row("Provider", record.serverless_provider)
+    table.add_row("GPU", gpu_label)
+    table.add_row("Rate", f"${serverless_price:.4f}/GPU-hour")
+    table.add_row("Deployment uptime", _format_duration(uptime_s))
+
+    max_cost = (uptime_s / 3600) * serverless_price * record.gpu_count
+    table.add_row("[bold]Max possible cost[/bold]", f"[bold]${max_cost:.2f}[/bold]")
+
+    console.print(table)
+    console.print()
+    console.print("[dim]Serverless bills per-second of active compute, not idle time.[/dim]")
+    console.print("[dim]Actual cost depends on request volume. Check your provider's billing dashboard.[/dim]")
+    console.print()
 
 
 def _print_cost_dashboard(
@@ -851,6 +923,8 @@ def main() -> None:
     p_deploy.add_argument("--public", action="store_true", default=False,
                           help="Make deployed service publicly accessible (no auth). "
                                "WARNING: GPU services are expensive — only use for testing.")
+    p_deploy.add_argument("--serverless-only", action="store_true", default=False,
+                          help="Deploy serverless only — no spot, no router. Returns direct provider endpoint.")
     p_deploy.add_argument("--use-different-vm-for-lb", action="store_true", default=False,
                           help="Launch router on separate VM instead of colocating on SkyServe controller")
     p_deploy.add_argument("--gcp-project", default=None,

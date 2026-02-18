@@ -764,7 +764,7 @@ class TestCmdDeployKeyboardInterrupt:
             concurrency=None, workers_max=None, no_scale_to_zero=False,
             scaling_policy=None, service_name="test-svc", public=False,
             use_different_vm_for_lb=False, gcp_project=None, gcp_region=None,
-            cold_start_mode="fast_boot",
+            cold_start_mode="fast_boot", serverless_only=False,
         )
 
         try:

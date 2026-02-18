@@ -26,6 +26,7 @@ class DeployRequest:
     service_name: Optional[str] = None  # auto-generated if None
     public: bool = False  # If True, make endpoints publicly accessible (no auth)
     vllm_version: str = "0.15.1"  # Set by orchestrator to match serverless provider
+    serverless_only: bool = False  # skip spot + router
 
     def __post_init__(self):
         from tuna.catalog import normalize_gpu_name
