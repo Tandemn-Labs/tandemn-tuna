@@ -28,15 +28,15 @@ class MyProvider(InferenceProvider):
     def name(self) -> str:
         return "myprovider"
 
-    def plan(self, request, vllm_cmd) -> ProviderPlan:
+    def plan(self, request: DeployRequest, vllm_cmd: str) -> ProviderPlan:
         # Render deployment config from the request + vllm_cmd
         ...
 
-    def deploy(self, plan) -> DeploymentResult:
+    def deploy(self, plan: ProviderPlan) -> DeploymentResult:
         # Execute the plan, return endpoint URL or error
         ...
 
-    def destroy(self, result) -> None:
+    def destroy(self, result: DeploymentResult) -> None:
         # Tear down the deployment using metadata from result
         ...
 
