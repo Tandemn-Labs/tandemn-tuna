@@ -538,6 +538,7 @@ def launch_serverless_only(request: DeployRequest) -> HybridDeployment:
             serverless=DeploymentResult(
                 provider=request.serverless_provider,
                 error=f"Preflight failed: {failures}",
+                metadata={"service_name": f"{request.service_name}-serverless"},
             )
         )
 
