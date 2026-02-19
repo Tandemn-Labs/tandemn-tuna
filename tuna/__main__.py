@@ -1039,7 +1039,7 @@ def main() -> None:
 
     # Silence noisy third-party loggers unless --verbose
     if not args.verbose:
-        for name in ("azure", "azure.core", "azure.identity"):
+        for name in ("azure", "azure.core", "azure.identity", "alembic"):
             logging.getLogger(name).setLevel(logging.WARNING)
 
     args.func(args)
