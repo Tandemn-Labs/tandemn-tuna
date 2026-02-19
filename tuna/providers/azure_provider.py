@@ -97,11 +97,13 @@ class AzureProvider(InferenceProvider):
 
     def _find_existing_environment(
         self, subscription_id: str, resource_group: str, gpu_profile: str,
+        region: str | None = None,
     ) -> str | None:
         """Find an existing ManagedEnvironment with a matching GPU workload profile.
 
         1. Check AZURE_ENVIRONMENT env var (explicit override).
         2. Fall back to listing environments in the resource group via SDK.
+        Only considers environments in the same region if region is specified.
         Returns the environment name, or None.
         """
         explicit = os.environ.get("AZURE_ENVIRONMENT")
@@ -119,6 +121,8 @@ class AzureProvider(InferenceProvider):
             client = ContainerAppsAPIClient(credential, subscription_id)
 
             for env in client.managed_environments.list_by_resource_group(resource_group):
+                if region and env.location and env.location.replace(" ", "").lower() != region.lower():
+                    continue
                 profiles = env.workload_profiles or []
                 for wp in profiles:
                     if wp.workload_profile_type == gpu_profile:
@@ -210,6 +214,7 @@ class AzureProvider(InferenceProvider):
         if gpu_profile and check.passed:
             env_name = self._find_existing_environment(
                 subscription_id, resource_group, gpu_profile,
+                region=os.environ.get("AZURE_REGION", DEFAULT_REGION),
             )
             if env_name:
                 result.checks.append(PreflightCheck(
@@ -383,6 +388,8 @@ class AzureProvider(InferenceProvider):
             )
 
         region = os.environ.get("AZURE_REGION", DEFAULT_REGION)
+        if region != DEFAULT_REGION:
+            logger.info("Default region is %s — overriding to %s", DEFAULT_REGION, region)
         service_name = f"{request.service_name}-serverless"
         env_name = f"{request.service_name}-env"
         serverless = request.scaling.serverless
@@ -472,7 +479,7 @@ class AzureProvider(InferenceProvider):
 
         # 1. Reuse or create ManagedEnvironment
         existing_env = self._find_existing_environment(
-            subscription_id, resource_group, gpu_profile,
+            subscription_id, resource_group, gpu_profile, region=region,
         )
 
         if existing_env:
@@ -484,6 +491,8 @@ class AzureProvider(InferenceProvider):
                 "(this takes 30+ minutes)",
                 env_name, region,
             )
+            # Include all GPU profiles so the environment works for any GPU type.
+            # Azure doesn't allow adding profiles to an existing environment.
             managed_env = aca_models.ManagedEnvironment(
                 location=region,
                 workload_profiles=[
@@ -491,10 +500,12 @@ class AzureProvider(InferenceProvider):
                         workload_profile_type="Consumption",
                         name="Consumption",
                     ),
+                ] + [
                     aca_models.WorkloadProfile(
-                        workload_profile_type=gpu_profile,
-                        name="gpu",
-                    ),
+                        workload_profile_type=profile,
+                        name=f"gpu-{profile.split('-')[-1].lower()}",
+                    )
+                    for profile in _GPU_PROFILE_RESOURCES
                 ],
             )
 
@@ -525,7 +536,7 @@ class AzureProvider(InferenceProvider):
                 f"/subscriptions/{subscription_id}/resourceGroups/{resource_group}"
                 f"/providers/Microsoft.App/managedEnvironments/{env_name}"
             ),
-            workload_profile_name="gpu",
+            workload_profile_name=f"gpu-{gpu_profile.split('-')[-1].lower()}",
             configuration=aca_models.Configuration(
                 ingress=aca_models.Ingress(
                     external=True,
