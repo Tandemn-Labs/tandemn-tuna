@@ -1037,6 +1037,11 @@ def main() -> None:
         format="%(asctime)s %(name)s %(levelname)s %(message)s",
     )
 
+    # Silence noisy third-party loggers unless --verbose
+    if not args.verbose:
+        for name in ("azure", "azure.core", "azure.identity"):
+            logging.getLogger(name).setLevel(logging.WARNING)
+
     args.func(args)
 
 
