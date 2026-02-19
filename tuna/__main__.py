@@ -18,7 +18,7 @@ def cmd_deploy(args: argparse.Namespace) -> None:
     from tuna.providers.registry import ensure_provider_registered
     from tuna.state import save_deployment
 
-    _setup_gcp_env(args)
+    _setup_cloud_env(args)
 
     # Build scaling policy: defaults <- YAML <- CLI flags
     if args.scaling_policy:
@@ -215,6 +215,15 @@ def cmd_destroy(args: argparse.Namespace) -> None:
     print(f"Destroying deployment: {args.service_name}")
     destroy_hybrid(args.service_name, record=record)
     update_deployment_status(args.service_name, "destroyed")
+
+    # Optional: also delete the Azure environment (slow)
+    if getattr(args, "azure_cleanup_env", False) and record.serverless_provider_name == "azure":
+        from tuna.providers.registry import get_provider
+        provider = get_provider("azure")
+        if hasattr(provider, "destroy_environment") and record.serverless_result:
+            print("Deleting Azure environment (this takes 20+ min)...")
+            provider.destroy_environment(record.serverless_result)
+
     print("Done.")
 
 
@@ -346,18 +355,26 @@ def _add_status_row(table, component: str, status: str, endpoint: str) -> None:
     table.add_row(component, f"{style}{status}{end}", endpoint)
 
 
-def _setup_gcp_env(args: argparse.Namespace) -> None:
-    """Forward GCP-related CLI arguments to environment variables."""
+def _setup_cloud_env(args: argparse.Namespace) -> None:
+    """Forward cloud-related CLI arguments to environment variables."""
     if getattr(args, "gcp_project", None):
         os.environ["GOOGLE_CLOUD_PROJECT"] = args.gcp_project
     if getattr(args, "gcp_region", None):
         os.environ["GOOGLE_CLOUD_REGION"] = args.gcp_region
+    if getattr(args, "azure_subscription", None):
+        os.environ["AZURE_SUBSCRIPTION_ID"] = args.azure_subscription
+    if getattr(args, "azure_resource_group", None):
+        os.environ["AZURE_RESOURCE_GROUP"] = args.azure_resource_group
+    if getattr(args, "azure_region", None):
+        os.environ["AZURE_REGION"] = args.azure_region
+    if getattr(args, "azure_environment", None):
+        os.environ["AZURE_ENVIRONMENT"] = args.azure_environment
 
 
 def cmd_check(args: argparse.Namespace) -> None:
     from tuna.providers.registry import ensure_provider_registered, get_provider
 
-    _setup_gcp_env(args)
+    _setup_cloud_env(args)
 
     provider_name = args.provider
     try:
@@ -368,10 +385,11 @@ def cmd_check(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     # Build a minimal DeployRequest for preflight
+    default_gpu = "T4" if provider_name == "azure" else "L4"
     request = DeployRequest(
         model_name="check",
-        gpu=args.gpu or "L4",
-        region=args.gcp_region,
+        gpu=args.gpu or default_gpu,
+        region=getattr(args, "gcp_region", None),
         serverless_provider=provider_name,
     )
 
@@ -823,7 +841,7 @@ def _print_gpu_table(result, spot_prices: dict, show_spot: bool, get_gpu_spec) -
     table.add_column("GPU")
     table.add_column("VRAM", justify="right")
 
-    providers = ["modal", "runpod", "cloudrun", "baseten"]
+    providers = ["modal", "runpod", "cloudrun", "baseten", "azure"]
     for p in providers:
         table.add_column(p.upper(), justify="right")
     if show_spot:
@@ -926,7 +944,7 @@ def main() -> None:
     p_deploy.add_argument("--tp-size", type=int, default=1, help="Tensor parallel size")
     p_deploy.add_argument("--max-model-len", type=int, default=4096)
     p_deploy.add_argument("--serverless-provider", default=None,
-                          help="Serverless backend: modal, runpod, cloudrun, baseten (default: cheapest for GPU)")
+                          help="Serverless backend: modal, runpod, cloudrun, baseten, azure (default: cheapest for GPU)")
     p_deploy.add_argument("--spots-cloud", default="aws", help="Cloud for spot GPUs")
     p_deploy.add_argument("--region", default=None)
     p_deploy.add_argument("--concurrency", type=int, default=None,
@@ -949,6 +967,14 @@ def main() -> None:
                           help="Google Cloud project ID (overrides GOOGLE_CLOUD_PROJECT env var)")
     p_deploy.add_argument("--gcp-region", default=None,
                           help="Google Cloud region (e.g. us-central1)")
+    p_deploy.add_argument("--azure-subscription", default=None,
+                          help="Azure subscription ID")
+    p_deploy.add_argument("--azure-resource-group", default=None,
+                          help="Azure resource group name")
+    p_deploy.add_argument("--azure-region", default=None,
+                          help="Azure region (e.g. eastus)")
+    p_deploy.add_argument("--azure-environment", default=None,
+                          help="Name of existing Container Apps environment to reuse")
     p_deploy.set_defaults(func=cmd_deploy)
 
     # -- check --
@@ -959,6 +985,14 @@ def main() -> None:
                          help="Google Cloud project ID (overrides GOOGLE_CLOUD_PROJECT env var)")
     p_check.add_argument("--gcp-region", default=None,
                          help="Google Cloud region (e.g. us-central1)")
+    p_check.add_argument("--azure-subscription", default=None,
+                         help="Azure subscription ID")
+    p_check.add_argument("--azure-resource-group", default=None,
+                         help="Azure resource group name")
+    p_check.add_argument("--azure-region", default=None,
+                         help="Azure region (e.g. eastus)")
+    p_check.add_argument("--azure-environment", default=None,
+                         help="Name of existing Container Apps environment to reuse")
     p_check.set_defaults(func=cmd_check)
 
     # -- destroy --
@@ -967,6 +1001,8 @@ def main() -> None:
     destroy_group.add_argument("--service-name", default=None)
     destroy_group.add_argument("--all", action="store_true", dest="destroy_all",
                                help="Destroy all active deployments")
+    p_destroy.add_argument("--azure-cleanup-env", action="store_true", default=False,
+                           help="Also delete the Azure Container Apps environment (slow, 20+ min)")
     p_destroy.set_defaults(func=cmd_destroy)
 
     # -- status --
