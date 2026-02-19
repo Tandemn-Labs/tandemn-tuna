@@ -2,7 +2,7 @@
 
 > Hybrid GPU inference orchestrator — serverless for speed, spot for savings, one endpoint for everything.
 
-Current state: v0.0.1a5 | 4 serverless providers (Modal, RunPod, Cloud Run, Baseten) | 1 spot provider (AWS via SkyPilot) | ~295 tests
+Current state: v0.0.1a7 | 5 serverless providers (Modal, RunPod, Cloud Run, Baseten, Azure) | 1 spot provider (AWS via SkyPilot) | ~412 tests
 
 ---
 
@@ -26,7 +26,7 @@ Serverless:
 | Replicate | A40, A100, H100 | REST API, prediction-based billing |
 | Fal AI | Various | Fast cold starts, queue-based |
 | BentoML | Various | Open-source friendly, BentoCloud |
-| Azure Container Apps | T4, A100 | GPU workload profiles, long env creation times |
+| ~~Azure Container Apps~~ | ~~T4, A100~~ | ~~GPU workload profiles, long env creation times~~ |
 | InferX | GPU slicing | Sub-2s cold starts, fractional GPU allocation (1/3 GPU per model), 80%+ utilization, high deployment density |
 
 Spot (via SkyPilot):
