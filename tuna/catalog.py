@@ -138,6 +138,28 @@ _PROVIDER_GPUS: list[ProviderGpu] = [
         regions=("us-central1",),
     ),
 
+    # Azure Container Apps (prices from Azure Retail Prices API, eastus region)
+    ProviderGpu(
+        "T4", "azure", "Consumption-GPU-NC8as-T4", 0.26,
+        regions=(
+            "australiaeast", "brazilsouth", "canadacentral", "canadaeast",
+            "centralindia", "centralus", "eastasia", "eastus", "eastus2",
+            "francecentral", "germanywestcentral", "japaneast", "koreacentral",
+            "northcentralus", "northeurope", "southcentralus", "southeastasia",
+            "swedencentral", "uksouth", "westeurope", "westus", "westus2", "westus3",
+        ),
+    ),
+    ProviderGpu(
+        "A100_80GB", "azure", "Consumption-GPU-NC24-A100", 1.90,
+        regions=(
+            "australiaeast", "brazilsouth", "canadacentral", "canadaeast",
+            "centralindia", "centralus", "eastasia", "eastus", "eastus2",
+            "francecentral", "germanywestcentral", "japaneast", "koreacentral",
+            "northcentralus", "northeurope", "southcentralus", "southeastasia",
+            "swedencentral", "uksouth", "westeurope", "westus", "westus2", "westus3",
+        ),
+    ),
+
     # Baseten
     ProviderGpu("T4", "baseten", "T4", 0.63),
     ProviderGpu("L4", "baseten", "L4", 0.85),

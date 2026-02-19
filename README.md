@@ -11,7 +11,7 @@ Tuna is a smart router that combines both behind a single OpenAI-compatible endp
 <div align="center">
 <table>
 <tr>
-<td align="center" colspan="4"><b>Serverless</b></td>
+<td align="center" colspan="5"><b>Serverless</b></td>
 <td align="center" colspan="1"><b>Spot</b></td>
 </tr>
 <tr>
@@ -19,6 +19,7 @@ Tuna is a smart router that combines both behind a single OpenAI-compatible endp
 <td align="center"><img src="https://raw.githubusercontent.com/Tandemn-Labs/tandemn-tuna/main/assets/runpod-logo-black.svg" height="30"><br>RunPod</td>
 <td align="center"><img src="https://raw.githubusercontent.com/Tandemn-Labs/tandemn-tuna/main/assets/google-cloud-run-logo-png_seeklogo-354677.png" height="30"><br>Cloud Run</td>
 <td align="center"><img src="https://raw.githubusercontent.com/Tandemn-Labs/tandemn-tuna/main/assets/baseten.png" height="30"><br>Baseten</td>
+<td align="center"><img src="https://raw.githubusercontent.com/Tandemn-Labs/tandemn-tuna/main/assets/azure-logo.png" height="30"><br>Azure</td>
 <td align="center"><img src="https://raw.githubusercontent.com/Tandemn-Labs/tandemn-tuna/main/assets/Amazon_Web_Services_Logo.svg.png" height="30"><br>AWS via SkyPilot</td>
 </tr>
 </table>
@@ -32,7 +33,7 @@ Tuna is a smart router that combines both behind a single OpenAI-compatible endp
 
 - Python 3.11+
 - [AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) — required for spot instances (all deployments use spot)
-- At least one serverless provider account: [Modal](https://modal.com/), [RunPod](https://www.runpod.io/), [Google Cloud](https://cloud.google.com/), or [Baseten](https://www.baseten.co/)
+- At least one serverless provider account: [Modal](https://modal.com/), [RunPod](https://www.runpod.io/), [Google Cloud](https://cloud.google.com/), [Baseten](https://www.baseten.co/), or [Azure](https://azure.microsoft.com/)
 - For gated models (Llama, Mistral, Gemma, etc.): a [HuggingFace token](https://huggingface.co/settings/tokens) with access to the model
 
 > **Note:** By default Tuna deploys both a serverless backend and a spot backend. AWS credentials are required for spot instances, which run on AWS via [SkyPilot](https://github.com/skypilot-org/skypilot). Use `--serverless-only` to skip spot + router (no AWS needed).
@@ -45,6 +46,7 @@ Tuna is a smart router that combines both behind a single OpenAI-compatible endp
 pip install tandemn-tuna[modal] --pre     # Modal as serverless provider
 pip install tandemn-tuna[cloudrun] --pre  # Cloud Run as serverless provider
 pip install tandemn-tuna[baseten] --pre   # Baseten as serverless provider
+pip install tandemn-tuna[azure] --pre     # Azure Container Apps as serverless provider
 pip install tandemn-tuna --pre            # RunPod (no extra deps needed)
 pip install tandemn-tuna[all] --pre       # everything
 ```
@@ -126,6 +128,60 @@ truss login --api-key $BASETEN_API_KEY
 
 </details>
 
+<details>
+<summary><b>Azure Container Apps</b></summary>
+
+Requires the [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli).
+
+**Step 1: Install Azure CLI and log in**
+
+```bash
+az login
+```
+
+**Step 2: Register required resource providers**
+
+```bash
+az provider register --namespace Microsoft.App
+az provider register --namespace Microsoft.OperationalInsights
+```
+
+Registration can take a few minutes. Check status with `az provider show --namespace Microsoft.App --query registrationState`.
+
+**Step 3: Create a resource group** (if you don't have one)
+
+```bash
+az group create --name tuna-rg --location eastus
+```
+
+**Step 4: Set environment variables**
+
+```bash
+export AZURE_SUBSCRIPTION_ID=$(az account show --query id -o tsv)
+export AZURE_RESOURCE_GROUP=tuna-rg
+export AZURE_REGION=eastus
+```
+
+Add to `~/.bashrc` or `~/.zshrc` to persist.
+
+**Step 5: Install the Azure SDK**
+
+```bash
+pip install tandemn-tuna[azure]
+```
+
+**Step 6: Verify setup**
+
+```bash
+tuna check --provider azure
+```
+
+**GPU availability:** Azure Container Apps supports T4 ($0.26/hr) and A100 80GB ($1.90/hr) GPUs. GPU quota must be requested via the Azure portal — search "Quotas" and request `NC T4 v3` or `NC A100 v4` capacity for Container Apps in your region.
+
+**Environment reuse:** The first Azure deploy creates a Container Apps environment (~30 min). Subsequent deploys reuse it (~2 min). Environments are preserved on destroy — use `--azure-cleanup-env` to remove them.
+
+</details>
+
 **4. (Optional) Set HuggingFace token for gated models**
 
 ```bash
@@ -141,6 +197,7 @@ tuna check --provider modal                          # check Modal credentials
 tuna check --provider runpod                         # check RunPod API key
 tuna check --provider cloudrun --gcp-project <id> --gcp-region us-central1  # check Cloud Run
 tuna check --provider baseten                        # check Baseten API key + truss CLI
+tuna check --provider azure                          # check Azure CLI + SDK + resource providers
 ```
 
 **6. Deploy a model**
@@ -241,7 +298,7 @@ The router:
 | `--model` | *(required)* | HuggingFace model ID (e.g. `Qwen/Qwen3-0.6B`) |
 | `--gpu` | *(required)* | GPU type (e.g. `L4`, `L40S`, `A100`, `H100`) |
 | `--gpu-count` | `1` | Number of GPUs |
-| `--serverless-provider` | auto (cheapest for GPU) | `modal`, `runpod`, `cloudrun`, or `baseten` |
+| `--serverless-provider` | auto (cheapest for GPU) | `modal`, `runpod`, `cloudrun`, `baseten`, or `azure` |
 | `--spots-cloud` | `aws` | Cloud provider for spot GPUs |
 | `--region` | — | Cloud region for spot instances |
 | `--tp-size` | `1` | Tensor parallelism degree |
@@ -257,6 +314,10 @@ The router:
 | `--use-different-vm-for-lb` | off | Launch router on a separate VM instead of colocating on controller |
 | `--gcp-project` | — | Google Cloud project ID |
 | `--gcp-region` | — | Google Cloud region (e.g. `us-central1`) |
+| `--azure-subscription` | — | Azure subscription ID |
+| `--azure-resource-group` | — | Azure resource group name |
+| `--azure-region` | — | Azure region (e.g. `eastus`) |
+| `--azure-environment` | — | Name of existing Container Apps environment to reuse |
 
 Use `-v` / `--verbose` with any command for debug logging.
 
@@ -296,6 +357,7 @@ tuna check --provider runpod
 tuna check --provider modal
 tuna check --provider cloudrun --gcp-project <id> --gcp-region us-central1
 tuna check --provider baseten
+tuna check --provider azure
 ```
 
 This validates credentials, API access, project configuration, and GPU region availability.
