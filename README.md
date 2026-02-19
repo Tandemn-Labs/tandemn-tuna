@@ -29,6 +29,8 @@ Tuna is a smart router that combines both behind a single OpenAI-compatible endp
   <a href="ROADMAP.md"><b>View Roadmap</b></a>
 </p>
 
+> **Note:** Not all GPU types across all providers have been end-to-end tested yet. We are actively testing more combinations. If you run into issues with a specific GPU + provider pair, please [open an issue](https://github.com/Tandemn-Labs/tandemn-tuna/issues).
+
 ## Prerequisites
 
 - Python 3.11+
@@ -176,7 +178,7 @@ pip install tandemn-tuna[azure]
 tuna check --provider azure
 ```
 
-**GPU availability:** Azure Container Apps supports T4 ($0.26/hr) and A100 80GB ($1.90/hr) GPUs. GPU quota must be requested via the Azure portal — search "Quotas" and request `NC T4 v3` or `NC A100 v4` capacity for Container Apps in your region.
+**GPU availability:** Azure Container Apps supports T4 ($0.26/hr) and A100 80GB ($1.90/hr) GPUs. GPU quota must be requested via the Azure portal — search "Quotas" and request `Managed Environment Consumption T4 Gpus` or `Managed Environment Consumption NCA100 Gpus` capacity for Container Apps in your region. Note: this is separate from VM-level (Compute) GPU quota.
 
 **Environment reuse:** The first Azure deploy creates a Container Apps environment (~30 min). Subsequent deploys reuse it (~2 min). Environments are preserved on destroy — use `--azure-cleanup-env` to remove them. An idle environment with no running apps incurs no charges.
 
