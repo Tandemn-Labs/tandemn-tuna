@@ -178,7 +178,7 @@ tuna check --provider azure
 
 **GPU availability:** Azure Container Apps supports T4 ($0.26/hr) and A100 80GB ($1.90/hr) GPUs. GPU quota must be requested via the Azure portal — search "Quotas" and request `NC T4 v3` or `NC A100 v4` capacity for Container Apps in your region.
 
-**Environment reuse:** The first Azure deploy creates a Container Apps environment (~30 min). Subsequent deploys reuse it (~2 min). Environments are preserved on destroy — use `--azure-cleanup-env` to remove them.
+**Environment reuse:** The first Azure deploy creates a Container Apps environment (~30 min). Subsequent deploys reuse it (~2 min). Environments are preserved on destroy — use `--azure-cleanup-env` to remove them. An idle environment with no running apps incurs no charges.
 
 </details>
 
