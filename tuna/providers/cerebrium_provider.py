@@ -374,9 +374,11 @@ class CerebriumProvider(InferenceProvider):
             if proc.returncode == 0:
                 # Look for our app in the output
                 for line in proc.stdout.splitlines():
-                    if app_name in line or (project_id and f"{project_id}-{app_name}" in line):
-                        # Parse status from the line (columns: ID, STATUS, CREATED, UPDATED)
-                        parts = line.split()
+                    parts = line.split()
+                    if not parts:
+                        continue
+                    app_id = parts[0]
+                    if app_id == app_name or (project_id and app_id == f"{project_id}-{app_name}"):
                         status_val = parts[1] if len(parts) >= 2 else "unknown"
                         return {
                             "provider": self.name(),
