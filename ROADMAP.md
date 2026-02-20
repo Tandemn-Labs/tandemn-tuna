@@ -2,7 +2,7 @@
 
 > Hybrid GPU inference orchestrator — serverless for speed, spot for savings, one endpoint for everything.
 
-Current state: v0.0.1a7 | 5 serverless providers (Modal, RunPod, Cloud Run, Baseten, Azure) | 1 spot provider (AWS via SkyPilot) | ~412 tests
+Current state: v0.0.1a7 | 6 serverless providers (Modal, RunPod, Cloud Run, Baseten, Azure, Cerebrium) | 1 spot provider (AWS via SkyPilot) | ~462 tests
 
 ---
 
@@ -23,7 +23,7 @@ Serverless:
 
 | Provider | GPU Support | Notes |
 |----------|-------------|-------|
-| Cerebrium | T4, A10, L4, L40S, A100, H100 | Per-second billing, Python SDK, official vLLM support, 2-4s cold starts, $30 free credits |
+| ~~Cerebrium~~ | ~~T4, A10, L4, L40S, A100, H100~~ | ~~Done — per-second billing, custom runtime entrypoint, $30 free credits~~ |
 | Beam Cloud | T4, A10G, 4090, A100, H100 | Per-millisecond billing, H100 at $0.97/hr, open-source runtime, 10 hrs free |
 | Koyeb | L4, L40S, A100, H100, H200, 8xH100 | Per-second billing, widest GPU selection, multi-GPU, $29/mo platform fee |
 | BentoML | T4, L4, H100, H200, B200 | Bento format required, $10 free credits, on waitlist |
