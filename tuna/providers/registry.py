@@ -15,6 +15,7 @@ PROVIDER_MODULES: dict[str, tuple[str, str]] = {
     "cloudrun": ("tuna.providers.cloudrun_provider", "CloudRunProvider"),
     "baseten": ("tuna.providers.baseten_provider", "BasetenProvider"),
     "azure": ("tuna.providers.azure_provider", "AzureProvider"),
+    "cerebrium": ("tuna.providers.cerebrium_provider", "CerebriumProvider"),
     "skyserve": ("tuna.spot.sky_launcher", "SkyLauncher"),
 }
 
@@ -24,6 +25,7 @@ _INSTALL_HINTS: dict[str, str] = {
     "cloudrun": "pip install tandemn-tuna[cloudrun]",
     "baseten": "pip install tandemn-tuna[baseten]",
     "azure": "pip install tandemn-tuna[azure]",
+    "cerebrium": "pip install tandemn-tuna[cerebrium]",
 }
 
 

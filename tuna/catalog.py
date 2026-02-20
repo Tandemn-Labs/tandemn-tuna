@@ -159,6 +159,15 @@ _PROVIDER_GPUS: list[ProviderGpu] = [
         ),
     ),
 
+    # Cerebrium (per-second billing, prices include typical CPU+memory bundle)
+    ProviderGpu("T4", "cerebrium", "TURING_T4", 0.59),
+    ProviderGpu("L4", "cerebrium", "ADA_L4", 0.80),
+    ProviderGpu("A10", "cerebrium", "AMPERE_A10", 1.10),
+    ProviderGpu("L40S", "cerebrium", "ADA_L40", 1.95),
+    ProviderGpu("A100_40GB", "cerebrium", "AMPERE_A100_40GB", 1.45),
+    ProviderGpu("A100_80GB", "cerebrium", "AMPERE_A100_80GB", 2.06),
+    ProviderGpu("H100", "cerebrium", "HOPPER_H100", 2.21),
+
     # Baseten
     ProviderGpu("T4", "baseten", "T4", 0.63),
     ProviderGpu("L4", "baseten", "L4", 0.85),

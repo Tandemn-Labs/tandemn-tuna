@@ -385,7 +385,7 @@ def cmd_check(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     # Build a minimal DeployRequest for preflight
-    default_gpu = "T4" if provider_name == "azure" else "L4"
+    default_gpu = "T4" if provider_name in ("azure", "cerebrium") else "L4"
     request = DeployRequest(
         model_name="check",
         gpu=args.gpu or default_gpu,
@@ -841,7 +841,7 @@ def _print_gpu_table(result, spot_prices: dict, show_spot: bool, get_gpu_spec) -
     table.add_column("GPU")
     table.add_column("VRAM", justify="right")
 
-    providers = ["modal", "runpod", "cloudrun", "baseten", "azure"]
+    providers = ["modal", "runpod", "cloudrun", "baseten", "azure", "cerebrium"]
     for p in providers:
         table.add_column(p.upper(), justify="right")
     if show_spot:
@@ -944,7 +944,7 @@ def main() -> None:
     p_deploy.add_argument("--tp-size", type=int, default=1, help="Tensor parallel size")
     p_deploy.add_argument("--max-model-len", type=int, default=4096)
     p_deploy.add_argument("--serverless-provider", default=None,
-                          help="Serverless backend: modal, runpod, cloudrun, baseten, azure (default: cheapest for GPU)")
+                          help="Serverless backend: modal, runpod, cloudrun, baseten, azure, cerebrium (default: cheapest for GPU)")
     p_deploy.add_argument("--spots-cloud", default="aws", help="Cloud for spot GPUs")
     p_deploy.add_argument("--region", default=None)
     p_deploy.add_argument("--concurrency", type=int, default=None,
