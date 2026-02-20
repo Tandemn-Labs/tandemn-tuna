@@ -361,9 +361,38 @@ class CerebriumProvider(InferenceProvider):
 
     def status(self, service_name: str) -> dict:
         app_name = f"{service_name}-serverless"
-        api_key = os.environ.get("CEREBRIUM_API_KEY", "")
         project_id = _get_project_id() or ""
 
+        # Try CLI first (works with session auth, no API key needed)
+        try:
+            proc = subprocess.run(
+                ["cerebrium", "apps", "list", "--no-color"],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+            if proc.returncode == 0:
+                # Look for our app in the output
+                for line in proc.stdout.splitlines():
+                    if app_name in line or (project_id and f"{project_id}-{app_name}" in line):
+                        # Parse status from the line (columns: ID, STATUS, CREATED, UPDATED)
+                        parts = line.split()
+                        status_val = parts[1] if len(parts) >= 2 else "unknown"
+                        return {
+                            "provider": self.name(),
+                            "service_name": service_name,
+                            "status": status_val,
+                        }
+                return {
+                    "provider": self.name(),
+                    "service_name": service_name,
+                    "status": "not found",
+                }
+        except Exception:
+            pass
+
+        # Fallback to REST API
+        api_key = os.environ.get("CEREBRIUM_API_KEY", "")
         if api_key and project_id:
             try:
                 import requests
@@ -398,7 +427,6 @@ class CerebriumProvider(InferenceProvider):
             "provider": self.name(),
             "service_name": service_name,
             "status": "unknown",
-            "error": "CEREBRIUM_API_KEY or project_id not available",
         }
 
 

@@ -450,36 +450,39 @@ class TestCerebriumDestroy:
 # ---------------------------------------------------------------------------
 
 class TestCerebriumStatus:
-    @patch.dict("os.environ", {"CEREBRIUM_API_KEY": "ck-test"})
     @patch("tuna.providers.cerebrium_provider._get_project_id", return_value="proj-123")
-    @patch("requests.get")
-    def test_status_running(self, mock_get, mock_pid, provider):
-        mock_get.return_value = MagicMock(
-            status_code=200,
-            json=MagicMock(return_value={"status": "running"}),
+    @patch("tuna.providers.cerebrium_provider.subprocess.run")
+    def test_status_running_via_cli(self, mock_run, mock_pid, provider):
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout="proj-123-test-svc-serverless    ready    2026-01-01  2026-01-01\n",
         )
         status = provider.status("test-svc")
-        assert status["status"] == "running"
+        assert status["status"] == "ready"
 
-    @patch.dict("os.environ", {"CEREBRIUM_API_KEY": "ck-test"})
     @patch("tuna.providers.cerebrium_provider._get_project_id", return_value="proj-123")
-    @patch("requests.get")
-    def test_status_not_found(self, mock_get, mock_pid, provider):
-        mock_get.return_value = MagicMock(status_code=404)
+    @patch("tuna.providers.cerebrium_provider.subprocess.run")
+    def test_status_not_found_via_cli(self, mock_run, mock_pid, provider):
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout="No apps found\n",
+        )
         status = provider.status("test-svc")
         assert status["status"] == "not found"
 
     @patch.dict("os.environ", {"CEREBRIUM_API_KEY": "ck-test"})
     @patch("tuna.providers.cerebrium_provider._get_project_id", return_value="proj-123")
+    @patch("tuna.providers.cerebrium_provider.subprocess.run", side_effect=Exception("cli error"))
     @patch("requests.get", side_effect=Exception("timeout"))
-    def test_status_error(self, mock_get, mock_pid, provider):
+    def test_status_error(self, mock_get, mock_run, mock_pid, provider):
         status = provider.status("test-svc")
         assert status["status"] == "unknown"
         assert "timeout" in status["error"]
 
     @patch.dict("os.environ", {}, clear=True)
     @patch("tuna.providers.cerebrium_provider._get_project_id", return_value=None)
-    def test_status_no_credentials(self, mock_pid, provider):
+    @patch("tuna.providers.cerebrium_provider.subprocess.run", side_effect=Exception("no cli"))
+    def test_status_no_credentials(self, mock_run, mock_pid, provider):
         status = provider.status("test-svc")
         assert status["status"] == "unknown"
 
