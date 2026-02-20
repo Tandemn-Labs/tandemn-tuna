@@ -345,13 +345,16 @@ class RunPodProvider(InferenceProvider):
             )
             resp.raise_for_status()
             data = resp.json()
-            return {
+            result = {
                 "provider": self.name(),
                 "endpoint_name": endpoint_name,
                 "endpoint_id": endpoint_id,
                 "status": "running",
                 "workers": data.get("workers", {}),
             }
+            if data.get("templateId"):
+                result["template_id"] = data["templateId"]
+            return result
         except Exception as e:
             return {
                 "provider": self.name(),

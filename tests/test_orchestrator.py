@@ -388,7 +388,7 @@ class TestLaunchRouterOnController:
         # The SSH start command should include the serverless URL
         ssh_call = mock_subprocess.run.call_args_list[2]  # 3rd call: scp, pip install, gunicorn start
         ssh_cmd = ssh_call[0][0][-1]  # last arg is the remote command
-        assert "SERVERLESS_BASE_URL='https://modal.run/abc'" in ssh_cmd
+        assert "SERVERLESS_BASE_URL=https://modal.run/abc" in ssh_cmd
 
 
 class TestDestroyHybridColocated:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import shlex
 import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -219,8 +220,8 @@ def _launch_router_on_controller(
     # so it survives the SSH connection closing.
     start_cmd = (
         f"{conda_prefix} && "
-        f"SERVERLESS_BASE_URL='{serverless_url}' "
-        f"SERVERLESS_AUTH_TOKEN='{serverless_auth_token}' "
+        f"SERVERLESS_BASE_URL={shlex.quote(serverless_url)} "
+        f"SERVERLESS_AUTH_TOKEN={shlex.quote(serverless_auth_token)} "
         f"SKYSERVE_BASE_URL='http://127.0.0.1:30001' "
         f"setsid gunicorn -w 1 -k gthread --threads 16 --timeout 300 "
         f"--bind 0.0.0.0:{router_port} "
@@ -427,7 +428,7 @@ def launch_hybrid(request: DeployRequest, *, separate_router_vm: bool = False) -
             elif spot_result and spot_result.error:
                 logger.warning("Spot deployment issue: %s", spot_result.error)
         finally:
-            pool.shutdown(wait=False)
+            pool.shutdown(wait=True)
 
         return HybridDeployment(
             serverless=serverless_result,
@@ -514,7 +515,7 @@ def launch_hybrid(request: DeployRequest, *, separate_router_vm: bool = False) -
             logger.info("Pushing spot URL to router: %s", spot_result.endpoint_url)
             push_url_to_router(router_url, spot_url=spot_result.endpoint_url)
     finally:
-        pool.shutdown(wait=False)
+        pool.shutdown(wait=True)
 
     return HybridDeployment(
         serverless=serverless_result,
@@ -611,28 +612,45 @@ def _cleanup_serve_controller() -> None:
     """
     from sky.serve import ServiceStatus
 
+    _SHUTTING_DOWN = {ServiceStatus.SHUTTING_DOWN}
     _TERMINAL = {
         ServiceStatus.SHUTTING_DOWN,
         ServiceStatus.NO_REPLICA,
         ServiceStatus.FAILED,
         ServiceStatus.FAILED_CLEANUP,
     }
+    _ACTIVE = {ServiceStatus.READY, ServiceStatus.UPDATING}
 
     try:
         # Wait for services to finish tearing down (up to ~90s)
+        stuck_iterations = 0
         for _ in range(18):
             statuses = serve_status(None)
             if not statuses:
                 break
+            service_states = {s.get("status") for s in statuses}
+            # If any service is actively running, leave the controller alone
+            if service_states & _ACTIVE:
+                return
             # If every remaining service is in a terminal state, it will
             # disappear soon — keep waiting instead of giving up.
-            if all(s.get("status") in _TERMINAL for s in statuses):
+            if service_states <= _TERMINAL:
+                # Track if stuck only in SHUTTING_DOWN to avoid infinite wait
+                if service_states <= _SHUTTING_DOWN:
+                    stuck_iterations += 1
+                    if stuck_iterations >= 6:
+                        logger.warning(
+                            "Services stuck in SHUTTING_DOWN for 30s, proceeding with controller teardown"
+                        )
+                        break
+                else:
+                    stuck_iterations = 0
                 logger.debug(
                     "All remaining services in terminal state, waiting for removal..."
                 )
                 time.sleep(5)
                 continue
-            # A service is still active — leave the controller alone
+            # A service is in an unknown state — leave the controller alone
             return
 
         # Find and tear down the controller cluster
