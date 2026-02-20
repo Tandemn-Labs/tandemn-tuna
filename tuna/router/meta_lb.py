@@ -8,11 +8,10 @@ Env vars:
   SKYSERVE_BASE_URL       e.g. http://x.x.x.x:30001
 
   SKYSERVE_READY_PATH     default: /health
-  SKYSERVE_POKE_PATH      default: /v1/models (trigger scale-up; must NOT be
-                          the readiness_probe path, or SkyServe won't count it as QPS)
+  SKYSERVE_POKE_PATH      default: /health (trigger scale-up)
 
   PROBE_TIMEOUT_SECONDS   default: 1.0
-  POKE_TIMEOUT_SECONDS    default: 2.0
+  POKE_TIMEOUT_SECONDS    default: 0.3
   UPSTREAM_TIMEOUT_SECONDS default: 210.0
 
   CHECK_MIN_INTERVAL_SECONDS default: 1.0
@@ -79,10 +78,10 @@ BG_MAX_WORKERS = int(os.getenv("BG_MAX_WORKERS", "4"))
 EXECUTOR = ThreadPoolExecutor(max_workers=BG_MAX_WORKERS)
 
 SKYSERVE_READY_PATH = os.getenv("SKYSERVE_READY_PATH", "/health")
-SKYSERVE_POKE_PATH = os.getenv("SKYSERVE_POKE_PATH", "/v1/models")
+SKYSERVE_POKE_PATH = os.getenv("SKYSERVE_POKE_PATH", "/health")
 
 PROBE_TIMEOUT_SECONDS = _env_float("PROBE_TIMEOUT_SECONDS", 1.0)
-POKE_TIMEOUT_SECONDS = _env_float("POKE_TIMEOUT_SECONDS", 2.0)
+POKE_TIMEOUT_SECONDS = _env_float("POKE_TIMEOUT_SECONDS", 0.3)
 UPSTREAM_TIMEOUT_SECONDS = _env_float("UPSTREAM_TIMEOUT_SECONDS", 210.0)
 CHECK_MIN_INTERVAL_SECONDS = _env_float("CHECK_MIN_INTERVAL_SECONDS", 1.0)
 POKE_MIN_INTERVAL_SECONDS = _env_float("POKE_MIN_INTERVAL_SECONDS", 0.5)
