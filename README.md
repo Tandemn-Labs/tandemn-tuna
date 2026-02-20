@@ -20,6 +20,7 @@ Tuna is a smart router that combines both behind a single OpenAI-compatible endp
 <td align="center"><img src="https://raw.githubusercontent.com/Tandemn-Labs/tandemn-tuna/main/assets/google-cloud-run-logo-png_seeklogo-354677.png" height="30"><br>Cloud Run</td>
 <td align="center"><img src="https://raw.githubusercontent.com/Tandemn-Labs/tandemn-tuna/main/assets/baseten.png" height="30"><br>Baseten</td>
 <td align="center"><img src="https://raw.githubusercontent.com/Tandemn-Labs/tandemn-tuna/main/assets/azure-container.png" height="30"><br>Azure</td>
+<td align="center">Cerebrium</td>
 <td align="center"><img src="https://raw.githubusercontent.com/Tandemn-Labs/tandemn-tuna/main/assets/Amazon_Web_Services_Logo.svg.png" height="30"><br>AWS via SkyPilot</td>
 </tr>
 </table>
@@ -35,7 +36,7 @@ Tuna is a smart router that combines both behind a single OpenAI-compatible endp
 
 - Python 3.11+
 - [AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) — required for spot instances (all deployments use spot)
-- At least one serverless provider account: [Modal](https://modal.com/), [RunPod](https://www.runpod.io/), [Google Cloud](https://cloud.google.com/), [Baseten](https://www.baseten.co/), or [Azure](https://azure.microsoft.com/)
+- At least one serverless provider account: [Modal](https://modal.com/), [RunPod](https://www.runpod.io/), [Google Cloud](https://cloud.google.com/), [Baseten](https://www.baseten.co/), [Azure](https://azure.microsoft.com/), or [Cerebrium](https://www.cerebrium.ai/)
 - For gated models (Llama, Mistral, Gemma, etc.): a [HuggingFace token](https://huggingface.co/settings/tokens) with access to the model
 
 > **Note:** By default Tuna deploys both a serverless backend and a spot backend. AWS credentials are required for spot instances, which run on AWS via [SkyPilot](https://github.com/skypilot-org/skypilot). Use `--serverless-only` to skip spot + router (no AWS needed).
@@ -49,6 +50,7 @@ pip install tandemn-tuna[modal] --pre     # Modal as serverless provider
 pip install tandemn-tuna[cloudrun] --pre  # Cloud Run as serverless provider
 pip install tandemn-tuna[baseten] --pre   # Baseten as serverless provider
 pip install tandemn-tuna[azure] --pre     # Azure Container Apps as serverless provider
+pip install tandemn-tuna[cerebrium] --pre # Cerebrium as serverless provider
 pip install tandemn-tuna --pre            # RunPod (no extra deps needed)
 pip install tandemn-tuna[all] --pre       # everything
 ```
@@ -184,6 +186,38 @@ tuna check --provider azure
 
 </details>
 
+<details>
+<summary><b>Cerebrium</b></summary>
+
+**Step 1: Create account** — sign up at https://www.cerebrium.ai/ ($30 free credits on Hobby plan)
+
+**Step 2: Install the Cerebrium CLI and log in**
+
+```bash
+pip install tandemn-tuna[cerebrium]
+cerebrium login
+```
+
+**Step 3: Get a service account token** — go to Dashboard > API Keys, create a token, copy it
+
+**Step 4: Set the API key**
+
+```bash
+export CEREBRIUM_API_KEY=<your-service-account-token>
+```
+
+Add to `~/.bashrc` or `~/.zshrc` to persist.
+
+**Step 5: Verify setup**
+
+```bash
+tuna check --provider cerebrium
+```
+
+**GPU availability:** Hobby plan ($0/mo) gives access to T4, A10, L4, L40S. A100 and H100 require the Enterprise plan.
+
+</details>
+
 **4. (Optional) Set HuggingFace token for gated models**
 
 ```bash
@@ -200,6 +234,7 @@ tuna check --provider runpod                         # check RunPod API key
 tuna check --provider cloudrun --gcp-project <id> --gcp-region us-central1  # check Cloud Run
 tuna check --provider baseten                        # check Baseten API key + truss CLI
 tuna check --provider azure                          # check Azure CLI + SDK + resource providers
+tuna check --provider cerebrium                      # check Cerebrium API key + CLI
 ```
 
 **6. Deploy a model**
@@ -300,7 +335,7 @@ The router:
 | `--model` | *(required)* | HuggingFace model ID (e.g. `Qwen/Qwen3-0.6B`) |
 | `--gpu` | *(required)* | GPU type (e.g. `L4`, `L40S`, `A100`, `H100`) |
 | `--gpu-count` | `1` | Number of GPUs |
-| `--serverless-provider` | auto (cheapest for GPU) | `modal`, `runpod`, `cloudrun`, `baseten`, or `azure` |
+| `--serverless-provider` | auto (cheapest for GPU) | `modal`, `runpod`, `cloudrun`, `baseten`, `azure`, or `cerebrium` |
 | `--spots-cloud` | `aws` | Cloud provider for spot GPUs |
 | `--region` | — | Cloud region for spot instances |
 | `--tp-size` | `1` | Tensor parallelism degree |
