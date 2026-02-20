@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -243,7 +244,7 @@ class CerebriumProvider(InferenceProvider):
 
             try:
                 proc = subprocess.run(
-                    ["cerebrium", "deploy"],
+                    ["cerebrium", "deploy", "-y", "--no-color"],
                     cwd=tmpdir,
                     capture_output=True,
                     text=True,
@@ -257,30 +258,38 @@ class CerebriumProvider(InferenceProvider):
                 )
 
             if proc.returncode != 0:
-                logger.error("cerebrium deploy failed: %s", proc.stderr)
+                error_detail = proc.stderr or proc.stdout
+                logger.error("cerebrium deploy failed: %s", error_detail)
                 return DeploymentResult(
                     provider=self.name(),
-                    error=f"cerebrium deploy failed: {proc.stderr[:500]}",
+                    error=f"cerebrium deploy failed: {error_detail[:500]}",
                     metadata=dict(plan.metadata),
                 )
+
+            deploy_output = proc.stdout
 
         # Resolve project_id (may have been set during deploy)
         project_id = plan.metadata.get("project_id") or _get_project_id() or ""
 
-        # Construct endpoint URL
+        # Try to parse endpoint URL from CLI output
         endpoint_url = ""
-        if project_id:
+        url_match = re.search(
+            r"https://api\.aws\.[^/]+\.cerebrium\.ai/v4/[^\s/]+/[^\s/]+",
+            deploy_output,
+        )
+        if url_match:
+            base_url = url_match.group(0).rstrip("/")
+            # Strip trailing /{function_name} placeholder if present
+            if base_url.endswith("/{function_name}"):
+                base_url = base_url[: -len("/{function_name}")]
+            endpoint_url = base_url
+        elif project_id:
             endpoint_url = (
                 f"https://api.aws.{region}.cerebrium.ai"
-                f"/v4/{project_id}/{service_name}/v1"
+                f"/v4/{project_id}/{service_name}"
             )
 
-        health_url = ""
-        if project_id:
-            health_url = (
-                f"https://api.aws.{region}.cerebrium.ai"
-                f"/v4/{project_id}/{service_name}/health"
-            )
+        health_url = f"{endpoint_url}/health" if endpoint_url else ""
 
         final_metadata = dict(plan.metadata)
         final_metadata["project_id"] = project_id

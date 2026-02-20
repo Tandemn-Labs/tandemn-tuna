@@ -318,7 +318,31 @@ class TestCerebriumDeploy:
     @patch.dict("os.environ", {"CEREBRIUM_API_KEY": "ck-test"})
     @patch("tuna.providers.cerebrium_provider._get_project_id", return_value="proj-123")
     @patch("tuna.providers.cerebrium_provider.subprocess.run")
-    def test_deploy_success(self, mock_run, mock_pid, provider):
+    def test_deploy_success_with_url_in_output(self, mock_run, mock_pid, provider):
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout=(
+                "Build complete!\n"
+                "Endpoint:\n"
+                "POST https://api.aws.us-east-1.cerebrium.ai/v4/proj-123/test-svc-serverless/{function_name}\n"
+            ),
+            stderr="",
+        )
+        plan = self._make_plan()
+        result = provider.deploy(plan)
+
+        assert result.error is None
+        assert result.endpoint_url is not None
+        assert "proj-123" in result.endpoint_url
+        assert "test-svc-serverless" in result.endpoint_url
+        assert result.endpoint_url.endswith("/test-svc-serverless")
+        assert result.health_url is not None
+        assert result.health_url.endswith("/health")
+
+    @patch.dict("os.environ", {"CEREBRIUM_API_KEY": "ck-test"})
+    @patch("tuna.providers.cerebrium_provider._get_project_id", return_value="proj-123")
+    @patch("tuna.providers.cerebrium_provider.subprocess.run")
+    def test_deploy_success_fallback_url(self, mock_run, mock_pid, provider):
         mock_run.return_value = MagicMock(
             returncode=0,
             stdout="Deployed successfully",
@@ -331,9 +355,7 @@ class TestCerebriumDeploy:
         assert result.endpoint_url is not None
         assert "proj-123" in result.endpoint_url
         assert "test-svc-serverless" in result.endpoint_url
-        assert result.endpoint_url.endswith("/v1")
         assert result.health_url is not None
-        assert result.health_url.endswith("/health")
 
     @patch.dict("os.environ", {}, clear=True)
     def test_deploy_no_api_key(self, provider):
