@@ -319,36 +319,43 @@ class CerebriumProvider(InferenceProvider):
         api_key = os.environ.get("CEREBRIUM_API_KEY", "")
         project_id = result.metadata.get("project_id", "")
 
-        # Try REST API first
+        # Cerebrium app ID format: {project_id}-{service_name}
+        app_id = f"{project_id}-{service_name}" if project_id else service_name
+
+        # Try CLI first (most reliable — uses app ID)
+        logger.info("Deleting Cerebrium app: %s", app_id)
+        try:
+            proc = subprocess.run(
+                ["cerebrium", "apps", "delete", app_id, "--no-color"],
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            if proc.returncode == 0:
+                logger.info("Cerebrium app %s deleted via CLI", app_id)
+                return
+            logger.warning("CLI delete returned %s: %s", proc.returncode, proc.stderr[:200])
+        except Exception as e:
+            logger.warning("CLI delete failed: %s", e)
+
+        # Fallback to REST API
         if api_key and project_id:
             try:
                 import requests
 
                 resp = requests.delete(
-                    f"{CEREBRIUM_API_BASE}/projects/{project_id}/apps/{service_name}",
+                    f"{CEREBRIUM_API_BASE}/projects/{project_id}/apps/{app_id}",
                     headers={"Authorization": f"Bearer {api_key}"},
                     timeout=30,
                 )
                 if resp.status_code < 300:
-                    logger.info("Cerebrium app %s deleted via REST API", service_name)
+                    logger.info("Cerebrium app %s deleted via REST API", app_id)
                     return
                 logger.warning(
                     "REST API delete returned %s: %s", resp.status_code, resp.text[:200]
                 )
             except Exception as e:
                 logger.warning("REST API delete failed: %s", e)
-
-        # Fallback to CLI
-        logger.info("Falling back to CLI for delete: %s", service_name)
-        try:
-            subprocess.run(
-                ["cerebrium", "apps", "delete", service_name],
-                capture_output=True,
-                text=True,
-                timeout=60,
-            )
-        except Exception as e:
-            logger.warning("CLI delete failed: %s", e)
 
     # -- Status -------------------------------------------------------------
 

@@ -405,29 +405,9 @@ class TestCerebriumDeploy:
 # ---------------------------------------------------------------------------
 
 class TestCerebriumDestroy:
-    @patch.dict("os.environ", {"CEREBRIUM_API_KEY": "ck-test"})
-    @patch("requests.delete")
-    def test_destroy_rest_api(self, mock_delete, provider):
-        mock_delete.return_value = MagicMock(status_code=200)
-        result = DeploymentResult(
-            provider="cerebrium",
-            endpoint_url="https://api.aws.us-east-1.cerebrium.ai/v4/proj-123/test-svc-serverless/v1",
-            metadata={
-                "service_name": "test-svc-serverless",
-                "project_id": "proj-123",
-            },
-        )
-        provider.destroy(result)
-        mock_delete.assert_called_once()
-        call_url = mock_delete.call_args[0][0]
-        assert "proj-123" in call_url
-        assert "test-svc-serverless" in call_url
-
-    @patch.dict("os.environ", {"CEREBRIUM_API_KEY": "ck-test"})
-    @patch("requests.delete", side_effect=Exception("connection error"))
     @patch("tuna.providers.cerebrium_provider.subprocess.run")
-    def test_destroy_fallback_to_cli(self, mock_run, mock_delete, provider):
-        mock_run.return_value = MagicMock(returncode=0)
+    def test_destroy_via_cli(self, mock_run, provider):
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
         result = DeploymentResult(
             provider="cerebrium",
             metadata={
@@ -439,7 +419,25 @@ class TestCerebriumDestroy:
         mock_run.assert_called_once()
         cmd = mock_run.call_args[0][0]
         assert "cerebrium" in cmd
-        assert "test-svc-serverless" in cmd
+        assert "proj-123-test-svc-serverless" in cmd
+
+    @patch.dict("os.environ", {"CEREBRIUM_API_KEY": "ck-test"})
+    @patch("tuna.providers.cerebrium_provider.subprocess.run")
+    @patch("requests.delete")
+    def test_destroy_fallback_to_rest_api(self, mock_delete, mock_run, provider):
+        mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="error")
+        mock_delete.return_value = MagicMock(status_code=200)
+        result = DeploymentResult(
+            provider="cerebrium",
+            metadata={
+                "service_name": "test-svc-serverless",
+                "project_id": "proj-123",
+            },
+        )
+        provider.destroy(result)
+        mock_delete.assert_called_once()
+        call_url = mock_delete.call_args[0][0]
+        assert "proj-123" in call_url
 
     def test_destroy_missing_metadata(self, provider):
         result = DeploymentResult(provider="cerebrium", metadata={})
