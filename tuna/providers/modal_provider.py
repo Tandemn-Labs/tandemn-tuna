@@ -9,6 +9,7 @@ import tempfile
 import time
 from pathlib import Path
 
+from tuna.catalog import provider_gpu_id
 from tuna.models import DeployRequest, DeploymentResult, ProviderPlan
 from tuna.providers.base import InferenceProvider
 from tuna.providers.registry import register
@@ -36,7 +37,7 @@ class ModalProvider(InferenceProvider):
 
         replacements = {
             "app_name": app_name,
-            "gpu": request.gpu,
+            "gpu": provider_gpu_id(request.gpu, "modal"),
             "port": "8000",
             "vllm_cmd": modal_vllm_cmd,
             "vllm_version": request.vllm_version,

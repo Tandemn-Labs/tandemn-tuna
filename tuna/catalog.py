@@ -105,8 +105,8 @@ _PROVIDER_GPUS: list[ProviderGpu] = [
     ProviderGpu("L4", "modal", "L4", 0.80),
     ProviderGpu("A40", "modal", "A40", 1.10),
     ProviderGpu("L40S", "modal", "L40S", 1.60),
-    ProviderGpu("A100_40GB", "modal", "A100_40GB", 1.82),
-    ProviderGpu("A100_80GB", "modal", "A100_80GB", 2.78),
+    ProviderGpu("A100_40GB", "modal", "A100-40GB", 1.82),
+    ProviderGpu("A100_80GB", "modal", "A100-80GB", 2.78),
     ProviderGpu("H100", "modal", "H100", 3.95),
     ProviderGpu("B200", "modal", "B200", 5.49),
 
