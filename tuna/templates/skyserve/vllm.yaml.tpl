@@ -1,4 +1,5 @@
 service:
+  ports: {port}
   readiness_probe:
     path: /health
     initial_delay_seconds: 1200
