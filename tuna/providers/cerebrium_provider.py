@@ -258,7 +258,7 @@ class CerebriumProvider(InferenceProvider):
                 )
 
             if proc.returncode != 0:
-                error_detail = proc.stderr or proc.stdout
+                error_detail = (proc.stderr or proc.stdout or "no output").strip()
                 logger.error("cerebrium deploy failed: %s", error_detail)
                 return DeploymentResult(
                     provider=self.name(),
