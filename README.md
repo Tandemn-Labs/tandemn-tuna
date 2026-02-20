@@ -11,7 +11,7 @@ Tuna is a smart router that combines both behind a single OpenAI-compatible endp
 <div align="center">
 <table>
 <tr>
-<td align="center" colspan="5"><b>Serverless</b></td>
+<td align="center" colspan="6"><b>Serverless</b></td>
 <td align="center" colspan="1"><b>Spot</b></td>
 </tr>
 <tr>
