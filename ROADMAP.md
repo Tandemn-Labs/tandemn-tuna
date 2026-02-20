@@ -23,11 +23,16 @@ Serverless:
 
 | Provider | GPU Support | Notes |
 |----------|-------------|-------|
-| Replicate | A40, A100, H100 | REST API, prediction-based billing |
-| Fal AI | Various | Fast cold starts, queue-based |
-| BentoML | Various | Open-source friendly, BentoCloud |
+| Cerebrium | T4, A10, L4, L40S, A100, H100 | Per-second billing, Python SDK, official vLLM support, 2-4s cold starts, $30 free credits |
+| Beam Cloud | T4, A10G, 4090, A100, H100 | Per-millisecond billing, H100 at $0.97/hr, open-source runtime, 10 hrs free |
+| Koyeb | L4, L40S, A100, H100, H200, 8xH100 | Per-second billing, widest GPU selection, multi-GPU, $29/mo platform fee |
+| BentoML | T4, L4, H100, H200, B200 | Bento format required, $10 free credits, on waitlist |
+| Inferless | T4, A10, A100 | Per-second billing, cheap shared instances, no H100 |
+| Novita AI | RTX 3090/4090, A100 | Per-second, explicit vLLM Docker support, 20+ regions |
 | ~~Azure Container Apps~~ | ~~T4, A100~~ | ~~GPU workload profiles, long env creation times~~ |
 | InferX | GPU slicing | Sub-2s cold starts, fractional GPU allocation (1/3 GPU per model), 80%+ utilization, high deployment density |
+| Replicate | A40, A100, H100 | Acquired by Cloudflare (2025), pays for idle on custom models |
+| Fal AI | H100, H200, A100 | Custom containers new, optimized for media generation not LLM inference |
 
 Spot (via SkyPilot):
 
