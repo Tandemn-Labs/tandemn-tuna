@@ -41,7 +41,7 @@ _GPU_RESOURCES: dict[str, dict[str, int]] = {
 
 
 def _get_project_id() -> str | None:
-    """Read Cerebrium project_id from CLI config (~/.cerebrium/config.yaml)."""
+    """Read Cerebrium project ID from CLI config (~/.cerebrium/config.yaml)."""
     config_path = Path.home() / ".cerebrium" / "config.yaml"
     if not config_path.exists():
         return None
@@ -49,14 +49,14 @@ def _get_project_id() -> str | None:
         import yaml
 
         data = yaml.safe_load(config_path.read_text())
-        return data.get("project_id") or data.get("projectId")
+        return data.get("project") or data.get("project_id") or data.get("projectId")
     except Exception:
         pass
     # Fallback: simple line parsing
     try:
         for line in config_path.read_text().splitlines():
-            for key in ("project_id:", "projectId:"):
-                if key in line:
+            for key in ("project:", "project_id:", "projectId:"):
+                if line.strip().startswith(key):
                     return line.split(key, 1)[1].strip().strip("'\"")
     except Exception:
         pass
