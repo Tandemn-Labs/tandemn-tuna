@@ -138,7 +138,7 @@ def save_deployment(request, result, *, db_path=None) -> None:
             spot_metadata = json.dumps(result.spot.metadata)
 
         conn.execute(
-            """INSERT OR REPLACE INTO deployments (
+            """INSERT INTO deployments (
                 service_name, status, created_at, updated_at,
                 model_name, gpu, gpu_count, serverless_provider, spots_cloud, region,
                 request_json,
@@ -146,7 +146,26 @@ def save_deployment(request, result, *, db_path=None) -> None:
                 serverless_provider_name, serverless_endpoint, serverless_metadata,
                 spot_provider_name, spot_endpoint, spot_metadata,
                 router_url
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(service_name) DO UPDATE SET
+                status=excluded.status,
+                updated_at=excluded.updated_at,
+                model_name=excluded.model_name,
+                gpu=excluded.gpu,
+                gpu_count=excluded.gpu_count,
+                serverless_provider=excluded.serverless_provider,
+                spots_cloud=excluded.spots_cloud,
+                region=excluded.region,
+                request_json=excluded.request_json,
+                router_endpoint=excluded.router_endpoint,
+                router_metadata=excluded.router_metadata,
+                serverless_provider_name=excluded.serverless_provider_name,
+                serverless_endpoint=excluded.serverless_endpoint,
+                serverless_metadata=excluded.serverless_metadata,
+                spot_provider_name=excluded.spot_provider_name,
+                spot_endpoint=excluded.spot_endpoint,
+                spot_metadata=excluded.spot_metadata,
+                router_url=excluded.router_url""",
             (
                 request.service_name,
                 "active",
