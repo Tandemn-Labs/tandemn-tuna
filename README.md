@@ -11,17 +11,19 @@ Tuna is a smart router that combines both behind a single OpenAI-compatible endp
 <div align="center">
 <table>
 <tr>
-<td align="center" colspan="6"><b>Serverless</b></td>
+<td align="center" colspan="3"><b>Serverless</b></td>
 <td align="center" colspan="1"><b>Spot</b></td>
 </tr>
 <tr>
 <td align="center"><img src="https://raw.githubusercontent.com/Tandemn-Labs/tandemn-tuna/main/assets/modal-logo-icon.png" height="30"><br>Modal</td>
 <td align="center"><img src="https://raw.githubusercontent.com/Tandemn-Labs/tandemn-tuna/main/assets/runpod-logo-black.svg" height="30"><br>RunPod</td>
 <td align="center"><img src="https://raw.githubusercontent.com/Tandemn-Labs/tandemn-tuna/main/assets/google-cloud-run-logo-png_seeklogo-354677.png" height="30"><br>Cloud Run</td>
+<td align="center" rowspan="2"><img src="https://raw.githubusercontent.com/Tandemn-Labs/tandemn-tuna/main/assets/Amazon_Web_Services_Logo.svg.png" height="30"><br>AWS via<br>SkyPilot</td>
+</tr>
+<tr>
 <td align="center"><img src="https://raw.githubusercontent.com/Tandemn-Labs/tandemn-tuna/main/assets/baseten.png" height="30"><br>Baseten</td>
 <td align="center"><img src="https://raw.githubusercontent.com/Tandemn-Labs/tandemn-tuna/main/assets/azure-container.png" height="30"><br>Azure</td>
 <td align="center"><img src="https://raw.githubusercontent.com/Tandemn-Labs/tandemn-tuna/main/assets/cerebrium.png" height="30"><br>Cerebrium</td>
-<td align="center"><img src="https://raw.githubusercontent.com/Tandemn-Labs/tandemn-tuna/main/assets/Amazon_Web_Services_Logo.svg.png" height="30"><br>AWS via SkyPilot</td>
 </tr>
 </table>
 </div>
