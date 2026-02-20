@@ -101,9 +101,8 @@ GPU_ALIASES: dict[str, str] = {
 _PROVIDER_GPUS: list[ProviderGpu] = [
     # Modal
     ProviderGpu("T4", "modal", "T4", 0.59),
-    ProviderGpu("A10G", "modal", "A10G", 1.10),
+    ProviderGpu("A10G", "modal", "A10", 1.10),
     ProviderGpu("L4", "modal", "L4", 0.80),
-    ProviderGpu("A40", "modal", "A40", 1.10),
     ProviderGpu("L40S", "modal", "L40S", 1.60),
     ProviderGpu("A100_40GB", "modal", "A100-40GB", 1.82),
     ProviderGpu("A100_80GB", "modal", "A100-80GB", 2.78),
@@ -165,7 +164,7 @@ _PROVIDER_GPUS: list[ProviderGpu] = [
     ProviderGpu("L4", "baseten", "L4", 0.85),
     ProviderGpu("A10G", "baseten", "A10G", 1.21),
     ProviderGpu("A100_80GB", "baseten", "A100", 4.00),
-    ProviderGpu("H100_MIG", "baseten", "H100_MIG", 3.75),
+    ProviderGpu("H100_MIG", "baseten", "H100MIG", 3.75),
     ProviderGpu("H100", "baseten", "H100", 6.50),
     ProviderGpu("B200", "baseten", "B200", 9.98),
 ]

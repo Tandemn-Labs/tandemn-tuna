@@ -108,7 +108,7 @@ class TestBasetenPlan:
         req = DeployRequest(model_name="m", gpu="H100_MIG", service_name="s", serverless_provider="baseten")
         plan = provider.plan(req, vllm_cmd)
         parsed = yaml.safe_load(plan.rendered_script)
-        assert parsed["resources"]["accelerator"] == "H100_MIG"
+        assert parsed["resources"]["accelerator"] == "H100MIG"
 
     def test_plan_gpu_mapping_h100(self, provider, vllm_cmd):
         req = DeployRequest(model_name="m", gpu="H100", service_name="s", serverless_provider="baseten")
