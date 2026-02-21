@@ -390,6 +390,30 @@ class TestLaunchRouterOnController:
         ssh_cmd = ssh_call[0][0][-1]  # last arg is the remote command
         assert "SERVERLESS_BASE_URL=https://modal.run/abc" in ssh_cmd
 
+    @patch("tuna.orchestrator._open_port_on_cluster", return_value=True)
+    @patch("tuna.orchestrator._get_ssh_user", return_value="ubuntu")
+    @patch("tuna.orchestrator._get_ssh_key_path", return_value="/home/user/.ssh/sky-key")
+    @patch("tuna.orchestrator._get_cluster_ip", return_value="10.0.0.1")
+    @patch("tuna.orchestrator.subprocess")
+    def test_shell_metacharacters_quoted(self, mock_subprocess, mock_ip, mock_key, mock_user, mock_port):
+        """Verify that shell-special characters in URL/token are safely quoted."""
+        import shlex
+        mock_subprocess.run.return_value = MagicMock(returncode=0, stderr="")
+        mock_subprocess.TimeoutExpired = subprocess.TimeoutExpired
+        request = DeployRequest(model_name="m", gpu="g")
+        dangerous_url = "https://evil.com/$(whoami)"
+        dangerous_token = "token'; rm -rf /; echo '"
+        _launch_router_on_controller(
+            request, "sky-serve-controller-x",
+            serverless_url=dangerous_url,
+            serverless_auth_token=dangerous_token,
+        )
+        ssh_call = mock_subprocess.run.call_args_list[2]
+        ssh_cmd = ssh_call[0][0][-1]
+        # shlex.quote must wrap dangerous strings so they aren't interpreted by the shell
+        assert f"SERVERLESS_BASE_URL={shlex.quote(dangerous_url)}" in ssh_cmd
+        assert f"SERVERLESS_AUTH_TOKEN={shlex.quote(dangerous_token)}" in ssh_cmd
+
 
 class TestDestroyHybridColocated:
     def _make_record(self, **kwargs):
