@@ -70,14 +70,10 @@ class ModalProvider(InferenceProvider):
 
         # Write rendered script to a temp file (restrict permissions since it
         # may contain HF_TOKEN via template substitution)
-        fd = os.open(
-            tempfile.mktemp(suffix=".py", prefix="tuna_modal_"),
-            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
-            0o600,
-        )
+        fd, script_path = tempfile.mkstemp(suffix=".py", prefix="tuna_modal_")
+        os.fchmod(fd, 0o600)
         with os.fdopen(fd, "w") as f:
             f.write(plan.rendered_script)
-            script_path = f.name
 
         try:
             logger.info("Deploying Modal app %s from %s", app_name, script_path)

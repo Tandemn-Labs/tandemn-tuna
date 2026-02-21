@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import secrets
 import shlex
 import subprocess
 import time
@@ -50,7 +51,7 @@ def build_vllm_cmd(request: DeployRequest, port: str = "8001") -> str:
     )
 
 
-def _launch_router_vm(request: DeployRequest) -> DeploymentResult:
+def _launch_router_vm(request: DeployRequest, router_api_key: str = "") -> DeploymentResult:
     """Launch the router on a cheap CPU VM via sky launch."""
     region_block = ""
     if request.region:
@@ -63,6 +64,7 @@ def _launch_router_vm(request: DeployRequest) -> DeploymentResult:
         "spot_url": "",
         "meta_lb_local_path": str(META_LB_PATH),
         "region_block": region_block,
+        "router_api_key": router_api_key,
     }
 
     rendered = render_template(
@@ -86,11 +88,14 @@ def _launch_router_vm(request: DeployRequest) -> DeploymentResult:
 
         endpoint = f"http://{ip}:8080"
         logger.info("Router VM ready at %s", endpoint)
+        metadata = {"cluster_name": cluster_name}
+        if router_api_key:
+            metadata["router_api_key"] = router_api_key
         return DeploymentResult(
             provider="router",
             endpoint_url=endpoint,
             health_url=f"{endpoint}/router/health",
-            metadata={"cluster_name": cluster_name},
+            metadata=metadata,
         )
 
     except Exception as e:
@@ -162,6 +167,7 @@ def _launch_router_on_controller(
     serverless_url: str = "",
     serverless_auth_token: str = "",
     router_port: int = 8080,
+    router_api_key: str = "",
 ) -> DeploymentResult:
     """Launch the meta_lb router on the SkyServe controller VM via SSH."""
     ip = _get_cluster_ip(controller_cluster)
@@ -218,8 +224,10 @@ def _launch_router_on_controller(
 
     # 3b. Start gunicorn — use setsid to fully detach into its own session
     # so it survives the SSH connection closing.
+    api_key_env = f"API_KEY={shlex.quote(router_api_key)} " if router_api_key else ""
     start_cmd = (
         f"{conda_prefix} && "
+        f"{api_key_env}"
         f"SERVERLESS_BASE_URL={shlex.quote(serverless_url)} "
         f"SERVERLESS_AUTH_TOKEN={shlex.quote(serverless_auth_token)} "
         f"SKYSERVE_BASE_URL='http://127.0.0.1:30001' "
@@ -238,15 +246,18 @@ def _launch_router_on_controller(
 
     endpoint = f"http://{ip}:{router_port}"
     logger.info("Router colocated on controller at %s", endpoint)
+    metadata = {
+        "cluster_name": controller_cluster,
+        "colocated": "true",
+        "router_port": str(router_port),
+    }
+    if router_api_key:
+        metadata["router_api_key"] = router_api_key
     return DeploymentResult(
         provider="router",
         endpoint_url=endpoint,
         health_url=f"{endpoint}/router/health",
-        metadata={
-            "cluster_name": controller_cluster,
-            "colocated": "true",
-            "router_port": str(router_port),
-        },
+        metadata=metadata,
     )
 
 
@@ -266,6 +277,7 @@ def push_url_to_router(
     serverless_url: str | None = None,
     serverless_auth_token: str | None = None,
     spot_url: str | None = None,
+    router_api_key: str = "",
     retries: int = 5,
     delay: float = 3.0,
 ) -> bool:
@@ -281,9 +293,13 @@ def push_url_to_router(
     if not payload:
         return True
 
+    headers = {}
+    if router_api_key:
+        headers["x-api-key"] = router_api_key
+
     for attempt in range(retries):
         try:
-            resp = requests.post(f"{router_url}/router/config", json=payload, timeout=10)
+            resp = requests.post(f"{router_url}/router/config", json=payload, headers=headers, timeout=10)
             if resp.status_code == 200:
                 return True
             logger.warning("Push to router returned %d (attempt %d/%d)", resp.status_code, attempt + 1, retries)
@@ -328,6 +344,10 @@ def launch_hybrid(request: DeployRequest, *, separate_router_vm: bool = False) -
                 metadata={"service_name": f"{request.service_name}-serverless"},
             ),
         )
+
+    # Generate an API key for the router so /router/config is protected.
+    # Skip if --public was requested (no auth needed).
+    _router_api_key = "" if request.public else secrets.token_urlsafe(32)
 
     router_result = None
     serverless_result = None
@@ -380,7 +400,7 @@ def launch_hybrid(request: DeployRequest, *, separate_router_vm: bool = False) -
         spot_result = None
         pool = ThreadPoolExecutor(max_workers=3)
         try:
-            fut_router = pool.submit(_launch_router_vm, request)
+            fut_router = pool.submit(_launch_router_vm, request, _router_api_key)
             fut_serverless = pool.submit(_launch_serverless)
             fut_spot = pool.submit(_launch_spot)
 
@@ -410,6 +430,7 @@ def launch_hybrid(request: DeployRequest, *, separate_router_vm: bool = False) -
                     router_url,
                     serverless_url=serverless_result.endpoint_url,
                     serverless_auth_token=_backend_auth_token,
+                    router_api_key=_router_api_key,
                 )
 
             try:
@@ -424,7 +445,7 @@ def launch_hybrid(request: DeployRequest, *, separate_router_vm: bool = False) -
 
             if router_url and spot_result and spot_result.endpoint_url:
                 logger.info("Pushing spot URL to router: %s", spot_result.endpoint_url)
-                push_url_to_router(router_url, spot_url=spot_result.endpoint_url)
+                push_url_to_router(router_url, spot_url=spot_result.endpoint_url, router_api_key=_router_api_key)
             elif spot_result and spot_result.error:
                 logger.warning("Spot deployment issue: %s", spot_result.error)
         finally:
@@ -472,10 +493,11 @@ def launch_hybrid(request: DeployRequest, *, separate_router_vm: bool = False) -
                 request, controller_cluster,
                 serverless_url=serverless_url,
                 serverless_auth_token=_backend_auth_token,
+                router_api_key=_router_api_key,
             )
         else:
             logger.warning("Controller cluster not found, falling back to separate router VM")
-            router_result = _launch_router_vm(request)
+            router_result = _launch_router_vm(request, _router_api_key)
 
         if router_result.error:
             logger.error("Router launch failed: %s", router_result.error)
@@ -484,7 +506,7 @@ def launch_hybrid(request: DeployRequest, *, separate_router_vm: bool = False) -
                 pass  # already a fallback result
             elif controller_cluster:
                 logger.warning("Colocated router failed, falling back to separate router VM")
-                router_result = _launch_router_vm(request)
+                router_result = _launch_router_vm(request, _router_api_key)
 
         router_url = router_result.endpoint_url
 
@@ -507,13 +529,14 @@ def launch_hybrid(request: DeployRequest, *, separate_router_vm: bool = False) -
                 router_url,
                 serverless_url=serverless_result.endpoint_url,
                 serverless_auth_token=_backend_auth_token,
+                router_api_key=_router_api_key,
             )
 
         # Spot URL is localhost for colocated, but push for fallback (separate VM)
         if (router_url and spot_result and spot_result.endpoint_url
                 and router_result.metadata.get("colocated") != "true"):
             logger.info("Pushing spot URL to router: %s", spot_result.endpoint_url)
-            push_url_to_router(router_url, spot_url=spot_result.endpoint_url)
+            push_url_to_router(router_url, spot_url=spot_result.endpoint_url, router_api_key=_router_api_key)
     finally:
         pool.shutdown(wait=True)
 
@@ -838,7 +861,11 @@ def status_hybrid(service_name: str, record: "DeploymentRecord | None" = None) -
     if ip:
         router_url = f"http://{ip}:{router_port}"
         try:
-            resp = requests.get(f"{router_url}/router/health", timeout=5)
+            health_headers = {}
+            router_key = router_meta.get("router_api_key")
+            if router_key:
+                health_headers["x-api-key"] = router_key
+            resp = requests.get(f"{router_url}/router/health", headers=health_headers, timeout=5)
             if resp.status_code == 200:
                 status["router"] = resp.json()
                 status["router"]["url"] = router_url
