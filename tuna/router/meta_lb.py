@@ -228,8 +228,10 @@ def _route_stats() -> dict:
 # Header filtering
 # ---------------------------------------------------------------------------
 
-def _filter_incoming(h: Dict[str, str]) -> Dict[str, str]:
-    drop = {API_KEY_HEADER.lower(), "authorization"}
+def _filter_incoming(h: Dict[str, str], *, strip_auth: bool = True) -> Dict[str, str]:
+    drop = {API_KEY_HEADER.lower()}
+    if strip_auth:
+        drop.add("authorization")
     return {
         k: v for k, v in h.items()
         if k.lower() not in HOP_BY_HOP_HEADERS
@@ -371,6 +373,8 @@ def router_health():
 @app.route("/router/config", methods=["POST"])
 def update_config():
     """Orchestrator pushes backend URLs here after deploy."""
+    if not _is_authorized(request):
+        return Response("unauthorized", status=401)
     data = request.get_json(silent=True) or {}
     if "serverless_url" in data:
         set_serverless_url(data["serverless_url"])
@@ -437,13 +441,15 @@ def proxy(path: str):
     if request.query_string:
         target_url += "?" + request.query_string.decode("utf-8")
 
-    headers = _filter_incoming(dict(request.headers))
+    # Strip auth headers for serverless (we inject our own token); preserve for spot
+    headers = _filter_incoming(dict(request.headers), strip_auth=(backend_name == "serverless"))
 
-    # Inject backend auth token if configured
-    with _state_lock:
-        auth_token = _serverless_auth_token if backend_name == "serverless" else ""
-    if auth_token:
-        headers["Authorization"] = f"Bearer {auth_token}"
+    # Inject backend auth token for serverless
+    if backend_name == "serverless":
+        with _state_lock:
+            auth_token = _serverless_auth_token
+        if auth_token:
+            headers["Authorization"] = f"Bearer {auth_token}"
 
     data = request.get_data()
 

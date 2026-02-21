@@ -220,9 +220,14 @@ def cmd_destroy(args: argparse.Namespace) -> None:
     if getattr(args, "azure_cleanup_env", False) and record.serverless_provider_name == "azure":
         from tuna.providers.registry import get_provider
         provider = get_provider("azure")
-        if hasattr(provider, "destroy_environment") and record.serverless_result:
+        if hasattr(provider, "destroy_environment") and record.serverless_metadata:
+            from tuna.models import DeploymentResult
+            azure_result = DeploymentResult(
+                provider="azure",
+                metadata=dict(record.serverless_metadata),
+            )
             print("Deleting Azure environment (this takes 20+ min)...")
-            provider.destroy_environment(record.serverless_result)
+            provider.destroy_environment(azure_result)
 
     print("Done.")
 
