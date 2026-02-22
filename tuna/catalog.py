@@ -195,6 +195,11 @@ _SKYPILOT_GPU_NAME_MAP: dict[str, str] = {
 # Query API
 # ---------------------------------------------------------------------------
 
+def to_skypilot_gpu_name(tuna_name: str) -> str:
+    """Convert tuna GPU name to SkyPilot accelerator name."""
+    return _SKYPILOT_GPU_NAME_MAP.get(tuna_name, tuna_name)
+
+
 def get_gpu_spec(name: str) -> GpuSpec:
     """Lookup hardware spec by short name. Raises KeyError if unknown."""
     return GPU_SPECS[name]

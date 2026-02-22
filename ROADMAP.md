@@ -39,8 +39,8 @@ Spot (via SkyPilot):
 | Cloud | Status | Notes |
 |-------|--------|-------|
 | AWS | Done | Current default |
+| Azure | Done | Use `--spots-cloud azure` |
 | GCP | Planned | SkyPilot supports it, need catalog entries |
-| Azure | Planned | SkyPilot supports it, need catalog entries |
 | Spheron AI | Research | High Quality GPU marketplace |
 | Prime Intellect | Research | Decentralized compute |
 

@@ -18,7 +18,7 @@ Tuna is a smart router that combines both behind a single OpenAI-compatible endp
 <td align="center"><img src="https://raw.githubusercontent.com/Tandemn-Labs/tandemn-tuna/main/assets/modal-logo-icon.png" height="30"><br>Modal</td>
 <td align="center"><img src="https://raw.githubusercontent.com/Tandemn-Labs/tandemn-tuna/main/assets/runpod-logo-black.svg" height="30"><br>RunPod</td>
 <td align="center"><img src="https://raw.githubusercontent.com/Tandemn-Labs/tandemn-tuna/main/assets/google-cloud-run-logo-png_seeklogo-354677.png" height="30"><br>Cloud Run</td>
-<td align="center" rowspan="2"><img src="https://raw.githubusercontent.com/Tandemn-Labs/tandemn-tuna/main/assets/Amazon_Web_Services_Logo.svg.png" height="30"><br>AWS via<br>SkyPilot</td>
+<td align="center" rowspan="2"><img src="https://raw.githubusercontent.com/Tandemn-Labs/tandemn-tuna/main/assets/Amazon_Web_Services_Logo.svg.png" height="30"><br>AWS / Azure<br>via SkyPilot</td>
 </tr>
 <tr>
 <td align="center"><img src="https://raw.githubusercontent.com/Tandemn-Labs/tandemn-tuna/main/assets/baseten.png" height="30"><br>Baseten</td>
@@ -37,11 +37,11 @@ Tuna is a smart router that combines both behind a single OpenAI-compatible endp
 ## Prerequisites
 
 - Python 3.11+
-- [AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) — required for spot instances (all deployments use spot)
+- [AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) or [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli) — required for spot instances (use `--spots-cloud` to select)
 - At least one serverless provider account: [Modal](https://modal.com/), [RunPod](https://www.runpod.io/), [Google Cloud](https://cloud.google.com/), [Baseten](https://www.baseten.co/), [Azure](https://azure.microsoft.com/), or [Cerebrium](https://www.cerebrium.ai/)
 - For gated models (Llama, Mistral, Gemma, etc.): a [HuggingFace token](https://huggingface.co/settings/tokens) with access to the model
 
-> **Note:** By default Tuna deploys both a serverless backend and a spot backend. AWS credentials are required for spot instances, which run on AWS via [SkyPilot](https://github.com/skypilot-org/skypilot). Use `--serverless-only` to skip spot + router (no AWS needed).
+> **Note:** By default Tuna deploys both a serverless backend and a spot backend. Cloud credentials are required for spot instances, which run via [SkyPilot](https://github.com/skypilot-org/skypilot) (AWS by default, or Azure with `--spots-cloud azure`). Use `--serverless-only` to skip spot + router.
 
 ## Quick Start
 
@@ -64,12 +64,29 @@ pip install tandemn-tuna[all] --pre       # everything
 > pip install -e ".[all]"
 > ```
 
-**2. Set up AWS (required for all deployments)**
+**2. Set up your spot cloud (pick one)**
+
+<details open>
+<summary><b>AWS (default)</b></summary>
 
 ```bash
 aws configure          # set up AWS credentials
 sky check              # verify SkyPilot can see your AWS account
 ```
+
+</details>
+
+<details>
+<summary><b>Azure</b></summary>
+
+```bash
+az login               # authenticate with Azure
+sky check              # verify SkyPilot can see your Azure account
+```
+
+Then use `--spots-cloud azure` when deploying.
+
+</details>
 
 **3. Set up your serverless provider (pick one)**
 
@@ -247,6 +264,12 @@ tuna deploy --model Qwen/Qwen3-0.6B --gpu L4 --service-name my-first-deploy
 
 Tuna auto-selects the cheapest serverless provider for your GPU, launches spot instances on AWS, and gives you a single endpoint. The router handles everything — serverless covers traffic immediately while spot boots up in the background.
 
+To use Azure spot instead of AWS:
+
+```bash
+tuna deploy --model Qwen/Qwen3-0.6B --gpu T4 --spots-cloud azure --region eastus
+```
+
 **6a. (Alternative) Deploy serverless-only**
 
 Skip spot + router for dev/test or low-traffic:
@@ -280,10 +303,11 @@ tuna destroy --all                            # tear down all active deployments
 **9. Browse GPU pricing**
 
 ```bash
-tuna show-gpus                     # compare serverless pricing across providers
-tuna show-gpus --spot              # include AWS spot prices
-tuna show-gpus --gpu H100          # detailed pricing for a specific GPU
-tuna show-gpus --provider runpod   # filter to one provider
+tuna show-gpus                                    # compare serverless pricing across providers
+tuna show-gpus --spot                             # include spot prices (AWS default)
+tuna show-gpus --spot --spots-cloud azure         # include Azure spot prices
+tuna show-gpus --gpu H100                         # detailed pricing for a specific GPU
+tuna show-gpus --provider runpod                  # filter to one provider
 ```
 
 ## Architecture
@@ -303,10 +327,10 @@ tuna show-gpus --provider runpod   # filter to one provider
               │                         │
      ┌────────▼─────────┐    ┌─────────▼─────────┐
      │ Serverless        │    │ Spot GPUs          │
-     │ Modal / RunPod /  │    │ AWS via SkyPilot   │
-     │ Cloud Run         │    │                    │
-     │                   │    │ • 3-5x cheaper     │
-     │ • Fast cold start │    │ • Slower cold start│
+     │ Modal / RunPod /  │    │ AWS / Azure        │
+     │ Cloud Run         │    │ via SkyPilot       │
+     │                   │    │                    │
+     │ • Fast cold start │    │ • 3-5x cheaper     │
      │ • Per-second bill │    │ • Auto-failover    │
      │ • Always ready    │    │ • Scale to zero    │
      └───────────────────┘    └────────────────────┘
@@ -338,7 +362,7 @@ The router:
 | `--gpu` | *(required)* | GPU type (e.g. `L4`, `L40S`, `A100`, `H100`) |
 | `--gpu-count` | `1` | Number of GPUs |
 | `--serverless-provider` | auto (cheapest for GPU) | `modal`, `runpod`, `cloudrun`, `baseten`, `azure`, or `cerebrium` |
-| `--spots-cloud` | `aws` | Cloud provider for spot GPUs |
+| `--spots-cloud` | `aws` | Cloud for spot GPUs: `aws`, `azure` |
 | `--region` | — | Cloud region for spot instances |
 | `--tp-size` | `1` | Tensor parallelism degree |
 | `--max-model-len` | `4096` | Maximum sequence length (context window) |

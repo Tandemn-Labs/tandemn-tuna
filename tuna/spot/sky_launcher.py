@@ -9,6 +9,7 @@ from pathlib import Path
 from sky import ClusterStatus
 from sky.serve import ServiceStatus
 
+from tuna.catalog import to_skypilot_gpu_name
 from tuna.models import DeployRequest, DeploymentResult, ProviderPlan
 from tuna.providers.base import InferenceProvider
 from tuna.providers.registry import register
@@ -46,7 +47,7 @@ class SkyLauncher(InferenceProvider):
             )
 
         replacements = {
-            "gpu": request.gpu,
+            "gpu": to_skypilot_gpu_name(request.gpu),
             "gpu_count": str(request.gpu_count),
             "port": "8001",
             "vllm_cmd": vllm_cmd,

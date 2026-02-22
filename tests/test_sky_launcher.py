@@ -91,6 +91,19 @@ class TestSkyLauncherPlan:
         any_of = parsed["resources"]["any_of"]
         assert any_of[0]["infra"] == "aws/us-west-2"
 
+    def test_plan_with_azure_region(self):
+        self.request.region = "eastus"
+        self.request.spots_cloud = "azure"
+        plan = self.launcher.plan(self.request, self.vllm_cmd)
+        parsed = yaml.safe_load(plan.rendered_script)
+        assert parsed["resources"]["any_of"][0]["infra"] == "azure/eastus"
+
+    def test_plan_without_region_no_any_of(self):
+        self.request.region = None
+        plan = self.launcher.plan(self.request, self.vllm_cmd)
+        parsed = yaml.safe_load(plan.rendered_script)
+        assert "any_of" not in parsed["resources"]
+
     def test_plan_multi_gpu(self):
         self.request.gpu_count = 4
         plan = self.launcher.plan(self.request, self.vllm_cmd)
