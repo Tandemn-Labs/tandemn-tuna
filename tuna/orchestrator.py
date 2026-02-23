@@ -272,6 +272,22 @@ def _get_cluster_ip(cluster_name: str) -> str | None:
     return None
 
 
+def _wait_for_router(router_url: str, router_api_key: str = "", timeout: float = 60.0) -> bool:
+    """Block until the router is reachable, up to timeout seconds."""
+    headers = {"x-api-key": router_api_key} if router_api_key else {}
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            resp = requests.get(f"{router_url}/router/health", headers=headers, timeout=3)
+            if resp.status_code in (200, 401):
+                return True
+        except Exception:
+            pass
+        time.sleep(2)
+    logger.warning("Router not reachable after %.0fs", timeout)
+    return False
+
+
 def push_url_to_router(
     router_url: str,
     serverless_url: str | None = None,
@@ -415,6 +431,9 @@ def launch_hybrid(request: DeployRequest, *, separate_router_vm: bool = False) -
 
             router_url = router_result.endpoint_url
 
+            if router_url:
+                _wait_for_router(router_url, _router_api_key)
+
             try:
                 serverless_result = fut_serverless.result(timeout=600)
             except Exception as e:
@@ -509,6 +528,9 @@ def launch_hybrid(request: DeployRequest, *, separate_router_vm: bool = False) -
                 router_result = _launch_router_vm(request, _router_api_key)
 
         router_url = router_result.endpoint_url
+
+        if router_url:
+            _wait_for_router(router_url, _router_api_key)
 
         # Wait for serverless if not already done
         if serverless_result is None:

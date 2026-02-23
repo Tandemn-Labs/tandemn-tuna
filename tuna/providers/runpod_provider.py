@@ -255,7 +255,7 @@ class RunPodProvider(InferenceProvider):
                 },
             )
 
-        endpoint_url = f"https://api.runpod.ai/v2/{endpoint_id}/openai/v1"
+        endpoint_url = f"https://api.runpod.ai/v2/{endpoint_id}/openai"
         health_url = f"https://api.runpod.ai/v2/{endpoint_id}/health"
 
         logger.info("RunPod endpoint %s deployed at %s", endpoint_name, endpoint_url)
