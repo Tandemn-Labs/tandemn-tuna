@@ -625,8 +625,8 @@ class AzureProvider(InferenceProvider):
 
     def destroy(self, result: DeploymentResult) -> None:
         service_name = result.metadata.get("service_name")
-        resource_group = result.metadata.get("resource_group")
-        subscription_id = result.metadata.get("subscription_id")
+        resource_group = result.metadata.get("resource_group") or os.environ.get("AZURE_RESOURCE_GROUP")
+        subscription_id = result.metadata.get("subscription_id") or os.environ.get("AZURE_SUBSCRIPTION_ID")
 
         if not all([service_name, resource_group, subscription_id]):
             logger.warning("Missing metadata for Azure destroy: %s", result.metadata)

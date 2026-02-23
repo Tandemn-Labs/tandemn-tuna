@@ -3,6 +3,7 @@
 import json
 
 import pytest
+import requests as req_lib
 
 from tuna.router import meta_lb
 
@@ -213,3 +214,77 @@ class TestRouteStats:
         assert stats["total"] == 5
         assert stats["serverless"] == 5
         assert stats["spot"] == 0
+
+
+class TestSpotFailoverRetry:
+    def test_spot_connection_error_retries_on_serverless(self, client, mocker):
+        """When spot fails with connection error, retry on serverless."""
+        meta_lb.set_serverless_url("http://serverless.example.com")
+        meta_lb.set_spot_url("http://spot.example.com")
+        meta_lb._set_ready(True)
+
+        mock_request = mocker.patch.object(meta_lb.SESSION, "request")
+        # First call (spot) fails, second call (serverless) succeeds
+        mock_request.side_effect = [
+            req_lib.ConnectionError("spot died"),
+            mocker.Mock(
+                content=b'{"ok":true}', status_code=200,
+                headers={"content-type": "application/json"},
+            ),
+        ]
+        resp = client.post("/v1/chat/completions", json={"prompt": "hi"})
+        assert resp.status_code == 200
+        assert not meta_lb._is_ready()  # spot marked down
+
+    def test_spot_5xx_retries_on_serverless(self, client, mocker):
+        """When spot returns 500, retry on serverless."""
+        meta_lb.set_serverless_url("http://serverless.example.com")
+        meta_lb.set_spot_url("http://spot.example.com")
+        meta_lb._set_ready(True)
+
+        mock_request = mocker.patch.object(meta_lb.SESSION, "request")
+        mock_request.side_effect = [
+            mocker.Mock(content=b"error", status_code=500, headers={}),
+            mocker.Mock(
+                content=b'{"ok":true}', status_code=200,
+                headers={"content-type": "application/json"},
+            ),
+        ]
+        resp = client.post("/v1/chat/completions", json={"prompt": "hi"})
+        assert resp.status_code == 200
+
+    def test_spot_failure_no_serverless_returns_502(self, client, mocker):
+        """When spot fails and no serverless configured, return 502."""
+        meta_lb.set_spot_url("http://spot.example.com")
+        meta_lb._set_ready(True)
+
+        mock_request = mocker.patch.object(meta_lb.SESSION, "request")
+        mock_request.side_effect = req_lib.ConnectionError("spot died")
+        resp = client.post("/v1/chat/completions", json={"prompt": "hi"})
+        assert resp.status_code == 502
+
+    def test_serverless_failure_no_retry(self, client, mocker):
+        """When serverless fails, don't retry on spot."""
+        meta_lb.set_serverless_url("http://serverless.example.com")
+        meta_lb._set_ready(False)
+
+        mock_request = mocker.patch.object(meta_lb.SESSION, "request")
+        mock_request.side_effect = req_lib.ConnectionError("serverless died")
+        resp = client.post("/v1/chat/completions", json={"prompt": "hi"})
+        assert resp.status_code == 502
+        assert mock_request.call_count == 1  # no retry
+
+    def test_spot_4xx_no_retry(self, client, mocker):
+        """Client errors (4xx) from spot are NOT retried."""
+        meta_lb.set_serverless_url("http://serverless.example.com")
+        meta_lb.set_spot_url("http://spot.example.com")
+        meta_lb._set_ready(True)
+
+        mock_request = mocker.patch.object(meta_lb.SESSION, "request")
+        mock_request.return_value = mocker.Mock(
+            content=b"bad request", status_code=400,
+            headers={"content-type": "text/plain"},
+        )
+        resp = client.post("/v1/chat/completions", json={"prompt": "hi"})
+        assert resp.status_code == 400
+        assert mock_request.call_count == 1  # no retry
