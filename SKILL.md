@@ -1,5 +1,5 @@
 ---
-name: tuna-deploy
+name: tandemn-tuna
 description: Deploy and serve LLM models on GPU. Compare GPU pricing. Launch vLLM on Modal, RunPod, Cerebrium, Cloud Run, Baseten, or Azure with spot instance fallback. OpenAI-compatible inference endpoint.
 version: 0.0.1
 metadata:
