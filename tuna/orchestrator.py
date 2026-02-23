@@ -346,8 +346,8 @@ def launch_hybrid(request: DeployRequest, *, separate_router_vm: bool = False) -
         )
 
     # Generate an API key for the router so /router/config is protected.
-    # Skip if --public was requested (no auth needed).
-    _router_api_key = "" if request.public else secrets.token_urlsafe(32)
+    # Always generated — even --public deployments need management auth.
+    _router_api_key = secrets.token_urlsafe(32)
 
     router_result = None
     serverless_result = None
