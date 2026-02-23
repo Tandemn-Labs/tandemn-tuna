@@ -13,6 +13,7 @@ from tuna.orchestrator import (
     status_hybrid,
     _find_controller_cluster,
     _launch_router_on_controller,
+    _wait_for_router,
 )
 from tuna.state import DeploymentRecord
 
@@ -799,3 +800,27 @@ class TestCmdDeployKeyboardInterrupt:
         mock_save.assert_called_once()
         _, result = mock_save.call_args[0]
         assert isinstance(result, HybridDeployment)
+
+
+class TestWaitForRouter:
+    @patch("tuna.orchestrator.requests.get")
+    def test_succeeds_on_200(self, mock_get):
+        mock_get.return_value = MagicMock(status_code=200)
+        assert _wait_for_router("http://router:8080", timeout=5) is True
+
+    @patch("tuna.orchestrator.requests.get")
+    def test_succeeds_on_401(self, mock_get):
+        mock_get.return_value = MagicMock(status_code=401)
+        assert _wait_for_router("http://router:8080", timeout=5) is True
+
+    @patch("tuna.orchestrator.requests.get")
+    def test_times_out_on_connection_error(self, mock_get):
+        mock_get.side_effect = ConnectionError("refused")
+        assert _wait_for_router("http://router:8080", timeout=3) is False
+
+    @patch("tuna.orchestrator.requests.get")
+    def test_sends_api_key_header(self, mock_get):
+        mock_get.return_value = MagicMock(status_code=200)
+        _wait_for_router("http://router:8080", router_api_key="secret", timeout=5)
+        call_kwargs = mock_get.call_args
+        assert call_kwargs[1]["headers"]["x-api-key"] == "secret"

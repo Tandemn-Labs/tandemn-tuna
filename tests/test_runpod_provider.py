@@ -138,7 +138,7 @@ class TestRunPodDeploy:
         result = self.provider.deploy(plan)
 
         assert result.error is None
-        assert result.endpoint_url == "https://api.runpod.ai/v2/ep_xyz789/openai/v1"
+        assert result.endpoint_url == "https://api.runpod.ai/v2/ep_xyz789/openai"
         assert result.health_url == "https://api.runpod.ai/v2/ep_xyz789/health"
         assert result.metadata["endpoint_id"] == "ep_xyz789"
         assert result.metadata["template_id"] == "tpl_abc123"
@@ -224,7 +224,7 @@ class TestRunPodDestroy:
 
         result = DeploymentResult(
             provider="runpod",
-            endpoint_url="https://api.runpod.ai/v2/ep_xyz/openai/v1",
+            endpoint_url="https://api.runpod.ai/v2/ep_xyz/openai",
             metadata={
                 "endpoint_id": "ep_xyz",
                 "template_id": "tpl_abc",
