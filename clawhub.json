@@ -1,0 +1,11 @@
+{
+  "name": "tuna-deploy",
+  "tagline": "Deploy LLMs on hybrid GPU infra — spot + serverless behind one endpoint",
+  "description": "Tuna combines serverless GPUs (Modal, RunPod, Cerebrium, etc.) with spot instances behind a smart router. Get an OpenAI-compatible endpoint that auto-routes between cheap spot and fast serverless.",
+  "category": "development",
+  "tags": ["gpu", "llm", "inference", "deployment", "serverless", "spot", "vllm", "ml"],
+  "version": "0.0.1",
+  "license": "MIT",
+  "support_url": "https://github.com/Tandemn-Labs/tandemn-tuna/issues",
+  "author": "Tandemn Labs"
+}
