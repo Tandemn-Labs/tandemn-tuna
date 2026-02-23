@@ -341,6 +341,56 @@ def _poke_skyserve_async() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Spot → serverless failover
+# ---------------------------------------------------------------------------
+
+def _forward_to_serverless(path, headers, data, serverless_url):
+    """Retry a failed spot request on the serverless backend."""
+    global _gpu_seconds_serverless
+    target_url = _join_url(serverless_url, path)
+    if request.query_string:
+        target_url += "?" + request.query_string.decode("utf-8")
+
+    # Swap in serverless auth token
+    with _state_lock:
+        auth_token = _serverless_auth_token
+    if auth_token:
+        headers["Authorization"] = f"Bearer {auth_token}"
+    else:
+        headers.pop("Authorization", None)
+
+    _record_route("serverless")  # Count the retry as a serverless route
+
+    t0 = time.time()
+    try:
+        r = SESSION.request(
+            method=request.method,
+            url=target_url,
+            headers=headers,
+            data=data if data else None,
+            allow_redirects=True,
+            timeout=(2.0, UPSTREAM_TIMEOUT_SECONDS),
+        )
+    except req_lib.RequestException as e:
+        elapsed = time.time() - t0
+        with _state_lock:
+            _gpu_seconds_serverless += elapsed
+        return Response(f"upstream_error: {e}", status=502)
+
+    elapsed = time.time() - t0
+    with _state_lock:
+        _gpu_seconds_serverless += elapsed
+
+    resp_headers = _filter_outgoing(r.headers)
+    return Response(
+        response=r.content,
+        status=r.status_code,
+        headers=resp_headers,
+        mimetype=r.headers.get("content-type"),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
 
@@ -470,7 +520,23 @@ def proxy(path: str):
                 _gpu_seconds_spot += elapsed
             else:
                 _gpu_seconds_serverless += elapsed
+
+        # RETRY: if spot failed and serverless is available, retry there
+        if backend_name == "spot" and serverless_url:
+            logger.warning("Spot request failed (%s), retrying on serverless", e)
+            _set_ready(False, str(e))
+            return _forward_to_serverless(path, headers, data, serverless_url)
+
         return Response(f"upstream_error: {e}", status=502)
+
+    # Retry on 5xx from spot (backend is unhealthy)
+    if backend_name == "spot" and r.status_code >= 500 and serverless_url:
+        elapsed = time.time() - t0
+        with _state_lock:
+            _gpu_seconds_spot += elapsed
+        logger.warning("Spot returned %d, retrying on serverless", r.status_code)
+        _set_ready(False, f"status={r.status_code}")
+        return _forward_to_serverless(path, headers, data, serverless_url)
 
     elapsed = time.time() - t0
     with _state_lock:

@@ -9,6 +9,7 @@ from pathlib import Path
 from sky import ClusterStatus
 from sky.serve import ServiceStatus
 
+from tuna.catalog import to_skypilot_gpu_name
 from tuna.models import DeployRequest, DeploymentResult, ProviderPlan
 from tuna.providers.base import InferenceProvider
 from tuna.providers.registry import register
@@ -36,17 +37,17 @@ class SkyLauncher(InferenceProvider):
         service_name = f"{request.service_name}-spot"
         spot = request.scaling.spot
 
-        # Region block for YAML — only include if region is specified
-        region_block = ""
+        # Region block for YAML — always pin the cloud, optionally with region
+        cloud = request.spots_cloud.lower()
         if request.region:
-            # SkyPilot uses cloud/region format under any_of
-            cloud = request.spots_cloud.lower()
             region_block = (
                 f"  any_of:\n    - infra: {cloud}/{request.region}"
             )
+        else:
+            region_block = f"  cloud: {cloud}"
 
         replacements = {
-            "gpu": request.gpu,
+            "gpu": to_skypilot_gpu_name(request.gpu),
             "gpu_count": str(request.gpu_count),
             "port": "8001",
             "vllm_cmd": vllm_cmd,
