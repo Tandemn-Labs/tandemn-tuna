@@ -375,7 +375,8 @@ def _forward_to_serverless(path, headers, data, serverless_url):
         elapsed = time.time() - t0
         with _state_lock:
             _gpu_seconds_serverless += elapsed
-        return Response(f"upstream_error: {e}", status=502)
+        logger.warning("Upstream error: %s", e)
+        return Response("upstream_error", status=502)
 
     elapsed = time.time() - t0
     with _state_lock:
@@ -527,7 +528,8 @@ def proxy(path: str):
             _set_ready(False, str(e))
             return _forward_to_serverless(path, headers, data, serverless_url)
 
-        return Response(f"upstream_error: {e}", status=502)
+        logger.warning("Upstream error: %s", e)
+        return Response("upstream_error", status=502)
 
     # Retry on 5xx from spot (backend is unhealthy)
     if backend_name == "spot" and r.status_code >= 500 and serverless_url:
