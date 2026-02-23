@@ -326,10 +326,10 @@ class RunPodProvider(InferenceProvider):
         except Exception as e:
             return {"provider": self.name(), "status": "unknown", "error": str(e)}
 
-        # Find our endpoint by name
+        # Find our endpoint by name (RunPod may append suffixes like " -fb")
         endpoint_id = None
         for ep in endpoints:
-            if ep.get("name") == endpoint_name:
+            if ep.get("name", "").startswith(endpoint_name):
                 endpoint_id = ep.get("id")
                 break
 
