@@ -536,6 +536,15 @@ wheels = [
 ]
 
 [[package]]
+name = "cerebrium"
+version = "2.2.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/ac/22/6365bdd05d1cbea6c7b09578b9bfaa1d1ed96170497e4ae19d396e8da459/cerebrium-2.2.1.tar.gz", hash = "sha256:f589c47cd755d2c255efca215ba01b68e629bac30e1915cf569991cc186e26e8", size = 6030, upload-time = "2026-02-05T21:23:20.567Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d8/40/8e99aeaf2f3c1069e058f815762f3eafcd0dcc856f472a54b0f0759d3555/cerebrium-2.2.1-py3-none-any.whl", hash = "sha256:49ac34937d63270c2cef54b7a2744bf0722f3c06ff648cb9ef7d1ffc9fa118ac", size = 6389, upload-time = "2026-02-05T21:23:19.449Z" },
+]
+
+[[package]]
 name = "certifi"
 version = "2026.1.4"
 source = { registry = "https://pypi.org/simple" }
@@ -3404,7 +3413,7 @@ wheels = [
 
 [[package]]
 name = "tandemn-tuna"
-version = "0.0.1a6"
+version = "0.0.1a7"
 source = { editable = "." }
 dependencies = [
     { name = "flask" },
@@ -3419,6 +3428,7 @@ dependencies = [
 all = [
     { name = "azure-identity" },
     { name = "azure-mgmt-appcontainers" },
+    { name = "cerebrium" },
     { name = "google-cloud-run" },
     { name = "modal" },
     { name = "truss" },
@@ -3429,6 +3439,9 @@ azure = [
 ]
 baseten = [
     { name = "truss" },
+]
+cerebrium = [
+    { name = "cerebrium" },
 ]
 cloudrun = [
     { name = "google-cloud-run" },
@@ -3447,6 +3460,8 @@ requires-dist = [
     { name = "azure-identity", marker = "extra == 'azure'", specifier = ">=1.15" },
     { name = "azure-mgmt-appcontainers", marker = "extra == 'all'", specifier = ">=4.0" },
     { name = "azure-mgmt-appcontainers", marker = "extra == 'azure'", specifier = ">=4.0" },
+    { name = "cerebrium", marker = "extra == 'all'" },
+    { name = "cerebrium", marker = "extra == 'cerebrium'" },
     { name = "flask", specifier = ">=3.0" },
     { name = "google-cloud-run", marker = "extra == 'all'", specifier = ">=0.10.0" },
     { name = "google-cloud-run", marker = "extra == 'cloudrun'", specifier = ">=0.10.0" },
@@ -3458,11 +3473,11 @@ requires-dist = [
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "requests", specifier = ">=2.31" },
     { name = "rich", specifier = ">=13.0" },
-    { name = "skypilot", extras = ["aws"], specifier = ">=0.7" },
+    { name = "skypilot", extras = ["aws"], specifier = ">=0.11,<0.12" },
     { name = "truss", marker = "extra == 'all'", specifier = ">=0.9" },
     { name = "truss", marker = "extra == 'baseten'", specifier = ">=0.9" },
 ]
-provides-extras = ["dev", "cloudrun", "modal", "baseten", "azure", "all"]
+provides-extras = ["dev", "cloudrun", "modal", "baseten", "azure", "cerebrium", "all"]
 
 [[package]]
 name = "tenacity"

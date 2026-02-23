@@ -642,7 +642,7 @@ def _cleanup_serve_controller() -> None:
         ServiceStatus.FAILED,
         ServiceStatus.FAILED_CLEANUP,
     }
-    _ACTIVE = {ServiceStatus.READY, ServiceStatus.UPDATING}
+    _ACTIVE = {ServiceStatus.READY}
 
     try:
         # Wait for services to finish tearing down (up to ~90s)
