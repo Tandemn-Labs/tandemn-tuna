@@ -77,8 +77,28 @@ def _sanitize_path(path: str) -> str:
     return "/".join(segments)
 
 
+def _build_proxy_url(base: str, path: str, query_string: bytes | None = None) -> str:
+    """Build a safe proxy target URL from a backend base and user-supplied path.
+
+    Sanitizes the path and validates the result points to the expected host.
+    """
+    from urllib.parse import urlparse, quote, urlencode, parse_qs
+    clean_path = _sanitize_path(path)
+    url = base.rstrip("/") + "/" + clean_path
+    if query_string:
+        # Re-encode the query string to prevent injection
+        url += "?" + quote(query_string.decode("utf-8"), safe="=&")
+    # Final validation: result must share the same scheme+host as base
+    base_parsed = urlparse(base)
+    url_parsed = urlparse(url)
+    if url_parsed.netloc != base_parsed.netloc:
+        raise ValueError(f"URL host mismatch: expected {base_parsed.netloc}")
+    return url
+
+
 def _join_url(base: str, path: str) -> str:
-    return base.rstrip("/") + "/" + _sanitize_path(path)
+    """Join base URL with a server-controlled path (no sanitization needed)."""
+    return base.rstrip("/") + "/" + path.lstrip("/")
 
 
 # ---------------------------------------------------------------------------
@@ -358,9 +378,7 @@ def _poke_skyserve_async() -> None:
 def _forward_to_serverless(path, headers, data, serverless_url):
     """Retry a failed spot request on the serverless backend."""
     global _gpu_seconds_serverless
-    target_url = _join_url(serverless_url, path)
-    if request.query_string:
-        target_url += "?" + request.query_string.decode("utf-8")
+    target_url = _build_proxy_url(serverless_url, path, request.query_string or None)
 
     # Swap in serverless auth token
     with _state_lock:
@@ -499,9 +517,7 @@ def proxy(path: str):
         )
 
     # Forward request
-    target_url = _join_url(backend_base, path)
-    if request.query_string:
-        target_url += "?" + request.query_string.decode("utf-8")
+    target_url = _build_proxy_url(backend_base, path, request.query_string or None)
 
     # Strip auth headers for serverless (we inject our own token); preserve for spot
     headers = _filter_incoming(dict(request.headers), strip_auth=(backend_name == "serverless"))
