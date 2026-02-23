@@ -26,7 +26,7 @@ dependencies = [
     "gunicorn>=21.0",
     "pyyaml>=6.0",
     "rich>=13.0",
-    "skypilot[aws]>=0.7",
+    "skypilot[aws]>=0.11,<0.12",
 ]
 
 [project.optional-dependencies]
