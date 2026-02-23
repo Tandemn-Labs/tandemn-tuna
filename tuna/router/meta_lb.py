@@ -401,15 +401,12 @@ def _forward_to_serverless(path, headers, data, serverless_url):
             timeout=(2.0, UPSTREAM_TIMEOUT_SECONDS),
         )
     except req_lib.RequestException as e:
+        logger.warning("Upstream error: %s", e)
+        return Response("upstream_error", status=502)
+    finally:
         elapsed = time.time() - t0
         with _state_lock:
             _gpu_seconds_serverless += elapsed
-        logger.warning("Upstream error: %s", e)
-        return Response("upstream_error", status=502)
-
-    elapsed = time.time() - t0
-    with _state_lock:
-        _gpu_seconds_serverless += elapsed
 
     resp_headers = _filter_outgoing(r.headers)
     return Response(
