@@ -731,7 +731,7 @@ def cmd_show_gpus(args: argparse.Namespace) -> None:
 
     spot_prices: dict = {}
     if args.spot:
-        spot_prices = fetch_spot_prices(cloud=getattr(args, "spots_cloud", "aws"))
+        spot_prices = fetch_spot_prices(cloud=args.spots_cloud)
 
     result = query(gpu=gpu_filter, provider=args.provider)
     result.spot_prices = spot_prices
