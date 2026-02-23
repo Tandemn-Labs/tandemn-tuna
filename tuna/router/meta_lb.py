@@ -66,8 +66,19 @@ def _env_bool(name: str, default: bool = False) -> bool:
     return v.strip().lower() in ("1", "true", "yes", "y")
 
 
+def _sanitize_path(path: str) -> str:
+    """Strip scheme, netloc, and directory traversal from a user-supplied path."""
+    from urllib.parse import urlparse
+    parsed = urlparse(path)
+    # Use only the path component — discard any scheme://host an attacker may inject
+    clean = parsed.path
+    # Collapse .. segments so the path cannot escape the base URL
+    segments = [s for s in clean.split("/") if s not in ("", ".", "..")]
+    return "/".join(segments)
+
+
 def _join_url(base: str, path: str) -> str:
-    return base.rstrip("/") + "/" + path.lstrip("/")
+    return base.rstrip("/") + "/" + _sanitize_path(path)
 
 
 # ---------------------------------------------------------------------------
