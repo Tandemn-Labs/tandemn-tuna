@@ -223,7 +223,7 @@ cerebrium project set <your-project-id>
 
 > **Note:** Your project ID (e.g. `p-ad42316a`) can be found in the Cerebrium dashboard URL or by running `cerebrium projects list`. This step is required — without it, deploys will fail with `"no project configured"`.
 
-> **For CI/CD / headless environments:** Set `CEREBRIUM_SERVICE_ACCOUNT_TOKEN` (same value as `CEREBRIUM_API_KEY`) and run `cerebrium project set` before deploying. No `cerebrium login` needed.
+> **For CI/CD / headless environments:** Set `CEREBRIUM_API_KEY` and run `cerebrium project set` before deploying. No `cerebrium login` needed.
 
 **Step 6: Verify setup**
 
