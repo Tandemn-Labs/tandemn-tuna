@@ -274,7 +274,13 @@ class TestCerebriumPreflight:
     @patch("shutil.which", return_value="/usr/bin/cerebrium")
     @patch("tuna.providers.cerebrium_provider.subprocess.run")
     def test_all_checks_pass(self, mock_run, mock_which, provider, request_t4):
-        mock_run.return_value = MagicMock(returncode=0, stdout="OK", stderr="")
+        def _side_effect(cmd, **kwargs):
+            if "status" in cmd:
+                return MagicMock(returncode=0, stdout="OK", stderr="")
+            if "projects" in cmd and "current" in cmd:
+                return MagicMock(returncode=0, stdout="projectId: p-abc123", stderr="")
+            return MagicMock(returncode=0, stdout="OK", stderr="")
+        mock_run.side_effect = _side_effect
         result = provider.preflight(request_t4)
         assert result.ok
         assert len(result.failed) == 0
@@ -282,8 +288,49 @@ class TestCerebriumPreflight:
     @patch.dict("os.environ", {"CEREBRIUM_API_KEY": "ck-test"})
     @patch("shutil.which", return_value="/usr/bin/cerebrium")
     @patch("tuna.providers.cerebrium_provider.subprocess.run")
+    def test_no_project_context(self, mock_run, mock_which, provider, request_t4):
+        def _side_effect(cmd, **kwargs):
+            if "status" in cmd:
+                return MagicMock(returncode=0, stdout="OK", stderr="")
+            if "projects" in cmd and "current" in cmd:
+                return MagicMock(returncode=1, stdout="", stderr="no project configured")
+            return MagicMock(returncode=0, stdout="OK", stderr="")
+        mock_run.side_effect = _side_effect
+        with patch("tuna.providers.cerebrium_provider._get_project_id", return_value=None):
+            result = provider.preflight(request_t4)
+        assert not result.ok
+        proj_check = [c for c in result.checks if c.name == "project_context"][0]
+        assert not proj_check.passed
+        assert "cerebrium project set" in proj_check.fix_command
+
+    @patch.dict("os.environ", {"CEREBRIUM_API_KEY": "ck-test"})
+    @patch("shutil.which", return_value="/usr/bin/cerebrium")
+    @patch("tuna.providers.cerebrium_provider.subprocess.run")
+    def test_project_context_from_config_fallback(self, mock_run, mock_which, provider, request_t4):
+        def _side_effect(cmd, **kwargs):
+            if "status" in cmd:
+                return MagicMock(returncode=0, stdout="OK", stderr="")
+            if "projects" in cmd and "current" in cmd:
+                return MagicMock(returncode=1, stdout="", stderr="no project")
+            return MagicMock(returncode=0, stdout="OK", stderr="")
+        mock_run.side_effect = _side_effect
+        with patch("tuna.providers.cerebrium_provider._get_project_id", return_value="p-abc123"):
+            result = provider.preflight(request_t4)
+        assert result.ok
+        proj_check = [c for c in result.checks if c.name == "project_context"][0]
+        assert proj_check.passed
+
+    @patch.dict("os.environ", {"CEREBRIUM_API_KEY": "ck-test"})
+    @patch("shutil.which", return_value="/usr/bin/cerebrium")
+    @patch("tuna.providers.cerebrium_provider.subprocess.run")
     def test_gpu_not_supported(self, mock_run, mock_which, provider):
-        mock_run.return_value = MagicMock(returncode=0, stdout="OK", stderr="")
+        def _side_effect(cmd, **kwargs):
+            if "status" in cmd:
+                return MagicMock(returncode=0, stdout="OK", stderr="")
+            if "projects" in cmd and "current" in cmd:
+                return MagicMock(returncode=0, stdout="projectId: p-abc123", stderr="")
+            return MagicMock(returncode=0, stdout="OK", stderr="")
+        mock_run.side_effect = _side_effect
         req = DeployRequest(
             model_name="m",
             gpu="UNKNOWN_GPU",

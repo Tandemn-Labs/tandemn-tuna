@@ -141,7 +141,43 @@ class CerebriumProvider(InferenceProvider):
             message="cerebrium CLI authenticated",
         ))
 
-        # 4. GPU type supported
+        # 4. Project context set
+        try:
+            proc = subprocess.run(
+                ["cerebrium", "projects", "current", "--no-color"],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+            output = (proc.stdout or "").strip()
+            has_project = proc.returncode == 0 and "projectId:" in output
+            if not has_project:
+                # Also check via _get_project_id (config file / JWT fallback)
+                project_id = _get_project_id()
+                has_project = bool(project_id)
+            if not has_project:
+                result.checks.append(PreflightCheck(
+                    name="project_context",
+                    passed=False,
+                    message="No Cerebrium project context set. Deploys will fail without this.",
+                    fix_command="cerebrium projects list && cerebrium project set <your-project-id>",
+                ))
+                return result
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            result.checks.append(PreflightCheck(
+                name="project_context",
+                passed=False,
+                message="Failed to check Cerebrium project context",
+                fix_command="cerebrium projects list && cerebrium project set <your-project-id>",
+            ))
+            return result
+        result.checks.append(PreflightCheck(
+            name="project_context",
+            passed=True,
+            message="Cerebrium project context is set",
+        ))
+
+        # 5. GPU type supported
         try:
             provider_gpu_id(request.gpu, "cerebrium")
             result.checks.append(PreflightCheck(
