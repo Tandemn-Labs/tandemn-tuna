@@ -788,6 +788,19 @@ def _format_price(price: float) -> str:
     return "-"
 
 
+def _spot_savings_pct(spot_price: float, serverless_prices: list[float]) -> float | None:
+    """Calculate percentage savings of spot vs cheapest serverless.
+
+    Returns positive = spot is cheaper, negative = spot is more expensive,
+    0 = same price, None = can't compute.
+    """
+    valid = [p for p in serverless_prices if p > 0]
+    if not valid or spot_price <= 0:
+        return None
+    cheapest = min(valid)
+    return (cheapest - spot_price) / cheapest * 100
+
+
 def _print_gpu_detail(gpu: str, result, spot_prices: dict, get_gpu_spec) -> None:
     from rich.console import Console
     from rich.table import Table
@@ -835,6 +848,30 @@ def _print_gpu_detail(gpu: str, result, spot_prices: dict, get_gpu_spec) -> None
             f"at [bold green]${cheapest[1]:.2f}/hr[/bold green]"
         )
 
+        # Show savings summary: spot vs cheapest serverless
+        serverless_only = [(p, pr) for p, pr in all_prices if p != "aws spot"]
+        spot_entry = next(((p, pr) for p, pr in all_prices if p == "aws spot"), None)
+        if spot_entry and serverless_only:
+            cheapest_sl = min(serverless_only, key=lambda x: x[1])
+            pct = _spot_savings_pct(spot_entry[1], [pr for _, pr in serverless_only])
+            if pct is not None:
+                cheapest_sl_details = f"({cheapest_sl[0]} ${cheapest_sl[1]:.2f}/hr)"
+                if pct > 0:
+                    console.print(
+                        f"Spot saves [bold green]{pct:.0f}%[/bold green] vs "
+                        f"cheapest serverless {cheapest_sl_details}"
+                    )
+                elif pct == 0:
+                    console.print(
+                        f"Spot price is the [dim]same[/dim] as cheapest serverless "
+                        f"{cheapest_sl_details}"
+                    )
+                else:
+                    console.print(
+                        f"Spot is [red]{-pct:.0f}% more[/red] expensive than cheapest serverless "
+                        f"{cheapest_sl_details}"
+                    )
+
 
 def _print_gpu_table(result, spot_prices: dict, show_spot: bool, get_gpu_spec) -> None:
     from rich.console import Console
@@ -851,6 +888,7 @@ def _print_gpu_table(result, spot_prices: dict, show_spot: bool, get_gpu_spec) -
         table.add_column(p.upper(), justify="right")
     if show_spot:
         table.add_column("AWS SPOT", justify="right")
+        table.add_column("SAVINGS", justify="right")
 
     # Collect all GPUs that have at least one offering
     seen_gpus: list[str] = []
@@ -906,6 +944,22 @@ def _print_gpu_table(result, spot_prices: dict, show_spot: bool, get_gpu_spec) -
                     cells.append(f"[bold green]{text}[/bold green]")
                 else:
                     cells.append(text)
+            else:
+                cells.append("[dim]-[/dim]")
+
+            # Savings column: spot vs cheapest serverless
+            serverless_prices = [
+                price_map.get((gpu, p), 0.0) for p in providers
+            ]
+            spot_price = sp.price_per_gpu_hour if sp and sp.price_per_gpu_hour > 0 else 0.0
+            pct = _spot_savings_pct(spot_price, serverless_prices)
+            if pct is not None:
+                if pct > 0:
+                    cells.append(f"[bold green]{pct:.0f}% cheaper[/bold green]")
+                elif pct == 0:
+                    cells.append("[dim]same[/dim]")
+                else:
+                    cells.append(f"[red]{-pct:.0f}% more[/red]")
             else:
                 cells.append("[dim]-[/dim]")
 
