@@ -835,6 +835,18 @@ def _print_gpu_detail(gpu: str, result, spot_prices: dict, get_gpu_spec) -> None
             f"at [bold green]${cheapest[1]:.2f}/hr[/bold green]"
         )
 
+        # Show savings summary: spot vs cheapest serverless
+        serverless_only = [(p, pr) for p, pr in all_prices if p != "aws spot"]
+        spot_entry = next(((p, pr) for p, pr in all_prices if p == "aws spot"), None)
+        if spot_entry and serverless_only:
+            cheapest_sl = min(serverless_only, key=lambda x: x[1])
+            pct = (cheapest_sl[1] - spot_entry[1]) / cheapest_sl[1] * 100
+            if pct > 0:
+                console.print(
+                    f"Spot saves [bold green]{pct:.0f}%[/bold green] vs "
+                    f"cheapest serverless ({cheapest_sl[0]} ${cheapest_sl[1]:.2f}/hr)"
+                )
+
 
 def _print_gpu_table(result, spot_prices: dict, show_spot: bool, get_gpu_spec) -> None:
     from rich.console import Console
@@ -851,6 +863,7 @@ def _print_gpu_table(result, spot_prices: dict, show_spot: bool, get_gpu_spec) -
         table.add_column(p.upper(), justify="right")
     if show_spot:
         table.add_column("AWS SPOT", justify="right")
+        table.add_column("SAVINGS", justify="right")
 
     # Collect all GPUs that have at least one offering
     seen_gpus: list[str] = []
@@ -906,6 +919,25 @@ def _print_gpu_table(result, spot_prices: dict, show_spot: bool, get_gpu_spec) -
                     cells.append(f"[bold green]{text}[/bold green]")
                 else:
                     cells.append(text)
+            else:
+                sp = None
+                cells.append("[dim]-[/dim]")
+
+            # Savings column: spot vs cheapest serverless
+            serverless_prices = [
+                price_map.get((gpu, p), 0.0) for p in providers
+            ]
+            serverless_prices = [p for p in serverless_prices if p > 0]
+            cheapest_serverless = min(serverless_prices) if serverless_prices else None
+
+            if sp and sp.price_per_gpu_hour > 0 and cheapest_serverless:
+                pct = (cheapest_serverless - sp.price_per_gpu_hour) / cheapest_serverless * 100
+                if pct > 0:
+                    cells.append(f"[bold green]{pct:.0f}% cheaper[/bold green]")
+                elif pct == 0:
+                    cells.append("[dim]same[/dim]")
+                else:
+                    cells.append(f"[red]{-pct:.0f}% more[/red]")
             else:
                 cells.append("[dim]-[/dim]")
 
