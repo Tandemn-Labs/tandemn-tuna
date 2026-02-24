@@ -26,8 +26,7 @@ _SPOT = {
 
 
 def _make_result(entries=_ENTRIES, spot=None):
-    q = CatalogQuery(results=entries, spot_prices=spot or {})
-    return q
+    return CatalogQuery(results=entries, spot_prices=spot or {})
 
 
 class TestSavingsColumn:
@@ -45,11 +44,26 @@ class TestSavingsColumn:
         real_init = Console.__init__
 
         def fake_init(self_c, *a, **kw):
-            # Copy state from our pre-built console
             self_c.__dict__.update(console.__dict__)
 
         with patch.object(Console, "__init__", fake_init):
             _print_gpu_table(result, spot_prices or {}, show_spot=show_spot, get_gpu_spec=get_gpu_spec)
+        return buf.getvalue()
+
+    def _capture_detail(self, gpu, entries, spot_prices):
+        from tuna.__main__ import _print_gpu_detail
+        from tuna.catalog import get_gpu_spec
+        from rich.console import Console
+
+        result = _make_result(entries=entries, spot=spot_prices)
+        buf = io.StringIO()
+        console = Console(file=buf, width=200)
+
+        def fake_init(self_c, *a, **kw):
+            self_c.__dict__.update(console.__dict__)
+
+        with patch.object(Console, "__init__", fake_init):
+            _print_gpu_detail(gpu, result, spot_prices, get_gpu_spec)
         return buf.getvalue()
 
     def test_table_no_spot_no_savings_column(self):
@@ -64,36 +78,48 @@ class TestSavingsColumn:
 
     def test_savings_percentage_l4(self):
         """L4: spot $0.28 vs cheapest serverless $0.80 = 65% cheaper."""
-        cheapest_serverless = 0.80
-        spot = 0.28
-        pct = (cheapest_serverless - spot) / cheapest_serverless * 100
-        assert 64 <= pct <= 66  # ~65%
+        text = self._capture_table(show_spot=True, spot_prices=_SPOT)
+        assert "65% cheaper" in text
 
     def test_savings_percentage_h100(self):
         """H100: spot $2.05 vs cheapest serverless $2.21 = ~7% cheaper."""
-        cheapest_serverless = 2.21
-        spot = 2.05
-        pct = (cheapest_serverless - spot) / cheapest_serverless * 100
-        assert 6 <= pct <= 8
+        text = self._capture_table(show_spot=True, spot_prices=_SPOT)
+        assert "7% cheaper" in text
 
     def test_spot_more_expensive(self):
         """If spot > cheapest serverless, should show 'X% more'."""
-        pct = (0.80 - 1.00) / 0.80 * 100  # spot=$1.00, serverless=$0.80
-        assert pct < 0  # Negative = spot is more expensive
+        spot_expensive = {
+            "L4": SpotPrice("L4", "aws", 1.00, "gr6.4xlarge", "us-east-2"),
+        }
+        text = self._capture_table(show_spot=True, spot_prices=spot_expensive)
+        assert "25% more" in text
 
     def test_detail_view_shows_savings(self):
         """Detail view should show 'Spot saves X%' line."""
-        from tuna.__main__ import _print_gpu_detail
-        from tuna.catalog import get_gpu_spec
-
-        result = _make_result(
+        text = self._capture_detail(
+            "L4",
             entries=[e for e in _ENTRIES if e.gpu == "L4"],
-            spot={"L4": _SPOT["L4"]},
+            spot_prices={"L4": _SPOT["L4"]},
         )
-        result.spot_prices = {"L4": _SPOT["L4"]}
-
-        output = io.StringIO()
-        with patch("rich.console.Console.print", side_effect=lambda *a, **kw: output.write(str(a[0]) if a else "")):
-            _print_gpu_detail("L4", result, {"L4": _SPOT["L4"]}, get_gpu_spec)
-        text = output.getvalue()
         assert "Spot saves" in text or "65%" in text
+
+    def test_detail_view_spot_more_expensive(self):
+        """Detail view should show 'more expensive' when spot costs more."""
+        spot_expensive = {"L4": SpotPrice("L4", "aws", 1.00, "gr6.4xlarge", "us-east-2")}
+        text = self._capture_detail(
+            "L4",
+            entries=[e for e in _ENTRIES if e.gpu == "L4"],
+            spot_prices=spot_expensive,
+        )
+        assert "more" in text
+
+    def test_spot_savings_pct_helper(self):
+        """Test the shared helper function directly."""
+        from tuna.__main__ import _spot_savings_pct
+
+        assert _spot_savings_pct(0.28, [0.80, 2.74]) == pytest.approx(65.0, abs=1)
+        assert _spot_savings_pct(2.05, [2.21, 3.95]) == pytest.approx(7.2, abs=1)
+        assert _spot_savings_pct(1.00, [0.80]) == pytest.approx(-25.0, abs=1)
+        assert _spot_savings_pct(0.80, [0.80]) == pytest.approx(0.0)
+        assert _spot_savings_pct(0.0, [0.80]) is None
+        assert _spot_savings_pct(0.50, []) is None
