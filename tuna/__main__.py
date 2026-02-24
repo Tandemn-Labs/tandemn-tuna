@@ -854,21 +854,23 @@ def _print_gpu_detail(gpu: str, result, spot_prices: dict, get_gpu_spec) -> None
         if spot_entry and serverless_only:
             cheapest_sl = min(serverless_only, key=lambda x: x[1])
             pct = _spot_savings_pct(spot_entry[1], [pr for _, pr in serverless_only])
-            if pct is not None and pct > 0:
-                console.print(
-                    f"Spot saves [bold green]{pct:.0f}%[/bold green] vs "
-                    f"cheapest serverless ({cheapest_sl[0]} ${cheapest_sl[1]:.2f}/hr)"
-                )
-            elif pct is not None and pct == 0:
-                console.print(
-                    f"Spot price is the [dim]same[/dim] as cheapest serverless "
-                    f"({cheapest_sl[0]} ${cheapest_sl[1]:.2f}/hr)"
-                )
-            elif pct is not None:
-                console.print(
-                    f"Spot is [red]{-pct:.0f}% more[/red] expensive than cheapest serverless "
-                    f"({cheapest_sl[0]} ${cheapest_sl[1]:.2f}/hr)"
-                )
+            if pct is not None:
+                cheapest_sl_details = f"({cheapest_sl[0]} ${cheapest_sl[1]:.2f}/hr)"
+                if pct > 0:
+                    console.print(
+                        f"Spot saves [bold green]{pct:.0f}%[/bold green] vs "
+                        f"cheapest serverless {cheapest_sl_details}"
+                    )
+                elif pct == 0:
+                    console.print(
+                        f"Spot price is the [dim]same[/dim] as cheapest serverless "
+                        f"{cheapest_sl_details}"
+                    )
+                else:
+                    console.print(
+                        f"Spot is [red]{-pct:.0f}% more[/red] expensive than cheapest serverless "
+                        f"{cheapest_sl_details}"
+                    )
 
 
 def _print_gpu_table(result, spot_prices: dict, show_spot: bool, get_gpu_spec) -> None:
