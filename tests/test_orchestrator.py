@@ -54,6 +54,16 @@ class TestBuildVllmCmd:
         cmd = build_vllm_cmd(req)
         assert "--max-model-len 8192" in cmd
 
+    def test_t4_has_dtype_half(self):
+        req = DeployRequest(model_name="test/model", gpu="T4")
+        cmd = build_vllm_cmd(req)
+        assert "--dtype half" in cmd
+
+    def test_l4_no_dtype_flag(self):
+        req = DeployRequest(model_name="test/model", gpu="L4")
+        cmd = build_vllm_cmd(req)
+        assert "--dtype" not in cmd
+
 
 class TestPushUrlToRouter:
     @patch("tuna.orchestrator.requests")

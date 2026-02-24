@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import secrets
 import shlex
 import subprocess
@@ -36,7 +37,10 @@ META_LB_PATH = Path(__file__).resolve().parent / "router" / "meta_lb.py"
 
 def build_vllm_cmd(request: DeployRequest, port: str = "8001") -> str:
     """Render the shared vLLM command from the template."""
+    from tuna.catalog import get_vllm_dtype_flag
+
     eager_flag = "--enforce-eager" if request.cold_start_mode == "fast_boot" else ""
+    dtype_flag = get_vllm_dtype_flag(request.gpu)
 
     replacements = {
         "model": request.model_name,
@@ -45,10 +49,13 @@ def build_vllm_cmd(request: DeployRequest, port: str = "8001") -> str:
         "max_model_len": str(request.max_model_len),
         "tp_size": str(request.tp_size),
         "eager_flag": eager_flag,
+        "dtype_flag": dtype_flag,
     }
-    return render_template(
+    cmd = render_template(
         str(TEMPLATES_DIR / "vllm_serve_cmd.txt"), replacements
     )
+    # Clean up trailing whitespace from empty flags
+    return re.sub(r'[ \t]+$', '', cmd, flags=re.MULTILINE).rstrip()
 
 
 def _launch_router_vm(request: DeployRequest, router_api_key: str = "") -> DeploymentResult:

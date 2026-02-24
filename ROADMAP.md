@@ -39,7 +39,7 @@ Spot (via SkyPilot):
 | Cloud | Status | Notes |
 |-------|--------|-------|
 | AWS | Done | Current default |
-| GCP | Planned | SkyPilot supports it, need catalog entries |
+| GCP | ✅ Done | Docker image-based deploy, T4/L4/A100/H100 spot |
 | Azure | Planned | SkyPilot supports it, need catalog entries |
 | Spheron AI | Research | High Quality GPU marketplace |
 | Prime Intellect | Research | Decentralized compute |

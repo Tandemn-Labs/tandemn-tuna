@@ -112,6 +112,35 @@ class TestSkyLauncherPlan:
         parsed = yaml.safe_load(plan.rendered_script)
         assert "L40S:4" in parsed["resources"]["accelerators"]
 
+    def test_plan_uses_docker_image(self):
+        """Template should use Docker image instead of pip install."""
+        plan = self.launcher.plan(self.request, self.vllm_cmd)
+        parsed = yaml.safe_load(plan.rendered_script)
+        assert "image_id" in parsed["resources"]
+        assert parsed["resources"]["image_id"].startswith("docker:vllm/vllm-openai:v")
+
+    def test_plan_no_setup_block(self):
+        """Docker image replaces setup — no setup block in YAML."""
+        plan = self.launcher.plan(self.request, self.vllm_cmd)
+        assert "pip install" not in plan.rendered_script
+        assert "setup:" not in plan.rendered_script
+
+    def test_plan_gcp_cloud(self):
+        """GCP cloud should be set correctly when no region specified."""
+        self.request.spots_cloud = "gcp"
+        self.request.region = None
+        plan = self.launcher.plan(self.request, self.vllm_cmd)
+        parsed = yaml.safe_load(plan.rendered_script)
+        assert parsed["resources"]["cloud"] == "gcp"
+
+    def test_plan_gcp_with_region(self):
+        """GCP region should use infra: gcp/{region} format."""
+        self.request.spots_cloud = "gcp"
+        self.request.region = "me-west1"
+        plan = self.launcher.plan(self.request, self.vllm_cmd)
+        parsed = yaml.safe_load(plan.rendered_script)
+        assert parsed["resources"]["any_of"][0]["infra"] == "gcp/me-west1"
+
 
 class TestSkyLauncherDeploy:
     def setup_method(self):

@@ -18,7 +18,7 @@ Tuna is a smart router that combines both behind a single OpenAI-compatible endp
 <td align="center"><img src="https://raw.githubusercontent.com/Tandemn-Labs/tandemn-tuna/main/assets/modal-logo-icon.png" height="30"><br>Modal</td>
 <td align="center"><img src="https://raw.githubusercontent.com/Tandemn-Labs/tandemn-tuna/main/assets/runpod-logo-black.svg" height="30"><br>RunPod</td>
 <td align="center"><img src="https://raw.githubusercontent.com/Tandemn-Labs/tandemn-tuna/main/assets/google-cloud-run-logo-png_seeklogo-354677.png" height="30"><br>Cloud Run</td>
-<td align="center" rowspan="2"><img src="https://raw.githubusercontent.com/Tandemn-Labs/tandemn-tuna/main/assets/Amazon_Web_Services_Logo.svg.png" height="30"><br>AWS via<br>SkyPilot</td>
+<td align="center" rowspan="2"><img src="https://raw.githubusercontent.com/Tandemn-Labs/tandemn-tuna/main/assets/Amazon_Web_Services_Logo.svg.png" height="30"><br>AWS<br><img src="https://raw.githubusercontent.com/Tandemn-Labs/tandemn-tuna/main/assets/google-cloud-run-logo-png_seeklogo-354677.png" height="20"><br>GCP<br>via SkyPilot</td>
 </tr>
 <tr>
 <td align="center"><img src="https://raw.githubusercontent.com/Tandemn-Labs/tandemn-tuna/main/assets/baseten.png" height="30"><br>Baseten</td>
@@ -37,11 +37,12 @@ Tuna is a smart router that combines both behind a single OpenAI-compatible endp
 ## Prerequisites
 
 - Python 3.11+
-- [AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) — required for spot instances (all deployments use spot)
+- [AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) — required for spot instances on AWS (default)
+- [gcloud CLI](https://cloud.google.com/sdk/docs/install) — required for spot instances on GCP (use `--spots-cloud gcp`)
 - At least one serverless provider account: [Modal](https://modal.com/), [RunPod](https://www.runpod.io/), [Google Cloud](https://cloud.google.com/), [Baseten](https://www.baseten.co/), [Azure](https://azure.microsoft.com/), or [Cerebrium](https://www.cerebrium.ai/)
 - For gated models (Llama, Mistral, Gemma, etc.): a [HuggingFace token](https://huggingface.co/settings/tokens) with access to the model
 
-> **Note:** By default Tuna deploys both a serverless backend and a spot backend. AWS credentials are required for spot instances, which run on AWS via [SkyPilot](https://github.com/skypilot-org/skypilot). Use `--serverless-only` to skip spot + router (no AWS needed).
+> **Note:** By default Tuna deploys both a serverless backend and a spot backend. AWS credentials are required for spot instances, which run on AWS via [SkyPilot](https://github.com/skypilot-org/skypilot). Alternatively, use `--spots-cloud gcp` for GCP spot instances. Use `--serverless-only` to skip spot + router (no cloud credentials needed for spot).
 
 ## Quick Start
 
@@ -64,12 +65,34 @@ pip install tandemn-tuna[all] --pre       # everything
 > pip install -e ".[all]"
 > ```
 
-**2. Set up AWS (required for all deployments)**
+**2. Set up spot GPU cloud (pick one)**
+
+<details>
+<summary><b>AWS (default)</b></summary>
 
 ```bash
 aws configure          # set up AWS credentials
-sky check              # verify SkyPilot can see your AWS account
+sky check aws          # verify SkyPilot can see your AWS account
 ```
+
+</details>
+
+<details>
+<summary><b>GCP</b></summary>
+
+```bash
+gcloud auth login
+gcloud auth application-default login
+gcloud config set project <YOUR_PROJECT_ID>
+sky check gcp          # verify SkyPilot can see your GCP account
+```
+
+> **Note:** GCP spot instances (preemptible VMs) require GPU quota in your project.
+> Check quota at: https://console.cloud.google.com/iam-admin/quotas
+> Search for "Preemptible" GPU quotas in your target region.
+> GCP preemptible VMs have a 24-hour maximum lifetime — SkyPilot handles automatic recovery.
+
+</details>
 
 **3. Set up your serverless provider (pick one)**
 
@@ -262,6 +285,11 @@ tuna deploy --model Qwen/Qwen3-0.6B --gpu L4 --service-name my-first-deploy
 
 Tuna auto-selects the cheapest serverless provider for your GPU, launches spot instances on AWS, and gives you a single endpoint. The router handles everything — serverless covers traffic immediately while spot boots up in the background.
 
+```bash
+# Deploy with GCP spot instances instead of AWS
+tuna deploy --model Qwen/Qwen3-0.6B --gpu T4 --spots-cloud gcp --service-name my-gcp-deploy
+```
+
 **6a. (Alternative) Deploy serverless-only**
 
 Skip spot + router for dev/test or low-traffic:
@@ -295,10 +323,11 @@ tuna destroy --all                            # tear down all active deployments
 **9. Browse GPU pricing**
 
 ```bash
-tuna show-gpus                     # compare serverless pricing across providers
-tuna show-gpus --spot              # include AWS spot prices
-tuna show-gpus --gpu H100          # detailed pricing for a specific GPU
-tuna show-gpus --provider runpod   # filter to one provider
+tuna show-gpus                                    # compare serverless pricing across providers
+tuna show-gpus --spot                             # include AWS spot prices (default)
+tuna show-gpus --spot --spots-cloud gcp           # include GCP spot prices
+tuna show-gpus --gpu H100                         # detailed pricing for a specific GPU
+tuna show-gpus --provider runpod                  # filter to one provider
 ```
 
 ## Architecture
@@ -318,8 +347,8 @@ tuna show-gpus --provider runpod   # filter to one provider
               │                         │
      ┌────────▼─────────┐    ┌─────────▼─────────┐
      │ Serverless        │    │ Spot GPUs          │
-     │ Modal / RunPod /  │    │ AWS via SkyPilot   │
-     │ Cloud Run         │    │                    │
+     │ Modal / RunPod /  │    │ AWS / GCP via      │
+     │ Cloud Run         │    │ SkyPilot           │
      │                   │    │ • 3-5x cheaper     │
      │ • Fast cold start │    │ • Slower cold start│
      │ • Per-second bill │    │ • Auto-failover    │

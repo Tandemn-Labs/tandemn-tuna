@@ -13,13 +13,11 @@ service:
 
 resources:
   accelerators: "{gpu}:{gpu_count}"
+  image_id: docker:vllm/vllm-openai:v{vllm_version}
   use_spot: true
   disk_size: 100
   ports: {port}
 {region_block}
-
-setup: |
-  pip install vllm=={vllm_version}
 
 run: |
   {vllm_cmd}

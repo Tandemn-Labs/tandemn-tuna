@@ -356,6 +356,26 @@ def fetch_on_demand_prices(cloud: str = "aws") -> dict[str, OnDemandPrice]:
     return on_demand_prices
 
 
+def get_dtype_flag(gpu: str) -> str:
+    """Return the vLLM ``--dtype`` value for a GPU, or empty string for auto.
+
+    Turing-architecture GPUs (e.g. T4, compute capability 7.5) do not
+    support bfloat16.  vLLM defaults to bfloat16 when auto-detecting,
+    which crashes or produces garbage on these GPUs.  Returning ``"half"``
+    forces float16 instead.
+    """
+    spec = GPU_SPECS.get(gpu)
+    if spec and spec.arch == "turing":
+        return "half"
+    return ""
+
+
+def get_vllm_dtype_flag(gpu: str) -> str:
+    """Return ``--dtype half`` if the GPU needs it, else empty string."""
+    dtype = get_dtype_flag(gpu)
+    return f"--dtype {dtype}" if dtype else ""
+
+
 def get_provider_price(gpu: str, provider: str) -> float:
     """Get the static serverless price for a GPU+provider combo. Returns 0.0 if not found."""
     for entry in _PROVIDER_GPUS:
