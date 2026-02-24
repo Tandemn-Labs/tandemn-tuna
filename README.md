@@ -193,14 +193,13 @@ tuna check --provider azure
 
 **Step 1: Create account** — sign up at https://www.cerebrium.ai/ ($30 free credits on Hobby plan)
 
-**Step 2: Install the Cerebrium CLI and log in**
+**Step 2: Install the Cerebrium CLI**
 
 ```bash
 pip install tandemn-tuna[cerebrium]
-cerebrium login
 ```
 
-**Step 3: Get a service account token** — go to Dashboard > API Keys, create a token, copy it
+**Step 3: Create a service account token** — go to Dashboard > API Keys > Create Service Account > Copy the token
 
 **Step 4: Set the API key**
 
@@ -210,7 +209,23 @@ export CEREBRIUM_API_KEY=<your-service-account-token>
 
 Add to `~/.bashrc` or `~/.zshrc` to persist.
 
-**Step 5: Verify setup**
+**Step 5: Set your project context**
+
+The service account token contains your project ID, but the CLI needs it set explicitly:
+
+```bash
+# List your projects to find the ID
+cerebrium projects list
+
+# Set the project context
+cerebrium project set <your-project-id>
+```
+
+> **Note:** Your project ID (e.g. `p-ad42316a`) can be found in the Cerebrium dashboard URL or by running `cerebrium projects list`. This step is required — without it, deploys will fail with `"no project configured"`.
+
+> **For CI/CD / headless environments:** Set `CEREBRIUM_SERVICE_ACCOUNT_TOKEN` (same value as `CEREBRIUM_API_KEY`) and run `cerebrium project set` before deploying. No `cerebrium login` needed.
+
+**Step 6: Verify setup**
 
 ```bash
 tuna check --provider cerebrium
