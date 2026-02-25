@@ -34,11 +34,9 @@ class SkyLauncher(InferenceProvider):
     def name(self) -> str:
         return "skyserve"
 
-    def plan(self, request: DeployRequest, vllm_cmd: str) -> ProviderPlan:
-        service_name = f"{request.service_name}-spot"
+    def _render_yaml(self, request: DeployRequest, vllm_cmd: str, min_replicas: int) -> str:
+        """Render the SkyServe YAML template with the given parameters."""
         spot = request.scaling.spot
-
-        # Region block for YAML — always pin the cloud, optionally with region
         cloud = request.spots_cloud.lower()
         if request.region:
             region_block = (
@@ -47,20 +45,13 @@ class SkyLauncher(InferenceProvider):
         else:
             region_block = f"  cloud: {cloud}"
 
-        # Deploy with min_replicas=1 to protect the replica during boot.
-        # The autoscaler's downscale_delay can kill a PROVISIONING replica
-        # before it becomes READY (especially on GCP where Docker boot >5 min).
-        # After the replica reaches READY, enable_scale_to_zero() switches
-        # min_replicas back to 0 if the user wants scale-to-zero.
-        boot_min_replicas = max(1, spot.min_replicas)
-
         replacements = {
             "gpu": to_skypilot_gpu_name(request.gpu),
             "gpu_count": str(request.gpu_count),
             "port": "8001",
             "vllm_cmd": vllm_cmd,
             "vllm_version": request.vllm_version,
-            "min_replicas": str(boot_min_replicas),
+            "min_replicas": str(min_replicas),
             "max_replicas": str(spot.max_replicas),
             "target_qps": str(spot.target_qps),
             "upscale_delay": str(spot.upscale_delay),
@@ -68,9 +59,21 @@ class SkyLauncher(InferenceProvider):
             "region_block": region_block,
         }
 
-        rendered = render_template(
+        return render_template(
             str(TEMPLATES_DIR / "vllm.yaml.tpl"), replacements
         )
+
+    def plan(self, request: DeployRequest, vllm_cmd: str) -> ProviderPlan:
+        service_name = f"{request.service_name}-spot"
+
+        # Deploy with min_replicas=1 to protect the replica during boot.
+        # The autoscaler's downscale_delay can kill a PROVISIONING replica
+        # before it becomes READY (especially on GCP where Docker boot >5 min).
+        # After the replica reaches READY, enable_scale_to_zero() switches
+        # min_replicas back to 0 if the user wants scale-to-zero.
+        boot_min_replicas = max(1, request.scaling.spot.min_replicas)
+
+        rendered = self._render_yaml(request, vllm_cmd, boot_min_replicas)
 
         return ProviderPlan(
             provider=self.name(),
@@ -86,35 +89,10 @@ class SkyLauncher(InferenceProvider):
         Only the ``service:`` section changes, so SkyPilot reuses
         running replicas.
         """
-        spot = request.scaling.spot
-        cloud = request.spots_cloud.lower()
-        if request.region:
-            region_block = (
-                f"  any_of:\n    - infra: {cloud}/{request.region}"
-            )
-        else:
-            region_block = f"  cloud: {cloud}"
-
         from tuna.orchestrator import build_vllm_cmd
         vllm_cmd = build_vllm_cmd(request)
 
-        replacements = {
-            "gpu": to_skypilot_gpu_name(request.gpu),
-            "gpu_count": str(request.gpu_count),
-            "port": "8001",
-            "vllm_cmd": vllm_cmd,
-            "vllm_version": request.vllm_version,
-            "min_replicas": "0",
-            "max_replicas": str(spot.max_replicas),
-            "target_qps": str(spot.target_qps),
-            "upscale_delay": str(spot.upscale_delay),
-            "downscale_delay": str(spot.downscale_delay),
-            "region_block": region_block,
-        }
-
-        rendered = render_template(
-            str(TEMPLATES_DIR / "vllm.yaml.tpl"), replacements
-        )
+        rendered = self._render_yaml(request, vllm_cmd, min_replicas=0)
         task = task_from_yaml_str(rendered)
         logger.info("Updating %s: min_replicas 1 -> 0 (enabling scale-to-zero)", service_name)
         serve_update(task, service_name)
