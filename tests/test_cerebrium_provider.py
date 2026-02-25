@@ -12,6 +12,7 @@ from tuna.providers.cerebrium_provider import (
     CerebriumProvider,
     _get_project_id,
     _GPU_RESOURCES,
+    _wait_for_cerebrium_route,
 )
 
 
@@ -340,6 +341,41 @@ class TestCerebriumPreflight:
         result = provider.preflight(req)
         gpu_check = [c for c in result.checks if c.name == "gpu_supported"][0]
         assert not gpu_check.passed
+
+
+# ---------------------------------------------------------------------------
+# _wait_for_cerebrium_route() tests
+# ---------------------------------------------------------------------------
+
+class TestWaitForCerebriumRoute:
+    @patch("tuna.providers.cerebrium_provider.time.sleep")
+    @patch("tuna.providers.cerebrium_provider.requests.get")
+    def test_returns_immediately_on_200(self, mock_get, mock_sleep):
+        mock_get.return_value = MagicMock(status_code=200)
+        _wait_for_cerebrium_route("https://api.cerebrium.ai/v4/p/svc/health")
+        mock_get.assert_called_once()
+        mock_sleep.assert_not_called()
+
+    @patch("tuna.providers.cerebrium_provider.time.monotonic", side_effect=[0, 0, 35])
+    @patch("tuna.providers.cerebrium_provider.time.sleep")
+    @patch("tuna.providers.cerebrium_provider.requests.get")
+    def test_times_out_gracefully(self, mock_get, mock_sleep, mock_monotonic):
+        import requests as req_lib
+        mock_get.side_effect = req_lib.exceptions.ConnectionError("connection refused")
+        # Should not raise — just log a warning and return
+        _wait_for_cerebrium_route("https://api.cerebrium.ai/v4/p/svc/health")
+
+    @patch("tuna.providers.cerebrium_provider.time.sleep")
+    @patch("tuna.providers.cerebrium_provider.requests.get")
+    def test_retries_on_non_200(self, mock_get, mock_sleep):
+        mock_get.side_effect = [
+            MagicMock(status_code=404),
+            MagicMock(status_code=404),
+            MagicMock(status_code=200),
+        ]
+        _wait_for_cerebrium_route("https://api.cerebrium.ai/v4/p/svc/health")
+        assert mock_get.call_count == 3
+
 
 
 # ---------------------------------------------------------------------------

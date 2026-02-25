@@ -6,4 +6,4 @@ vllm serve {model} \
   --tensor-parallel-size {tp_size} \
   --disable-log-requests \
   --uvicorn-log-level info \
-  {eager_flag}
+  {eager_flag} {dtype_flag}

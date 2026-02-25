@@ -18,6 +18,7 @@ from tuna.sky_sdk import (
     serve_down,
     serve_status,
     serve_up,
+    serve_update,
     task_from_yaml_str,
 )
 from tuna.template_engine import render_template
@@ -33,11 +34,9 @@ class SkyLauncher(InferenceProvider):
     def name(self) -> str:
         return "skyserve"
 
-    def plan(self, request: DeployRequest, vllm_cmd: str) -> ProviderPlan:
-        service_name = f"{request.service_name}-spot"
+    def _render_yaml(self, request: DeployRequest, vllm_cmd: str, min_replicas: int) -> str:
+        """Render the SkyServe YAML template with the given parameters."""
         spot = request.scaling.spot
-
-        # Region block for YAML — always pin the cloud, optionally with region
         cloud = request.spots_cloud.lower()
         if request.region:
             region_block = (
@@ -52,7 +51,7 @@ class SkyLauncher(InferenceProvider):
             "port": "8001",
             "vllm_cmd": vllm_cmd,
             "vllm_version": request.vllm_version,
-            "min_replicas": str(spot.min_replicas),
+            "min_replicas": str(min_replicas),
             "max_replicas": str(spot.max_replicas),
             "target_qps": str(spot.target_qps),
             "upscale_delay": str(spot.upscale_delay),
@@ -60,15 +59,43 @@ class SkyLauncher(InferenceProvider):
             "region_block": region_block,
         }
 
-        rendered = render_template(
+        return render_template(
             str(TEMPLATES_DIR / "vllm.yaml.tpl"), replacements
         )
+
+    def plan(self, request: DeployRequest, vllm_cmd: str) -> ProviderPlan:
+        service_name = f"{request.service_name}-spot"
+
+        # Deploy with min_replicas=1 to protect the replica during boot.
+        # The autoscaler's downscale_delay can kill a PROVISIONING replica
+        # before it becomes READY (especially on GCP where Docker boot >5 min).
+        # After the replica reaches READY, enable_scale_to_zero() switches
+        # min_replicas back to 0 if the user wants scale-to-zero.
+        boot_min_replicas = max(1, request.scaling.spot.min_replicas)
+
+        rendered = self._render_yaml(request, vllm_cmd, boot_min_replicas)
 
         return ProviderPlan(
             provider=self.name(),
             rendered_script=rendered,
             metadata={"service_name": service_name},
         )
+
+    def enable_scale_to_zero(self, service_name: str, request: DeployRequest) -> None:
+        """Switch a running service from min_replicas=1 to min_replicas=0.
+
+        Re-renders the YAML template with min_replicas=0 and calls
+        ``sky serve update`` so the autoscaler allows scale-to-zero.
+        Only the ``service:`` section changes, so SkyPilot reuses
+        running replicas.
+        """
+        from tuna.orchestrator import build_vllm_cmd
+        vllm_cmd = build_vllm_cmd(request)
+
+        rendered = self._render_yaml(request, vllm_cmd, min_replicas=0)
+        task = task_from_yaml_str(rendered)
+        logger.info("Updating %s: min_replicas 1 -> 0 (enabling scale-to-zero)", service_name)
+        serve_update(task, service_name)
 
     def deploy(self, plan: ProviderPlan) -> DeploymentResult:
         service_name = plan.metadata["service_name"]

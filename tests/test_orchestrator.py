@@ -13,6 +13,7 @@ from tuna.orchestrator import (
     status_hybrid,
     _find_controller_cluster,
     _launch_router_on_controller,
+    _schedule_scale_to_zero,
     _wait_for_router,
 )
 from tuna.state import DeploymentRecord
@@ -53,6 +54,41 @@ class TestBuildVllmCmd:
         req = DeployRequest(model_name="m", gpu="g", max_model_len=8192)
         cmd = build_vllm_cmd(req)
         assert "--max-model-len 8192" in cmd
+
+    def test_t4_has_dtype_half(self):
+        req = DeployRequest(model_name="test/model", gpu="T4")
+        cmd = build_vllm_cmd(req)
+        assert "--dtype half" in cmd
+
+    def test_l4_no_dtype_flag(self):
+        req = DeployRequest(model_name="test/model", gpu="L4")
+        cmd = build_vllm_cmd(req)
+        assert "--dtype" not in cmd
+
+    def test_no_dangling_backslash_when_both_flags_empty(self):
+        """When both eager_flag and dtype_flag are empty, cmd must not end with backslash."""
+        req = DeployRequest(model_name="test/model", gpu="L4", cold_start_mode="no_fast_boot")
+        cmd = build_vllm_cmd(req)
+        assert not cmd.rstrip().endswith("\\"), f"Dangling backslash:\n{cmd}"
+
+    def test_no_dangling_backslash_when_one_flag(self):
+        """When only one flag is present, cmd must not end with backslash."""
+        req = DeployRequest(model_name="test/model", gpu="T4", cold_start_mode="no_fast_boot")
+        cmd = build_vllm_cmd(req)
+        assert "--dtype half" in cmd
+        assert not cmd.rstrip().endswith("\\")
+
+    def test_model_name_shell_injection_quoted(self):
+        """Malicious model names with shell metacharacters must be quoted."""
+        req = DeployRequest(model_name="evil; rm -rf /", gpu="L4")
+        cmd = build_vllm_cmd(req)
+        assert "'evil; rm -rf /'" in cmd
+
+    def test_model_name_subshell_injection_quoted(self):
+        """Subshell injection via $() must be quoted."""
+        req = DeployRequest(model_name="$(whoami)", gpu="L4")
+        cmd = build_vllm_cmd(req)
+        assert "'$(whoami)'" in cmd
 
 
 class TestPushUrlToRouter:
@@ -802,6 +838,170 @@ class TestCmdDeployKeyboardInterrupt:
         assert isinstance(result, HybridDeployment)
 
 
+class TestHybridDeployWarmup:
+    """Tests that _warmup_serverless is called before push_url_to_router in hybrid deploy."""
+
+    @patch("tuna.orchestrator._warmup_serverless")
+    @patch("tuna.orchestrator._wait_for_router", return_value=True)
+    @patch("tuna.orchestrator.push_url_to_router", return_value=True)
+    @patch("tuna.orchestrator._find_controller_cluster", return_value=None)
+    @patch("tuna.orchestrator._launch_router_vm")
+    @patch("tuna.orchestrator.get_provider")
+    def test_warmup_called_before_push_separate_router_vm(
+        self, mock_get_provider, mock_launch_router, mock_find_ctrl,
+        mock_push, mock_wait_router, mock_warmup,
+    ):
+        """Legacy path: _warmup_serverless must be called before push_url_to_router."""
+        call_order = []
+        mock_warmup.side_effect = lambda *a, **kw: call_order.append("warmup")
+        mock_push.side_effect = lambda *a, **kw: call_order.append("push") or True
+
+        mock_serverless = _make_mock_provider(
+            "modal", plan_metadata={"app_name": "test-svc-serverless"},
+        )
+        mock_serverless.deploy.return_value = DeploymentResult(
+            provider="modal",
+            endpoint_url="https://modal.run/abc",
+            health_url="https://modal.run/abc/health",
+            metadata={"app_name": "test-svc-serverless"},
+        )
+        mock_spot = _make_mock_provider(
+            "skyserve", plan_metadata={"service_name": "test-svc-spot"},
+        )
+        mock_get_provider.side_effect = lambda name: {
+            "modal": mock_serverless, "skyserve": mock_spot,
+        }[name]
+        mock_launch_router.return_value = DeploymentResult(
+            provider="router", endpoint_url="http://1.2.3.4:8080",
+            metadata={"cluster_name": "ctrl"},
+        )
+
+        request = DeployRequest(
+            model_name="m", gpu="g", service_name="test-svc",
+            serverless_provider="modal",
+        )
+        launch_hybrid(request, separate_router_vm=True)
+
+        mock_warmup.assert_called_once()
+        assert call_order.index("warmup") < call_order.index("push"), \
+            "warmup must be called before push_url_to_router"
+
+    @patch("tuna.orchestrator._warmup_serverless")
+    @patch("tuna.orchestrator.push_url_to_router", return_value=True)
+    @patch("tuna.orchestrator._wait_for_router", return_value=True)
+    @patch("tuna.orchestrator._launch_router_on_controller")
+    @patch("tuna.orchestrator._find_controller_cluster", return_value="sky-serve-controller-abc")
+    @patch("tuna.orchestrator.get_provider")
+    def test_warmup_called_before_push_colocate_path(
+        self, mock_get_provider, mock_find_ctrl, mock_launch_router_on_ctrl,
+        mock_wait_router, mock_push, mock_warmup,
+    ):
+        """Colocate path: _warmup_serverless fires unconditionally (even when URL was
+        pre-baked into the router at launch and push_url_to_router is skipped)."""
+        mock_serverless = _make_mock_provider(
+            "modal", plan_metadata={"app_name": "test-svc-serverless"},
+        )
+        mock_serverless.deploy.return_value = DeploymentResult(
+            provider="modal",
+            endpoint_url="https://modal.run/abc",
+            health_url="https://modal.run/abc/health",
+            metadata={"app_name": "test-svc-serverless"},
+        )
+        mock_spot = _make_mock_provider(
+            "skyserve", plan_metadata={"service_name": "test-svc-spot"},
+        )
+        mock_get_provider.side_effect = lambda name: {
+            "modal": mock_serverless, "skyserve": mock_spot,
+        }[name]
+        mock_launch_router_on_ctrl.return_value = DeploymentResult(
+            provider="router", endpoint_url="http://10.0.0.1:8080",
+            metadata={"colocated": "true", "cluster_name": "sky-serve-controller-abc"},
+        )
+
+        request = DeployRequest(
+            model_name="m", gpu="g", service_name="test-svc",
+            serverless_provider="modal",
+        )
+        launch_hybrid(request)
+
+        # Warmup must be called regardless of whether push was needed
+        mock_warmup.assert_called_once_with("https://modal.run/abc/health")
+
+    @patch("tuna.orchestrator._warmup_serverless")
+    @patch("tuna.orchestrator._wait_for_router", return_value=True)
+    @patch("tuna.orchestrator.push_url_to_router", return_value=True)
+    @patch("tuna.orchestrator._find_controller_cluster", return_value=None)
+    @patch("tuna.orchestrator._launch_router_vm")
+    @patch("tuna.orchestrator.get_provider")
+    def test_warmup_uses_health_url_when_available(
+        self, mock_get_provider, mock_launch_router, mock_find_ctrl,
+        mock_push, mock_wait_router, mock_warmup,
+    ):
+        """Warmup should prefer health_url from DeploymentResult over /health fallback."""
+        mock_serverless = _make_mock_provider(
+            "modal", plan_metadata={"app_name": "test-svc-serverless"},
+        )
+        mock_serverless.deploy.return_value = DeploymentResult(
+            provider="modal",
+            endpoint_url="https://modal.run/abc",
+            health_url="https://modal.run/abc/health",
+            metadata={"app_name": "test-svc-serverless"},
+        )
+        mock_spot = _make_mock_provider("skyserve", plan_metadata={})
+        mock_get_provider.side_effect = lambda name: {
+            "modal": mock_serverless, "skyserve": mock_spot,
+        }[name]
+        mock_launch_router.return_value = DeploymentResult(
+            provider="router", endpoint_url="http://1.2.3.4:8080",
+            metadata={"cluster_name": "ctrl"},
+        )
+
+        request = DeployRequest(
+            model_name="m", gpu="g", service_name="test-svc",
+            serverless_provider="modal",
+        )
+        launch_hybrid(request, separate_router_vm=True)
+
+        mock_warmup.assert_called_once_with("https://modal.run/abc/health")
+
+    @patch("tuna.orchestrator._warmup_serverless")
+    @patch("tuna.orchestrator._wait_for_router", return_value=True)
+    @patch("tuna.orchestrator.push_url_to_router", return_value=True)
+    @patch("tuna.orchestrator._find_controller_cluster", return_value=None)
+    @patch("tuna.orchestrator._launch_router_vm")
+    @patch("tuna.orchestrator.get_provider")
+    def test_warmup_falls_back_to_health_suffix(
+        self, mock_get_provider, mock_launch_router, mock_find_ctrl,
+        mock_push, mock_wait_router, mock_warmup,
+    ):
+        """When health_url is absent, warmup should fall back to endpoint_url + /health."""
+        mock_serverless = _make_mock_provider(
+            "modal", plan_metadata={"app_name": "test-svc-serverless"},
+        )
+        mock_serverless.deploy.return_value = DeploymentResult(
+            provider="modal",
+            endpoint_url="https://modal.run/abc",
+            health_url=None,  # no explicit health URL
+            metadata={"app_name": "test-svc-serverless"},
+        )
+        mock_spot = _make_mock_provider("skyserve", plan_metadata={})
+        mock_get_provider.side_effect = lambda name: {
+            "modal": mock_serverless, "skyserve": mock_spot,
+        }[name]
+        mock_launch_router.return_value = DeploymentResult(
+            provider="router", endpoint_url="http://1.2.3.4:8080",
+            metadata={"cluster_name": "ctrl"},
+        )
+
+        request = DeployRequest(
+            model_name="m", gpu="g", service_name="test-svc",
+            serverless_provider="modal",
+        )
+        launch_hybrid(request, separate_router_vm=True)
+
+        mock_warmup.assert_called_once_with("https://modal.run/abc/health")
+
+
 class TestWaitForRouter:
     @patch("tuna.orchestrator.requests.get")
     def test_succeeds_on_200(self, mock_get):
@@ -824,3 +1024,117 @@ class TestWaitForRouter:
         _wait_for_router("http://router:8080", router_api_key="secret", timeout=5)
         call_kwargs = mock_get.call_args
         assert call_kwargs[1]["headers"]["x-api-key"] == "secret"
+
+
+class TestScheduleScaleToZero:
+    """Tests for _schedule_scale_to_zero background thread."""
+
+    def test_returns_none_when_min_replicas_not_zero(self):
+        """When --no-scale-to-zero (min_replicas=1), no thread should be spawned."""
+        request = DeployRequest(model_name="m", gpu="g", service_name="test-svc")
+        request.scaling.spot.min_replicas = 1
+        thread = _schedule_scale_to_zero(request, "test-svc-spot")
+        assert thread is None
+
+    @patch("tuna.orchestrator.time.sleep")
+    @patch("tuna.orchestrator.serve_status")
+    def test_calls_enable_scale_to_zero_when_ready(self, mock_serve_status, mock_sleep):
+        """Thread should call enable_scale_to_zero once replica is READY."""
+        replica_info = [{"status_str": "READY"}]
+        mock_serve_status.return_value = [{"replica_info": replica_info}]
+
+        request = DeployRequest(
+            model_name="m", gpu="g", service_name="test-svc",
+            vllm_version="0.8.5",
+        )
+        request.scaling.spot.min_replicas = 0
+
+        with patch("tuna.spot.sky_launcher.SkyLauncher.enable_scale_to_zero") as mock_enable:
+            thread = _schedule_scale_to_zero(request, "test-svc-spot")
+            assert thread is not None
+            thread.join(timeout=5)
+
+            mock_enable.assert_called_once_with("test-svc-spot", request)
+
+    @patch("tuna.orchestrator.time.sleep")
+    @patch("tuna.orchestrator.serve_status")
+    def test_spawned_thread_is_daemon(self, mock_serve_status, mock_sleep):
+        """Thread should be a daemon so it doesn't block process exit."""
+        mock_serve_status.return_value = [{"replica_info": [{"status_str": "READY"}]}]
+
+        request = DeployRequest(
+            model_name="m", gpu="g", service_name="test-svc",
+            vllm_version="0.8.5",
+        )
+        request.scaling.spot.min_replicas = 0
+
+        with patch("tuna.spot.sky_launcher.serve_update"):
+            thread = _schedule_scale_to_zero(request, "test-svc-spot")
+            assert thread is not None
+            assert thread.daemon is True
+            thread.join(timeout=5)
+
+
+class TestGcpSpotDependencyCheck:
+    """Test that --spots-cloud gcp without skypilot[gcp] prints install hint and exits."""
+
+    @patch("tuna.providers.registry.ensure_provider_registered")
+    def test_gcp_spot_missing_dependency_exits(self, mock_ensure):
+        """--spots-cloud gcp without google.cloud.compute_v1 should fail fast."""
+        import argparse
+        import builtins
+        from tuna.__main__ import cmd_deploy
+
+        args = argparse.Namespace(
+            model="m", gpu="g", gpu_count=1, tp_size=1, max_model_len=4096,
+            serverless_provider="modal", spots_cloud="gcp", region=None,
+            concurrency=None, workers_max=None, no_scale_to_zero=False,
+            scaling_policy=None, service_name="test-svc", public=False,
+            use_different_vm_for_lb=False, gcp_project=None, gcp_region=None,
+            cold_start_mode="fast_boot", serverless_only=False,
+            azure_subscription=None, azure_resource_group=None,
+            azure_region=None, azure_environment=None,
+        )
+
+        original_import = builtins.__import__
+
+        def mock_import(name, *a, **kw):
+            if name == "google.cloud.compute_v1":
+                raise ImportError("No module named 'google.cloud.compute_v1'")
+            return original_import(name, *a, **kw)
+
+        with patch("builtins.__import__", side_effect=mock_import):
+            try:
+                cmd_deploy(args)
+                assert False, "Should have called sys.exit(1)"
+            except SystemExit as e:
+                assert e.code == 1
+
+    @patch("tuna.providers.registry.ensure_provider_registered")
+    def test_aws_spot_no_gcp_check(self, mock_ensure):
+        """--spots-cloud aws should not check for google.cloud.compute_v1."""
+        import argparse
+        from tuna.__main__ import cmd_deploy
+
+        args = argparse.Namespace(
+            model="m", gpu="g", gpu_count=1, tp_size=1, max_model_len=4096,
+            serverless_provider="modal", spots_cloud="aws", region=None,
+            concurrency=None, workers_max=None, no_scale_to_zero=False,
+            scaling_policy=None, service_name="test-svc", public=False,
+            use_different_vm_for_lb=False, gcp_project=None, gcp_region=None,
+            cold_start_mode="fast_boot", serverless_only=False,
+            azure_subscription=None, azure_resource_group=None,
+            azure_region=None, azure_environment=None,
+        )
+
+        # Should not exit due to GCP dep check — it will proceed to launch
+        # (and fail there, but we're only testing the dep check gate)
+        with patch("tuna.orchestrator.launch_hybrid") as mock_launch:
+            mock_launch.return_value = HybridDeployment()
+            with patch("tuna.state.save_deployment"):
+                try:
+                    cmd_deploy(args)
+                except SystemExit:
+                    pass  # total failure exit is expected
+                # The important thing: launch_hybrid was attempted (not blocked by GCP check)
+                mock_launch.assert_called_once()

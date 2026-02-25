@@ -78,6 +78,18 @@ def cmd_deploy(args: argparse.Namespace) -> None:
         print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)
 
+    # GCP spot requires skypilot[gcp] for firewall port opening
+    if args.spots_cloud == "gcp" and not args.serverless_only:
+        try:
+            import google.cloud.compute_v1  # noqa: F401 — installed by skypilot[gcp]
+        except ImportError:
+            print(
+                "Error: GCP spot requires additional dependencies.\n"
+                "Install with: pip install tandemn-tuna[gcp-spot]",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
     # Warn about flags that are ignored in serverless-only mode
     if args.serverless_only:
         ignored = []
@@ -737,9 +749,9 @@ def cmd_show_gpus(args: argparse.Namespace) -> None:
     result.spot_prices = spot_prices
 
     if gpu_filter:
-        _print_gpu_detail(gpu_filter, result, spot_prices, get_gpu_spec)
+        _print_gpu_detail(gpu_filter, result, spot_prices, get_gpu_spec, spot_cloud=args.spots_cloud)
     else:
-        _print_gpu_table(result, spot_prices, show_spot=args.spot, get_gpu_spec=get_gpu_spec)
+        _print_gpu_table(result, spot_prices, show_spot=args.spot, get_gpu_spec=get_gpu_spec, spot_cloud=args.spots_cloud)
 
 
 def _print_provider_selection(gpu: str, result, selected_provider: str) -> None:
@@ -801,10 +813,12 @@ def _spot_savings_pct(spot_price: float, serverless_prices: list[float]) -> floa
     return (cheapest - spot_price) / cheapest * 100
 
 
-def _print_gpu_detail(gpu: str, result, spot_prices: dict, get_gpu_spec) -> None:
+def _print_gpu_detail(gpu: str, result, spot_prices: dict, get_gpu_spec, spot_cloud: str = "aws") -> None:
     from rich.console import Console
     from rich.table import Table
     from rich.text import Text
+
+    spot_label = f"{spot_cloud} spot"
 
     spec = get_gpu_spec(gpu)
     console = Console()
@@ -836,8 +850,8 @@ def _print_gpu_detail(gpu: str, result, spot_prices: dict, get_gpu_spec) -> None
     if gpu in spot_prices:
         sp = spot_prices[gpu]
         extra = f"{sp.instance_type}, {sp.region}" if sp.instance_type else sp.region
-        all_prices.append(("aws spot", sp.price_per_gpu_hour))
-        table.add_row("aws spot", _format_price(sp.price_per_gpu_hour), extra)
+        all_prices.append((spot_label, sp.price_per_gpu_hour))
+        table.add_row(spot_label, _format_price(sp.price_per_gpu_hour), extra)
 
     console.print(table)
 
@@ -849,8 +863,8 @@ def _print_gpu_detail(gpu: str, result, spot_prices: dict, get_gpu_spec) -> None
         )
 
         # Show savings summary: spot vs cheapest serverless
-        serverless_only = [(p, pr) for p, pr in all_prices if p != "aws spot"]
-        spot_entry = next(((p, pr) for p, pr in all_prices if p == "aws spot"), None)
+        serverless_only = [(p, pr) for p, pr in all_prices if p != spot_label]
+        spot_entry = next(((p, pr) for p, pr in all_prices if p == spot_label), None)
         if spot_entry and serverless_only:
             cheapest_sl = min(serverless_only, key=lambda x: x[1])
             pct = _spot_savings_pct(spot_entry[1], [pr for _, pr in serverless_only])
@@ -873,10 +887,12 @@ def _print_gpu_detail(gpu: str, result, spot_prices: dict, get_gpu_spec) -> None
                     )
 
 
-def _print_gpu_table(result, spot_prices: dict, show_spot: bool, get_gpu_spec) -> None:
+def _print_gpu_table(result, spot_prices: dict, show_spot: bool, get_gpu_spec, spot_cloud: str = "aws") -> None:
     from rich.console import Console
     from rich.table import Table
     from tuna.catalog import GPU_SPECS
+
+    spot_label = f"{spot_cloud.upper()} SPOT"
 
     console = Console()
     table = Table(show_header=True, header_style="bold")
@@ -887,7 +903,7 @@ def _print_gpu_table(result, spot_prices: dict, show_spot: bool, get_gpu_spec) -
     for p in providers:
         table.add_column(p.upper(), justify="right")
     if show_spot:
-        table.add_column("AWS SPOT", justify="right")
+        table.add_column(spot_label, justify="right")
         table.add_column("SAVINGS", justify="right")
 
     # Collect all GPUs that have at least one offering
@@ -920,7 +936,7 @@ def _print_gpu_table(result, spot_prices: dict, show_spot: bool, get_gpu_spec) -
         if show_spot:
             sp = spot_prices.get(gpu)
             if sp and sp.price_per_gpu_hour > 0:
-                row_prices["aws_spot"] = sp.price_per_gpu_hour
+                row_prices["spot"] = sp.price_per_gpu_hour
 
         cheapest_price = min(row_prices.values()) if row_prices else None
 
@@ -1004,7 +1020,8 @@ def main() -> None:
     p_deploy.add_argument("--max-model-len", type=int, default=4096)
     p_deploy.add_argument("--serverless-provider", default=None,
                           help="Serverless backend: modal, runpod, cloudrun, baseten, azure, cerebrium (default: cheapest for GPU)")
-    p_deploy.add_argument("--spots-cloud", default="aws", help="Cloud for spot GPUs")
+    p_deploy.add_argument("--spots-cloud", default="aws", choices=["aws", "gcp", "azure"],
+                          help="Cloud for spot GPUs: aws, gcp, azure (default: aws)")
     p_deploy.add_argument("--region", default=None)
     p_deploy.add_argument("--concurrency", type=int, default=None,
                           help="Override serverless concurrency limit")
@@ -1075,8 +1092,8 @@ def main() -> None:
     p_gpus.add_argument("--provider", default=None, help="Filter to a specific provider")
     p_gpus.add_argument("--spot", action="store_true", default=False,
                         help="Include spot prices (requires SkyPilot)")
-    p_gpus.add_argument("--spots-cloud", default="aws",
-                        help="Cloud for spot prices: aws, azure (default: aws)")
+    p_gpus.add_argument("--spots-cloud", default="aws", choices=["aws", "gcp", "azure"],
+                        help="Cloud for spot prices: aws, gcp, azure (default: aws)")
     p_gpus.set_defaults(func=cmd_show_gpus)
 
     # -- cost --

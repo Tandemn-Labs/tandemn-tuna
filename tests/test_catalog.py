@@ -13,7 +13,9 @@ from tuna.catalog import (
     ProviderGpu,
     SpotPrice,
     fetch_spot_prices,
+    get_dtype_flag,
     get_gpu_spec,
+    get_vllm_dtype_flag,
     normalize_gpu_name,
     provider_gpu_id,
     provider_gpu_map,
@@ -243,3 +245,52 @@ class TestFetchSpotPrices:
         result = fetch_spot_prices(cloud="aws")
 
         assert "A100_80GB" not in result
+
+    @patch("sky.catalog.list_accelerators")
+    def test_returns_gcp_spot_prices(self, mock_list):
+        mock_info = MagicMock()
+        mock_info.accelerator_count = 1
+        mock_info.spot_price = 0.16
+        mock_info.instance_type = "n1-standard-4"
+        mock_info.region = "me-west1"
+
+        mock_list.return_value = {"T4": [mock_info]}
+
+        result = fetch_spot_prices(cloud="gcp")
+
+        assert "T4" in result
+        assert result["T4"].price_per_gpu_hour == 0.16
+        assert result["T4"].cloud == "gcp"
+        assert result["T4"].region == "me-west1"
+
+        mock_list.assert_called_once_with(
+            gpus_only=True,
+            clouds="gcp",
+            all_regions=False,
+            require_price=True,
+        )
+
+
+class TestGetDtypeFlag:
+    def test_t4_needs_half(self):
+        assert get_dtype_flag("T4") == "half"
+
+    def test_l4_uses_auto(self):
+        assert get_dtype_flag("L4") == ""
+
+    def test_h100_uses_auto(self):
+        assert get_dtype_flag("H100") == ""
+
+    def test_a100_80gb_uses_auto(self):
+        assert get_dtype_flag("A100_80GB") == ""
+
+    def test_unknown_gpu_uses_auto(self):
+        assert get_dtype_flag("UNKNOWN") == ""
+
+
+class TestGetVllmDtypeFlag:
+    def test_t4_returns_flag(self):
+        assert get_vllm_dtype_flag("T4") == "--dtype half"
+
+    def test_l4_returns_empty(self):
+        assert get_vllm_dtype_flag("L4") == ""

@@ -39,6 +39,7 @@ modal = ["modal>=0.73"]
 baseten = ["truss>=0.9"]
 azure = ["azure-mgmt-appcontainers>=4.0", "azure-identity>=1.15"]
 cerebrium = ["cerebrium"]
+gcp-spot = ["skypilot[gcp]>=0.11,<0.12"]
 all = [
     "google-cloud-run>=0.10.0",
     "modal>=0.73",
@@ -46,6 +47,7 @@ all = [
     "azure-mgmt-appcontainers>=4.0",
     "azure-identity>=1.15",
     "cerebrium",
+    "skypilot[gcp]>=0.11,<0.12",
 ]
 
 [project.scripts]

@@ -37,6 +37,13 @@ class TestSkyLauncherPlan:
             "--disable-log-requests --uvicorn-log-level info --enforce-eager"
         )
 
+    def test_plan_boot_protection_min_replicas_1(self):
+        """plan() should override min_replicas to 1 to protect replica during boot."""
+        self.request.scaling.spot.min_replicas = 0
+        plan = self.launcher.plan(self.request, self.vllm_cmd)
+        parsed = yaml.safe_load(plan.rendered_script)
+        assert parsed["service"]["replica_policy"]["min_replicas"] == 1
+
     def test_plan_provider(self):
         plan = self.launcher.plan(self.request, self.vllm_cmd)
         assert plan.provider == "skyserve"
@@ -62,10 +69,11 @@ class TestSkyLauncherPlan:
         parsed = yaml.safe_load(plan.rendered_script)
         assert parsed["resources"]["use_spot"] is True
 
-    def test_plan_scale_to_zero(self):
+    def test_plan_default_deploys_with_min_replicas_1(self):
+        """Default scaling (min_replicas=0) still deploys with 1 for boot protection."""
         plan = self.launcher.plan(self.request, self.vllm_cmd)
         parsed = yaml.safe_load(plan.rendered_script)
-        assert parsed["service"]["replica_policy"]["min_replicas"] == 0
+        assert parsed["service"]["replica_policy"]["min_replicas"] == 1
 
     def test_plan_no_scale_to_zero(self):
         self.request.scaling.spot.min_replicas = 1
@@ -111,6 +119,35 @@ class TestSkyLauncherPlan:
         plan = self.launcher.plan(self.request, self.vllm_cmd)
         parsed = yaml.safe_load(plan.rendered_script)
         assert "L40S:4" in parsed["resources"]["accelerators"]
+
+    def test_plan_uses_docker_image(self):
+        """Template should use Docker image instead of pip install."""
+        plan = self.launcher.plan(self.request, self.vllm_cmd)
+        parsed = yaml.safe_load(plan.rendered_script)
+        assert "image_id" in parsed["resources"]
+        assert parsed["resources"]["image_id"].startswith("docker:vllm/vllm-openai:v")
+
+    def test_plan_no_setup_block(self):
+        """Docker image replaces setup — no setup block in YAML."""
+        plan = self.launcher.plan(self.request, self.vllm_cmd)
+        assert "pip install" not in plan.rendered_script
+        assert "setup:" not in plan.rendered_script
+
+    def test_plan_gcp_cloud(self):
+        """GCP cloud should be set correctly when no region specified."""
+        self.request.spots_cloud = "gcp"
+        self.request.region = None
+        plan = self.launcher.plan(self.request, self.vllm_cmd)
+        parsed = yaml.safe_load(plan.rendered_script)
+        assert parsed["resources"]["cloud"] == "gcp"
+
+    def test_plan_gcp_with_region(self):
+        """GCP region should use infra: gcp/{region} format."""
+        self.request.spots_cloud = "gcp"
+        self.request.region = "me-west1"
+        plan = self.launcher.plan(self.request, self.vllm_cmd)
+        parsed = yaml.safe_load(plan.rendered_script)
+        assert parsed["resources"]["any_of"][0]["infra"] == "gcp/me-west1"
 
 
 class TestSkyLauncherDeploy:
@@ -263,3 +300,36 @@ class TestSkyLauncherStatus:
 
         assert "error" in result
         assert "oops" in result["error"]
+
+
+class TestEnableScaleToZero:
+    def setup_method(self):
+        self.launcher = SkyLauncher()
+        self.request = DeployRequest(
+            model_name="Qwen/Qwen3-0.6B",
+            gpu="L40S",
+            service_name="test-svc",
+            vllm_version="0.8.5",
+        )
+
+    @patch("tuna.spot.sky_launcher.serve_update")
+    @patch("tuna.spot.sky_launcher.task_from_yaml_str")
+    def test_renders_min_replicas_0(self, mock_task, mock_serve_update):
+        """enable_scale_to_zero() should render YAML with min_replicas=0."""
+        self.launcher.enable_scale_to_zero("test-svc-spot", self.request)
+
+        # Check the YAML passed to task_from_yaml_str
+        yaml_str = mock_task.call_args[0][0]
+        parsed = yaml.safe_load(yaml_str)
+        assert parsed["service"]["replica_policy"]["min_replicas"] == 0
+
+    @patch("tuna.spot.sky_launcher.serve_update")
+    @patch("tuna.spot.sky_launcher.task_from_yaml_str")
+    def test_calls_serve_update(self, mock_task, mock_serve_update):
+        """enable_scale_to_zero() should call serve_update with correct service name."""
+        mock_task.return_value = MagicMock()
+        self.launcher.enable_scale_to_zero("test-svc-spot", self.request)
+
+        mock_serve_update.assert_called_once_with(
+            mock_task.return_value, "test-svc-spot"
+        )

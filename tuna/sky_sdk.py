@@ -23,6 +23,18 @@ def serve_up(
     return sky.get(req)
 
 
+def serve_update(
+    task: sky.Task | sky.Dag,
+    service_name: str,
+    mode=None,
+) -> None:
+    """Update a running SkyServe service with a new task config."""
+    if mode is None:
+        mode = sky.serve.UpdateMode.ROLLING
+    req = sky.serve.update(task, service_name, mode)
+    sky.get(req)
+
+
 def serve_down(
     service_names: str | list[str] | None,
     purge: bool = False,

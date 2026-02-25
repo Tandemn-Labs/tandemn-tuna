@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import secrets
 import shlex
 import subprocess
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -36,19 +38,36 @@ META_LB_PATH = Path(__file__).resolve().parent / "router" / "meta_lb.py"
 
 def build_vllm_cmd(request: DeployRequest, port: str = "8001") -> str:
     """Render the shared vLLM command from the template."""
+    import shlex
+    from tuna.catalog import get_vllm_dtype_flag
+
     eager_flag = "--enforce-eager" if request.cold_start_mode == "fast_boot" else ""
+    dtype_flag = get_vllm_dtype_flag(request.gpu)
 
     replacements = {
-        "model": request.model_name,
+        "model": shlex.quote(request.model_name),
         "host": "0.0.0.0",
         "port": port,
         "max_model_len": str(request.max_model_len),
         "tp_size": str(request.tp_size),
         "eager_flag": eager_flag,
+        "dtype_flag": dtype_flag,
     }
-    return render_template(
+    cmd = render_template(
         str(TEMPLATES_DIR / "vllm_serve_cmd.txt"), replacements
     )
+    # Clean up: remove empty lines and dangling continuation characters
+    lines = cmd.split('\n')
+    cleaned = []
+    for line in lines:
+        stripped = line.rstrip()
+        if not stripped:
+            continue
+        cleaned.append(stripped)
+    # Remove trailing backslash from last line
+    if cleaned and cleaned[-1].endswith('\\'):
+        cleaned[-1] = cleaned[-1][:-1].rstrip()
+    return '\n'.join(cleaned)
 
 
 def _launch_router_vm(request: DeployRequest, router_api_key: str = "") -> DeploymentResult:
@@ -328,6 +347,42 @@ def push_url_to_router(
     return False
 
 
+def _schedule_scale_to_zero(request: DeployRequest, service_name: str) -> threading.Thread | None:
+    """Spawn a daemon thread that waits for the spot replica to reach READY,
+    then switches min_replicas from 1 to 0 to enable scale-to-zero.
+
+    Returns the thread (for testing) or None if scale-to-zero is disabled.
+    """
+    if request.scaling.spot.min_replicas != 0:
+        return None
+
+    def _worker():
+        max_polls = 120  # 120 × 30s = 60 min
+        for _ in range(max_polls):
+            try:
+                statuses = serve_status(service_name)
+                if statuses:
+                    replicas = statuses[0].get("replica_info", [])
+                    if any(r.get("status_str") == "READY" or
+                           (hasattr(r.get("status"), "name") and r["status"].name == "READY")
+                           for r in replicas):
+                        logger.info(
+                            "Spot replica READY — enabling scale-to-zero for %s",
+                            service_name,
+                        )
+                        from tuna.spot.sky_launcher import SkyLauncher
+                        SkyLauncher().enable_scale_to_zero(service_name, request)
+                        return
+            except Exception as e:
+                logger.debug("Scale-to-zero poll error: %s", e)
+            time.sleep(30)
+        logger.warning("Timed out waiting for spot replica READY on %s", service_name)
+
+    thread = threading.Thread(target=_worker, name="scale-to-zero", daemon=True)
+    thread.start()
+    return thread
+
+
 def launch_hybrid(request: DeployRequest, *, separate_router_vm: bool = False) -> HybridDeployment:
     """Deploy the full hybrid stack.
 
@@ -444,6 +499,8 @@ def launch_hybrid(request: DeployRequest, *, separate_router_vm: bool = False) -
                 )
 
             if router_url and serverless_result and serverless_result.endpoint_url:
+                health_url = serverless_result.health_url or f"{serverless_result.endpoint_url}/health"
+                _warmup_serverless(health_url)
                 logger.info("Pushing serverless URL to router: %s", serverless_result.endpoint_url)
                 push_url_to_router(
                     router_url,
@@ -467,6 +524,11 @@ def launch_hybrid(request: DeployRequest, *, separate_router_vm: bool = False) -
                 push_url_to_router(router_url, spot_url=spot_result.endpoint_url, router_api_key=_router_api_key)
             elif spot_result and spot_result.error:
                 logger.warning("Spot deployment issue: %s", spot_result.error)
+
+            # Schedule background scale-to-zero after spot boots
+            if spot_result and not spot_result.error:
+                spot_svc_name = _spot_meta.get("service_name", f"{request.service_name}-spot")
+                _schedule_scale_to_zero(request, spot_svc_name)
         finally:
             pool.shutdown(wait=True)
 
@@ -543,6 +605,12 @@ def launch_hybrid(request: DeployRequest, *, separate_router_vm: bool = False) -
                     metadata=dict(_serverless_meta),
                 )
 
+        # Warm up serverless endpoint before routing any traffic to it — regardless
+        # of whether the URL was already baked in at router launch or needs pushing now.
+        if serverless_result and serverless_result.endpoint_url:
+            health_url = serverless_result.health_url or f"{serverless_result.endpoint_url}/health"
+            _warmup_serverless(health_url)
+
         # Push serverless URL if router is up and serverless wasn't baked in at launch
         if (router_url and serverless_result and serverless_result.endpoint_url
                 and serverless_result.endpoint_url != serverless_url):
@@ -559,6 +627,11 @@ def launch_hybrid(request: DeployRequest, *, separate_router_vm: bool = False) -
                 and router_result.metadata.get("colocated") != "true"):
             logger.info("Pushing spot URL to router: %s", spot_result.endpoint_url)
             push_url_to_router(router_url, spot_url=spot_result.endpoint_url, router_api_key=_router_api_key)
+
+        # Schedule background scale-to-zero after spot boots
+        if spot_result and not spot_result.error:
+            spot_svc_name = _spot_meta.get("service_name", f"{request.service_name}-spot")
+            _schedule_scale_to_zero(request, spot_svc_name)
     finally:
         pool.shutdown(wait=True)
 
