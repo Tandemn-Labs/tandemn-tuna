@@ -12,6 +12,7 @@ from tuna.providers.cerebrium_provider import (
     CerebriumProvider,
     _get_project_id,
     _GPU_RESOURCES,
+    _wait_for_cerebrium_route,
 )
 
 
@@ -343,6 +344,64 @@ class TestCerebriumPreflight:
 
 
 # ---------------------------------------------------------------------------
+# _wait_for_cerebrium_route() tests
+# ---------------------------------------------------------------------------
+
+class TestWaitForCerebriumRoute:
+    @patch("tuna.providers.cerebrium_provider.time.sleep")
+    @patch("tuna.providers.cerebrium_provider.requests.get")
+    def test_returns_immediately_on_200(self, mock_get, mock_sleep):
+        mock_get.return_value = MagicMock(status_code=200)
+        _wait_for_cerebrium_route("https://api.cerebrium.ai/v4/p/svc/health")
+        mock_get.assert_called_once()
+        mock_sleep.assert_not_called()
+
+    @patch("tuna.providers.cerebrium_provider.time.monotonic", side_effect=[0, 0, 35])
+    @patch("tuna.providers.cerebrium_provider.time.sleep")
+    @patch("tuna.providers.cerebrium_provider.requests.get")
+    def test_times_out_gracefully(self, mock_get, mock_sleep, mock_monotonic):
+        import requests as req_lib
+        mock_get.side_effect = req_lib.exceptions.ConnectionError("connection refused")
+        # Should not raise — just log a warning and return
+        _wait_for_cerebrium_route("https://api.cerebrium.ai/v4/p/svc/health")
+
+    @patch("tuna.providers.cerebrium_provider.time.sleep")
+    @patch("tuna.providers.cerebrium_provider.requests.get")
+    def test_retries_on_non_200(self, mock_get, mock_sleep):
+        mock_get.side_effect = [
+            MagicMock(status_code=404),
+            MagicMock(status_code=404),
+            MagicMock(status_code=200),
+        ]
+        _wait_for_cerebrium_route("https://api.cerebrium.ai/v4/p/svc/health")
+        assert mock_get.call_count == 3
+
+    @patch("tuna.providers.cerebrium_provider.time.sleep")
+    @patch("tuna.providers.cerebrium_provider.requests.get")
+    def test_deploy_calls_wait_for_cerebrium_route(self, mock_get, mock_sleep):
+        """deploy() calls _wait_for_cerebrium_route when health_url is present."""
+        mock_get.return_value = MagicMock(status_code=200)
+        with (
+            patch.dict("os.environ", {"CEREBRIUM_API_KEY": "ck-test"}),
+            patch("tuna.providers.cerebrium_provider._get_project_id", return_value="proj-123"),
+            patch("tuna.providers.cerebrium_provider.subprocess.run") as mock_run,
+            patch("tuna.providers.cerebrium_provider._wait_for_cerebrium_route") as mock_wait,
+        ):
+            mock_run.return_value = MagicMock(returncode=0, stdout="OK", stderr="")
+            provider = CerebriumProvider()
+            plan = ProviderPlan(
+                provider="cerebrium",
+                rendered_script='[cerebrium.deployment]\nname = "svc"\n',
+                env={},
+                metadata={"service_name": "svc", "region": "us-east-1", "project_id": "proj-123"},
+            )
+            result = provider.deploy(plan)
+            mock_wait.assert_called_once()
+            assert result.health_url is not None
+            assert mock_wait.call_args[0][0] == result.health_url
+
+
+# ---------------------------------------------------------------------------
 # deploy() tests
 # ---------------------------------------------------------------------------
 
@@ -363,9 +422,10 @@ class TestCerebriumDeploy:
         )
 
     @patch.dict("os.environ", {"CEREBRIUM_API_KEY": "ck-test"})
+    @patch("tuna.providers.cerebrium_provider._wait_for_cerebrium_route")
     @patch("tuna.providers.cerebrium_provider._get_project_id", return_value="proj-123")
     @patch("tuna.providers.cerebrium_provider.subprocess.run")
-    def test_deploy_success_with_url_in_output(self, mock_run, mock_pid, provider):
+    def test_deploy_success_with_url_in_output(self, mock_run, mock_pid, mock_wait, provider):
         mock_run.return_value = MagicMock(
             returncode=0,
             stdout=(
@@ -387,9 +447,10 @@ class TestCerebriumDeploy:
         assert result.health_url.endswith("/health")
 
     @patch.dict("os.environ", {"CEREBRIUM_API_KEY": "ck-test"})
+    @patch("tuna.providers.cerebrium_provider._wait_for_cerebrium_route")
     @patch("tuna.providers.cerebrium_provider._get_project_id", return_value="proj-123")
     @patch("tuna.providers.cerebrium_provider.subprocess.run")
-    def test_deploy_success_fallback_url(self, mock_run, mock_pid, provider):
+    def test_deploy_success_fallback_url(self, mock_run, mock_pid, mock_wait, provider):
         mock_run.return_value = MagicMock(
             returncode=0,
             stdout="Deployed successfully",

@@ -8,7 +8,10 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 from pathlib import Path
+
+import requests
 
 from tuna.catalog import provider_gpu_id, provider_gpu_map
 from tuna.models import (
@@ -61,6 +64,36 @@ def _get_project_id() -> str | None:
     except Exception:
         pass
     return None
+
+
+_CEREBRIUM_PROPAGATION_TIMEOUT = 30
+_CEREBRIUM_POLL_INTERVAL = 2
+
+
+def _wait_for_cerebrium_route(health_url: str) -> None:
+    """Poll health_url until 200 or timeout.
+
+    Cerebrium has a 5-10s propagation delay between the control plane
+    (deploy CLI exits) and the data plane (Envoy route is live). This
+    prevents 404s in the orchestrator when the URL is pushed to the router
+    immediately after deploy returns.
+    """
+    deadline = time.monotonic() + _CEREBRIUM_PROPAGATION_TIMEOUT
+    while time.monotonic() < deadline:
+        try:
+            resp = requests.get(health_url, timeout=5)
+            if resp.status_code == 200:
+                logger.info("Cerebrium endpoint routable: %s", health_url)
+                return
+        except requests.exceptions.RequestException:
+            pass
+        time.sleep(_CEREBRIUM_POLL_INTERVAL)
+    logger.warning(
+        "Cerebrium endpoint %s did not become routable within %ds — "
+        "proceeding anyway; warmup in orchestrator will handle it.",
+        health_url,
+        _CEREBRIUM_PROPAGATION_TIMEOUT,
+    )
 
 
 class CerebriumProvider(InferenceProvider):
@@ -335,6 +368,11 @@ class CerebriumProvider(InferenceProvider):
                 "Could not determine Cerebrium project_id — endpoint URL unknown. "
                 "Check ~/.cerebrium/config.yaml or the Cerebrium dashboard."
             )
+
+        # Defense-in-depth: Cerebrium has a 5-10s propagation delay between the
+        # control plane (deploy exits) and the data plane (route is live).
+        if health_url:
+            _wait_for_cerebrium_route(health_url)
 
         logger.info("Cerebrium app %s deployed at %s", service_name, endpoint_url)
         return DeploymentResult(

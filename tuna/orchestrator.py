@@ -451,6 +451,8 @@ def launch_hybrid(request: DeployRequest, *, separate_router_vm: bool = False) -
                 )
 
             if router_url and serverless_result and serverless_result.endpoint_url:
+                health_url = serverless_result.health_url or f"{serverless_result.endpoint_url}/health"
+                _warmup_serverless(health_url)
                 logger.info("Pushing serverless URL to router: %s", serverless_result.endpoint_url)
                 push_url_to_router(
                     router_url,
@@ -549,6 +551,12 @@ def launch_hybrid(request: DeployRequest, *, separate_router_vm: bool = False) -
                     error=str(e),
                     metadata=dict(_serverless_meta),
                 )
+
+        # Warm up serverless endpoint before routing any traffic to it — regardless
+        # of whether the URL was already baked in at router launch or needs pushing now.
+        if serverless_result and serverless_result.endpoint_url:
+            health_url = serverless_result.health_url or f"{serverless_result.endpoint_url}/health"
+            _warmup_serverless(health_url)
 
         # Push serverless URL if router is up and serverless wasn't baked in at launch
         if (router_url and serverless_result and serverless_result.endpoint_url
