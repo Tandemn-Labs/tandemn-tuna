@@ -369,11 +369,6 @@ class CerebriumProvider(InferenceProvider):
                 "Check ~/.cerebrium/config.yaml or the Cerebrium dashboard."
             )
 
-        # Defense-in-depth: Cerebrium has a 5-10s propagation delay between the
-        # control plane (deploy exits) and the data plane (route is live).
-        if health_url:
-            _wait_for_cerebrium_route(health_url)
-
         logger.info("Cerebrium app %s deployed at %s", service_name, endpoint_url)
         return DeploymentResult(
             provider=self.name(),

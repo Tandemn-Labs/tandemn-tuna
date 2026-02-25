@@ -1008,8 +1008,8 @@ def main() -> None:
     p_deploy.add_argument("--max-model-len", type=int, default=4096)
     p_deploy.add_argument("--serverless-provider", default=None,
                           help="Serverless backend: modal, runpod, cloudrun, baseten, azure, cerebrium (default: cheapest for GPU)")
-    p_deploy.add_argument("--spots-cloud", default="aws",
-                          help="Cloud for spot GPUs: aws, gcp (default: aws)")
+    p_deploy.add_argument("--spots-cloud", default="aws", choices=["aws", "gcp", "azure"],
+                          help="Cloud for spot GPUs: aws, gcp, azure (default: aws)")
     p_deploy.add_argument("--region", default=None)
     p_deploy.add_argument("--concurrency", type=int, default=None,
                           help="Override serverless concurrency limit")
@@ -1080,7 +1080,7 @@ def main() -> None:
     p_gpus.add_argument("--provider", default=None, help="Filter to a specific provider")
     p_gpus.add_argument("--spot", action="store_true", default=False,
                         help="Include spot prices (requires SkyPilot)")
-    p_gpus.add_argument("--spots-cloud", default="aws",
+    p_gpus.add_argument("--spots-cloud", default="aws", choices=["aws", "gcp", "azure"],
                         help="Cloud for spot prices: aws, gcp, azure (default: aws)")
     p_gpus.set_defaults(func=cmd_show_gpus)
 
