@@ -262,6 +262,14 @@ def provider_regions(gpu: str, provider: str) -> tuple[str, ...]:
     return ()
 
 
+def _quiet_list_accelerators(sky_catalog, **kwargs):
+    """Call sky_catalog.list_accelerators suppressing SkyPilot console output."""
+    import contextlib
+    import io as _io
+    with contextlib.redirect_stdout(_io.StringIO()):
+        return sky_catalog.list_accelerators(**kwargs)
+
+
 def fetch_spot_prices(cloud: str = "aws") -> dict[str, SpotPrice]:
     """Fetch live spot prices from SkyPilot catalog.
 
@@ -278,7 +286,8 @@ def fetch_spot_prices(cloud: str = "aws") -> dict[str, SpotPrice]:
     reverse_map = {v: k for k, v in _SKYPILOT_GPU_NAME_MAP.items()}
 
     try:
-        results = sky_catalog.list_accelerators(
+        results = _quiet_list_accelerators(
+            sky_catalog,
             gpus_only=True,
             clouds=cloud,
             all_regions=False,
@@ -326,7 +335,8 @@ def fetch_on_demand_prices(cloud: str = "aws") -> dict[str, OnDemandPrice]:
     reverse_map = {v: k for k, v in _SKYPILOT_GPU_NAME_MAP.items()}
 
     try:
-        results = sky_catalog.list_accelerators(
+        results = _quiet_list_accelerators(
+            sky_catalog,
             gpus_only=True,
             clouds=cloud,
             all_regions=False,
