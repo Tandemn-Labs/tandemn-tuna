@@ -78,6 +78,18 @@ def cmd_deploy(args: argparse.Namespace) -> None:
         print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)
 
+    # GCP spot requires skypilot[gcp] for firewall port opening
+    if args.spots_cloud == "gcp" and not args.serverless_only:
+        try:
+            import google.cloud.compute_v1  # noqa: F401 — installed by skypilot[gcp]
+        except ImportError:
+            print(
+                "Error: GCP spot requires additional dependencies.\n"
+                "Install with: pip install tandemn-tuna[gcp-spot]",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
     # Warn about flags that are ignored in serverless-only mode
     if args.serverless_only:
         ignored = []

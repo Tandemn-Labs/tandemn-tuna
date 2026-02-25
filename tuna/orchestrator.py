@@ -8,6 +8,7 @@ import re
 import secrets
 import shlex
 import subprocess
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -335,6 +336,42 @@ def push_url_to_router(
     return False
 
 
+def _schedule_scale_to_zero(request: DeployRequest, service_name: str) -> threading.Thread | None:
+    """Spawn a daemon thread that waits for the spot replica to reach READY,
+    then switches min_replicas from 1 to 0 to enable scale-to-zero.
+
+    Returns the thread (for testing) or None if scale-to-zero is disabled.
+    """
+    if request.scaling.spot.min_replicas != 0:
+        return None
+
+    def _worker():
+        max_polls = 120  # 120 × 30s = 60 min
+        for _ in range(max_polls):
+            try:
+                statuses = serve_status(service_name)
+                if statuses:
+                    replicas = statuses[0].get("replica_info", [])
+                    if any(r.get("status_str") == "READY" or
+                           (hasattr(r.get("status"), "name") and r["status"].name == "READY")
+                           for r in replicas):
+                        logger.info(
+                            "Spot replica READY — enabling scale-to-zero for %s",
+                            service_name,
+                        )
+                        from tuna.spot.sky_launcher import SkyLauncher
+                        SkyLauncher().enable_scale_to_zero(service_name, request)
+                        return
+            except Exception as e:
+                logger.debug("Scale-to-zero poll error: %s", e)
+            time.sleep(30)
+        logger.warning("Timed out waiting for spot replica READY on %s", service_name)
+
+    thread = threading.Thread(target=_worker, name="scale-to-zero", daemon=True)
+    thread.start()
+    return thread
+
+
 def launch_hybrid(request: DeployRequest, *, separate_router_vm: bool = False) -> HybridDeployment:
     """Deploy the full hybrid stack.
 
@@ -476,6 +513,11 @@ def launch_hybrid(request: DeployRequest, *, separate_router_vm: bool = False) -
                 push_url_to_router(router_url, spot_url=spot_result.endpoint_url, router_api_key=_router_api_key)
             elif spot_result and spot_result.error:
                 logger.warning("Spot deployment issue: %s", spot_result.error)
+
+            # Schedule background scale-to-zero after spot boots
+            if spot_result and not spot_result.error:
+                spot_svc_name = _spot_meta.get("service_name", f"{request.service_name}-spot")
+                _schedule_scale_to_zero(request, spot_svc_name)
         finally:
             pool.shutdown(wait=True)
 
@@ -574,6 +616,11 @@ def launch_hybrid(request: DeployRequest, *, separate_router_vm: bool = False) -
                 and router_result.metadata.get("colocated") != "true"):
             logger.info("Pushing spot URL to router: %s", spot_result.endpoint_url)
             push_url_to_router(router_url, spot_url=spot_result.endpoint_url, router_api_key=_router_api_key)
+
+        # Schedule background scale-to-zero after spot boots
+        if spot_result and not spot_result.error:
+            spot_svc_name = _spot_meta.get("service_name", f"{request.service_name}-spot")
+            _schedule_scale_to_zero(request, spot_svc_name)
     finally:
         pool.shutdown(wait=True)
 

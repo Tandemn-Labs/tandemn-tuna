@@ -26,6 +26,7 @@ _INSTALL_HINTS: dict[str, str] = {
     "baseten": "pip install tandemn-tuna[baseten]",
     "azure": "pip install tandemn-tuna[azure]",
     "cerebrium": "pip install tandemn-tuna[cerebrium]",
+    "gcp-spot": "pip install tandemn-tuna[gcp-spot]",
 }
 
 

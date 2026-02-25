@@ -13,6 +13,7 @@ from tuna.orchestrator import (
     status_hybrid,
     _find_controller_cluster,
     _launch_router_on_controller,
+    _schedule_scale_to_zero,
     _wait_for_router,
 )
 from tuna.state import DeploymentRecord
@@ -998,3 +999,117 @@ class TestWaitForRouter:
         _wait_for_router("http://router:8080", router_api_key="secret", timeout=5)
         call_kwargs = mock_get.call_args
         assert call_kwargs[1]["headers"]["x-api-key"] == "secret"
+
+
+class TestScheduleScaleToZero:
+    """Tests for _schedule_scale_to_zero background thread."""
+
+    def test_returns_none_when_min_replicas_not_zero(self):
+        """When --no-scale-to-zero (min_replicas=1), no thread should be spawned."""
+        request = DeployRequest(model_name="m", gpu="g", service_name="test-svc")
+        request.scaling.spot.min_replicas = 1
+        thread = _schedule_scale_to_zero(request, "test-svc-spot")
+        assert thread is None
+
+    @patch("tuna.orchestrator.time.sleep")
+    @patch("tuna.orchestrator.serve_status")
+    def test_calls_enable_scale_to_zero_when_ready(self, mock_serve_status, mock_sleep):
+        """Thread should call enable_scale_to_zero once replica is READY."""
+        replica_info = [{"status_str": "READY"}]
+        mock_serve_status.return_value = [{"replica_info": replica_info}]
+
+        request = DeployRequest(
+            model_name="m", gpu="g", service_name="test-svc",
+            vllm_version="0.8.5",
+        )
+        request.scaling.spot.min_replicas = 0
+
+        with patch("tuna.spot.sky_launcher.SkyLauncher.enable_scale_to_zero") as mock_enable:
+            thread = _schedule_scale_to_zero(request, "test-svc-spot")
+            assert thread is not None
+            thread.join(timeout=5)
+
+            mock_enable.assert_called_once_with("test-svc-spot", request)
+
+    @patch("tuna.orchestrator.time.sleep")
+    @patch("tuna.orchestrator.serve_status")
+    def test_spawned_thread_is_daemon(self, mock_serve_status, mock_sleep):
+        """Thread should be a daemon so it doesn't block process exit."""
+        mock_serve_status.return_value = [{"replica_info": [{"status_str": "READY"}]}]
+
+        request = DeployRequest(
+            model_name="m", gpu="g", service_name="test-svc",
+            vllm_version="0.8.5",
+        )
+        request.scaling.spot.min_replicas = 0
+
+        with patch("tuna.spot.sky_launcher.serve_update"):
+            thread = _schedule_scale_to_zero(request, "test-svc-spot")
+            assert thread is not None
+            assert thread.daemon is True
+            thread.join(timeout=5)
+
+
+class TestGcpSpotDependencyCheck:
+    """Test that --spots-cloud gcp without skypilot[gcp] prints install hint and exits."""
+
+    @patch("tuna.providers.registry.ensure_provider_registered")
+    def test_gcp_spot_missing_dependency_exits(self, mock_ensure):
+        """--spots-cloud gcp without google.cloud.compute_v1 should fail fast."""
+        import argparse
+        import builtins
+        from tuna.__main__ import cmd_deploy
+
+        args = argparse.Namespace(
+            model="m", gpu="g", gpu_count=1, tp_size=1, max_model_len=4096,
+            serverless_provider="modal", spots_cloud="gcp", region=None,
+            concurrency=None, workers_max=None, no_scale_to_zero=False,
+            scaling_policy=None, service_name="test-svc", public=False,
+            use_different_vm_for_lb=False, gcp_project=None, gcp_region=None,
+            cold_start_mode="fast_boot", serverless_only=False,
+            azure_subscription=None, azure_resource_group=None,
+            azure_region=None, azure_environment=None,
+        )
+
+        original_import = builtins.__import__
+
+        def mock_import(name, *a, **kw):
+            if name == "google.cloud.compute_v1":
+                raise ImportError("No module named 'google.cloud.compute_v1'")
+            return original_import(name, *a, **kw)
+
+        with patch("builtins.__import__", side_effect=mock_import):
+            try:
+                cmd_deploy(args)
+                assert False, "Should have called sys.exit(1)"
+            except SystemExit as e:
+                assert e.code == 1
+
+    @patch("tuna.providers.registry.ensure_provider_registered")
+    def test_aws_spot_no_gcp_check(self, mock_ensure):
+        """--spots-cloud aws should not check for google.cloud.compute_v1."""
+        import argparse
+        from tuna.__main__ import cmd_deploy
+
+        args = argparse.Namespace(
+            model="m", gpu="g", gpu_count=1, tp_size=1, max_model_len=4096,
+            serverless_provider="modal", spots_cloud="aws", region=None,
+            concurrency=None, workers_max=None, no_scale_to_zero=False,
+            scaling_policy=None, service_name="test-svc", public=False,
+            use_different_vm_for_lb=False, gcp_project=None, gcp_region=None,
+            cold_start_mode="fast_boot", serverless_only=False,
+            azure_subscription=None, azure_resource_group=None,
+            azure_region=None, azure_environment=None,
+        )
+
+        # Should not exit due to GCP dep check — it will proceed to launch
+        # (and fail there, but we're only testing the dep check gate)
+        with patch("tuna.orchestrator.launch_hybrid") as mock_launch:
+            mock_launch.return_value = HybridDeployment()
+            with patch("tuna.state.save_deployment"):
+                try:
+                    cmd_deploy(args)
+                except SystemExit:
+                    pass  # total failure exit is expected
+                # The important thing: launch_hybrid was attempted (not blocked by GCP check)
+                mock_launch.assert_called_once()
