@@ -38,13 +38,14 @@ META_LB_PATH = Path(__file__).resolve().parent / "router" / "meta_lb.py"
 
 def build_vllm_cmd(request: DeployRequest, port: str = "8001") -> str:
     """Render the shared vLLM command from the template."""
+    import shlex
     from tuna.catalog import get_vllm_dtype_flag
 
     eager_flag = "--enforce-eager" if request.cold_start_mode == "fast_boot" else ""
     dtype_flag = get_vllm_dtype_flag(request.gpu)
 
     replacements = {
-        "model": request.model_name,
+        "model": shlex.quote(request.model_name),
         "host": "0.0.0.0",
         "port": port,
         "max_model_len": str(request.max_model_len),
@@ -55,8 +56,18 @@ def build_vllm_cmd(request: DeployRequest, port: str = "8001") -> str:
     cmd = render_template(
         str(TEMPLATES_DIR / "vllm_serve_cmd.txt"), replacements
     )
-    # Clean up trailing whitespace from empty flags
-    return re.sub(r'[ \t]+$', '', cmd, flags=re.MULTILINE).rstrip()
+    # Clean up: remove empty lines and dangling continuation characters
+    lines = cmd.split('\n')
+    cleaned = []
+    for line in lines:
+        stripped = line.rstrip()
+        if not stripped:
+            continue
+        cleaned.append(stripped)
+    # Remove trailing backslash from last line
+    if cleaned and cleaned[-1].endswith('\\'):
+        cleaned[-1] = cleaned[-1][:-1].rstrip()
+    return '\n'.join(cleaned)
 
 
 def _launch_router_vm(request: DeployRequest, router_api_key: str = "") -> DeploymentResult:

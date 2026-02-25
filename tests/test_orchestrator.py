@@ -65,6 +65,31 @@ class TestBuildVllmCmd:
         cmd = build_vllm_cmd(req)
         assert "--dtype" not in cmd
 
+    def test_no_dangling_backslash_when_both_flags_empty(self):
+        """When both eager_flag and dtype_flag are empty, cmd must not end with backslash."""
+        req = DeployRequest(model_name="test/model", gpu="L4", cold_start_mode="no_fast_boot")
+        cmd = build_vllm_cmd(req)
+        assert not cmd.rstrip().endswith("\\"), f"Dangling backslash:\n{cmd}"
+
+    def test_no_dangling_backslash_when_one_flag(self):
+        """When only one flag is present, cmd must not end with backslash."""
+        req = DeployRequest(model_name="test/model", gpu="T4", cold_start_mode="no_fast_boot")
+        cmd = build_vllm_cmd(req)
+        assert "--dtype half" in cmd
+        assert not cmd.rstrip().endswith("\\")
+
+    def test_model_name_shell_injection_quoted(self):
+        """Malicious model names with shell metacharacters must be quoted."""
+        req = DeployRequest(model_name="evil; rm -rf /", gpu="L4")
+        cmd = build_vllm_cmd(req)
+        assert "'evil; rm -rf /'" in cmd
+
+    def test_model_name_subshell_injection_quoted(self):
+        """Subshell injection via $() must be quoted."""
+        req = DeployRequest(model_name="$(whoami)", gpu="L4")
+        cmd = build_vllm_cmd(req)
+        assert "'$(whoami)'" in cmd
+
 
 class TestPushUrlToRouter:
     @patch("tuna.orchestrator.requests")
