@@ -12,13 +12,14 @@ Tuna is a smart router that combines both behind a single OpenAI-compatible endp
 <table>
 <tr>
 <td align="center" colspan="3"><b>Serverless</b></td>
-<td align="center" colspan="1"><b>Spot</b></td>
+<td align="center" colspan="2"><b>Spot</b></td>
 </tr>
 <tr>
 <td align="center"><img src="https://raw.githubusercontent.com/Tandemn-Labs/tandemn-tuna/main/assets/modal-logo-icon.png" height="30"><br>Modal</td>
 <td align="center"><img src="https://raw.githubusercontent.com/Tandemn-Labs/tandemn-tuna/main/assets/runpod-logo-black.svg" height="30"><br>RunPod</td>
 <td align="center"><img src="https://raw.githubusercontent.com/Tandemn-Labs/tandemn-tuna/main/assets/google-cloud-run-logo-png_seeklogo-354677.png" height="30"><br>Cloud Run</td>
-<td align="center" rowspan="2"><img src="https://raw.githubusercontent.com/Tandemn-Labs/tandemn-tuna/main/assets/Amazon_Web_Services_Logo.svg.png" height="30"><br>AWS<br><img src="https://raw.githubusercontent.com/Tandemn-Labs/tandemn-tuna/main/assets/google-cloud-run-logo-png_seeklogo-354677.png" height="20"><br>GCP<br>via SkyPilot</td>
+<td align="center" rowspan="2"><img src="https://raw.githubusercontent.com/Tandemn-Labs/tandemn-tuna/main/assets/Amazon_Web_Services_Logo.svg.png" height="30"><br>AWS</td>
+<td align="center" rowspan="2"><img src="https://raw.githubusercontent.com/Tandemn-Labs/tandemn-tuna/main/assets/google-cloud.svg" height="30"><br>GCP</td>
 </tr>
 <tr>
 <td align="center"><img src="https://raw.githubusercontent.com/Tandemn-Labs/tandemn-tuna/main/assets/baseten.png" height="30"><br>Baseten</td>
