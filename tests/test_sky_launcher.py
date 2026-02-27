@@ -333,3 +333,55 @@ class TestEnableScaleToZero:
         mock_serve_update.assert_called_once_with(
             mock_task.return_value, "test-svc-spot"
         )
+
+
+class TestSkyLauncherByoc:
+    """Tests for BYOC mode in SkyLauncher."""
+
+    def setup_method(self):
+        self.launcher = SkyLauncher()
+        self.request = DeployRequest(
+            model_name="sam2-server",
+            gpu="T4",
+            service_name="test-svc",
+            image="choprahetarth/sam2-server:latest",
+            container_port=8080,
+        )
+
+    def test_plan_uses_byoc_template(self):
+        """BYOC plan should use the byoc.yaml.tpl template with docker run."""
+        plan = self.launcher.plan(self.request, "")
+        parsed = yaml.safe_load(plan.rendered_script)
+        assert "service" in parsed
+        assert "resources" in parsed
+        # Should use docker run in run block, not image_id
+        assert "docker run" in parsed["run"]
+        assert "choprahetarth/sam2-server:latest" in parsed["run"]
+
+    def test_plan_byoc_port(self):
+        """BYOC template should use the container_port from request."""
+        self.request.container_port = 5000
+        plan = self.launcher.plan(self.request, "")
+        parsed = yaml.safe_load(plan.rendered_script)
+        assert parsed["resources"]["ports"] == 5000
+        assert parsed["service"]["ports"] == 5000
+
+    def test_plan_byoc_service_name(self):
+        plan = self.launcher.plan(self.request, "")
+        assert plan.metadata["service_name"] == "test-svc-spot"
+
+    def test_plan_byoc_no_vllm_in_yaml(self):
+        """BYOC YAML should not contain vllm commands."""
+        plan = self.launcher.plan(self.request, "")
+        assert "vllm" not in plan.rendered_script.lower()
+
+    @patch("tuna.spot.sky_launcher.serve_update")
+    @patch("tuna.spot.sky_launcher.task_from_yaml_str")
+    def test_enable_scale_to_zero_byoc(self, mock_task, mock_serve_update):
+        """enable_scale_to_zero() should use BYOC template for BYOC requests."""
+        self.launcher.enable_scale_to_zero("test-svc-spot", self.request)
+
+        yaml_str = mock_task.call_args[0][0]
+        parsed = yaml.safe_load(yaml_str)
+        assert parsed["service"]["replica_policy"]["min_replicas"] == 0
+        assert "choprahetarth/sam2-server:latest" in parsed["run"]

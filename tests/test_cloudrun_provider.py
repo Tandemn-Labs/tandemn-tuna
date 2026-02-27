@@ -375,3 +375,60 @@ class TestCloudRunStatus:
             status = self.provider.status("test-svc")
 
         assert status["status"] == "not found"
+
+
+class TestCloudRunByocPlan:
+    """Tests for BYOC plan in CloudRunProvider."""
+
+    def setup_method(self):
+        self.provider = CloudRunProvider()
+        self.request = DeployRequest(
+            model_name="sam2-server",
+            gpu="L4",
+            gpu_count=1,
+            tp_size=1,
+            service_name="test-svc",
+            image="choprahetarth/sam2-server:latest",
+            container_port=8080,
+        )
+
+    @patch.dict("os.environ", {"GOOGLE_CLOUD_PROJECT": "test-project"})
+    def test_byoc_uses_custom_image(self):
+        plan = self.provider.plan(self.request, "")
+        assert plan.metadata["image"] == "choprahetarth/sam2-server:latest"
+
+    @patch.dict("os.environ", {"GOOGLE_CLOUD_PROJECT": "test-project"})
+    def test_byoc_uses_custom_port(self):
+        self.request.container_port = 5000
+        plan = self.provider.plan(self.request, "")
+        assert plan.metadata["container_port"] == "5000"
+
+    @patch.dict("os.environ", {"GOOGLE_CLOUD_PROJECT": "test-project"})
+    def test_byoc_empty_env(self):
+        """BYOC plan should have no vLLM env vars."""
+        plan = self.provider.plan(self.request, "")
+        assert plan.env == {}
+
+    @patch.dict("os.environ", {"GOOGLE_CLOUD_PROJECT": "test-project"})
+    def test_byoc_probe_type_http(self):
+        plan = self.provider.plan(self.request, "")
+        assert plan.metadata["probe_type"] == "http"
+
+    @patch.dict("os.environ", {"GOOGLE_CLOUD_PROJECT": "test-project"})
+    def test_byoc_container_args(self):
+        self.request.container_args = ["python", "serve.py"]
+        plan = self.provider.plan(self.request, "")
+        args = json.loads(plan.metadata["container_args"])
+        assert args == ["python", "serve.py"]
+
+    @patch.dict("os.environ", {"GOOGLE_CLOUD_PROJECT": "test-project"})
+    def test_byoc_no_container_args(self):
+        """No container_args -> empty list in metadata."""
+        plan = self.provider.plan(self.request, "")
+        args = json.loads(plan.metadata["container_args"])
+        assert args == []
+
+    @patch.dict("os.environ", {"GOOGLE_CLOUD_PROJECT": "test-project"})
+    def test_byoc_service_name(self):
+        plan = self.provider.plan(self.request, "")
+        assert plan.metadata["service_name"] == "test-svc-serverless"

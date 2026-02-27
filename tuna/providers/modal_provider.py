@@ -27,6 +27,8 @@ class ModalProvider(InferenceProvider):
         return "modal"
 
     def plan(self, request: DeployRequest, vllm_cmd: str) -> ProviderPlan:
+        if request.is_byoc:
+            raise ValueError("BYOC (--image) is not supported by Modal yet. Use --serverless-provider cloudrun.")
         app_name = f"{request.service_name}-serverless"
         is_fast_boot = request.cold_start_mode == "fast_boot"
 

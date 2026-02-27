@@ -826,6 +826,9 @@ class TestCmdDeployKeyboardInterrupt:
             scaling_policy=None, service_name="test-svc", public=False,
             use_different_vm_for_lb=False, gcp_project=None, gcp_region=None,
             cold_start_mode="fast_boot", serverless_only=False,
+            image=None, container_port=8080, container_args=None,
+            azure_subscription=None, azure_resource_group=None,
+            azure_region=None, azure_environment=None,
         )
 
         try:
@@ -1094,6 +1097,7 @@ class TestGcpSpotDependencyCheck:
             cold_start_mode="fast_boot", serverless_only=False,
             azure_subscription=None, azure_resource_group=None,
             azure_region=None, azure_environment=None,
+            image=None, container_port=8080, container_args=None,
         )
 
         original_import = builtins.__import__
@@ -1125,6 +1129,7 @@ class TestGcpSpotDependencyCheck:
             cold_start_mode="fast_boot", serverless_only=False,
             azure_subscription=None, azure_resource_group=None,
             azure_region=None, azure_environment=None,
+            image=None, container_port=8080, container_args=None,
         )
 
         # Should not exit due to GCP dep check — it will proceed to launch
@@ -1138,3 +1143,74 @@ class TestGcpSpotDependencyCheck:
                     pass  # total failure exit is expected
                 # The important thing: launch_hybrid was attempted (not blocked by GCP check)
                 mock_launch.assert_called_once()
+
+
+class TestByocOrchestratorSkipsVllm:
+    """Tests that BYOC mode skips vLLM command building."""
+
+    @patch("tuna.orchestrator._warmup_serverless", return_value=True)
+    @patch("tuna.orchestrator.get_provider")
+    def test_serverless_only_byoc_skips_build_vllm_cmd(self, mock_get_provider, mock_warmup):
+        """BYOC launch_serverless_only should not call build_vllm_cmd."""
+        from tuna.orchestrator import launch_serverless_only
+
+        mock_provider = _make_mock_provider("cloudrun", plan_metadata={"service_name": "test-serverless"})
+        mock_get_provider.return_value = mock_provider
+
+        request = DeployRequest(
+            model_name="sam2-server", gpu="T4",
+            service_name="test-svc", serverless_provider="cloudrun",
+            serverless_only=True,
+            image="choprahetarth/sam2-server:latest",
+        )
+
+        with patch("tuna.orchestrator.build_vllm_cmd") as mock_build:
+            launch_serverless_only(request)
+            mock_build.assert_not_called()
+
+        # plan() should have been called with empty vllm_cmd
+        mock_provider.plan.assert_called_once()
+        _, kwargs = mock_provider.plan.call_args
+        # The second positional arg is vllm_cmd
+        vllm_cmd_arg = mock_provider.plan.call_args[0][1]
+        assert vllm_cmd_arg == ""
+
+    @patch("tuna.orchestrator._warmup_serverless", return_value=True)
+    @patch("tuna.orchestrator.push_url_to_router", return_value=True)
+    @patch("tuna.orchestrator._find_controller_cluster", return_value=None)
+    @patch("tuna.orchestrator._launch_router_vm")
+    @patch("tuna.orchestrator.get_provider")
+    def test_hybrid_byoc_skips_vllm_version_pinning(
+        self, mock_get_provider, mock_launch_router, mock_find_ctrl,
+        mock_push, mock_warmup,
+    ):
+        """BYOC launch_hybrid should skip vLLM version pinning."""
+        mock_serverless = _make_mock_provider(
+            "cloudrun", plan_metadata={"service_name": "test-svc-serverless"},
+        )
+        mock_spot = _make_mock_provider(
+            "skyserve", plan_metadata={"service_name": "test-svc-spot"},
+        )
+        mock_get_provider.side_effect = lambda name: {
+            "cloudrun": mock_serverless, "skyserve": mock_spot,
+        }[name]
+        mock_launch_router.return_value = DeploymentResult(
+            provider="router", endpoint_url="http://1.2.3.4:8080",
+            metadata={"cluster_name": "ctrl"},
+        )
+
+        request = DeployRequest(
+            model_name="sam2-server", gpu="T4",
+            service_name="test-svc", serverless_provider="cloudrun",
+            image="choprahetarth/sam2-server:latest",
+        )
+        original_version = request.vllm_version
+
+        with patch("tuna.orchestrator.build_vllm_cmd") as mock_build:
+            launch_hybrid(request, separate_router_vm=True)
+            mock_build.assert_not_called()
+
+        # vllm_version should not have been changed
+        assert request.vllm_version == original_version
+        # vllm_version() should not have been called on provider
+        mock_serverless.vllm_version.assert_not_called()

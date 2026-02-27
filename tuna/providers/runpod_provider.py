@@ -118,6 +118,8 @@ class RunPodProvider(InferenceProvider):
         return result
 
     def plan(self, request: DeployRequest, vllm_cmd: str) -> ProviderPlan:
+        if request.is_byoc:
+            raise ValueError("BYOC (--image) is not supported by RunPod yet. Use --serverless-provider cloudrun.")
         endpoint_name = f"{request.service_name}-serverless"
 
         # Map short GPU name to RunPod's full identifier

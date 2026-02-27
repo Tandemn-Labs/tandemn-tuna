@@ -20,6 +20,20 @@ def cmd_deploy(args: argparse.Namespace) -> None:
 
     _setup_cloud_env(args)
 
+    is_byoc = args.image is not None
+
+    # Validate --model is provided in non-BYOC mode
+    if not is_byoc and not args.model:
+        print("Error: --model is required unless --image is set.", file=sys.stderr)
+        sys.exit(1)
+
+    # In BYOC mode, derive model name from image if --model not given
+    model_name = args.model
+    if is_byoc and not model_name:
+        # e.g. "choprahetarth/sam2-server:latest" -> "sam2-server"
+        image_part = args.image.split("/")[-1]  # "sam2-server:latest"
+        model_name = image_part.split(":")[0]    # "sam2-server"
+
     # Build scaling policy: defaults <- YAML <- CLI flags
     if args.scaling_policy:
         scaling = load_scaling_policy(args.scaling_policy)
@@ -39,22 +53,38 @@ def cmd_deploy(args: argparse.Namespace) -> None:
     serverless_provider = args.serverless_provider
     auto_selected = False
     if serverless_provider is None:
-        from tuna.catalog import normalize_gpu_name, query as catalog_query
-        try:
-            gpu_name = normalize_gpu_name(args.gpu)
-        except KeyError:
-            gpu_name = args.gpu
-        result = catalog_query(gpu=gpu_name)
-        cheapest = result.cheapest()
-        if cheapest:
-            serverless_provider = cheapest.provider
+        if is_byoc:
+            # Default to cloudrun for BYOC (best custom container support)
+            serverless_provider = "cloudrun"
             auto_selected = True
-            _print_provider_selection(gpu_name, result, serverless_provider)
+            print(f"BYOC mode: defaulting serverless provider to cloudrun")
         else:
-            serverless_provider = "modal"
+            from tuna.catalog import normalize_gpu_name, query as catalog_query
+            try:
+                gpu_name = normalize_gpu_name(args.gpu)
+            except KeyError:
+                gpu_name = args.gpu
+            result = catalog_query(gpu=gpu_name)
+            cheapest = result.cheapest()
+            if cheapest:
+                serverless_provider = cheapest.provider
+                auto_selected = True
+                _print_provider_selection(gpu_name, result, serverless_provider)
+            else:
+                serverless_provider = "modal"
+
+    # Warn about vLLM flags ignored in BYOC mode
+    if is_byoc:
+        ignored = []
+        if args.tp_size != 1:
+            ignored.append(f"--tp-size {args.tp_size}")
+        if args.max_model_len != 4096:
+            ignored.append(f"--max-model-len {args.max_model_len}")
+        if ignored:
+            print(f"Warning: {', '.join(ignored)} ignored in BYOC mode (no vLLM)", file=sys.stderr)
 
     request = DeployRequest(
-        model_name=args.model,
+        model_name=model_name,
         gpu=args.gpu,
         gpu_count=args.gpu_count,
         tp_size=args.tp_size,
@@ -67,6 +97,9 @@ def cmd_deploy(args: argparse.Namespace) -> None:
         service_name=args.service_name,
         public=args.public,
         serverless_only=args.serverless_only,
+        image=args.image,
+        container_port=args.container_port,
+        container_args=args.container_args,
     )
 
     # Register only the providers we actually need
@@ -102,7 +135,12 @@ def cmd_deploy(args: argparse.Namespace) -> None:
         if ignored:
             print(f"Warning: {', '.join(ignored)} ignored in serverless-only mode", file=sys.stderr)
 
-    print(f"Deploying {request.model_name} on {request.gpu}")
+    if request.is_byoc:
+        print(f"Deploying BYOC image on {request.gpu}")
+        print(f"  Image: {request.image}")
+        print(f"  Port:  {request.container_port}")
+    else:
+        print(f"Deploying {request.model_name} on {request.gpu}")
     print(f"Service name: {request.service_name}")
     if not auto_selected:
         print(f"Serverless provider: {request.serverless_provider}")
@@ -150,7 +188,11 @@ def cmd_deploy(args: argparse.Namespace) -> None:
     print("=" * 60)
     print("DEPLOYMENT RESULT")
     print("=" * 60)
-    print(f"  vLLM:       {request.vllm_version}")
+    if request.is_byoc:
+        print(f"  Image:      {request.image}")
+        print(f"  Port:       {request.container_port}")
+    else:
+        print(f"  vLLM:       {request.vllm_version}")
 
     if result.router and result.router.endpoint_url:
         print(f"  Router:     {result.router.endpoint_url}")
@@ -1029,7 +1071,7 @@ def main() -> None:
 
     # -- deploy --
     p_deploy = subparsers.add_parser("deploy", help="Deploy a model")
-    p_deploy.add_argument("--model", required=True, help="Model name (e.g. Qwen/Qwen3-0.6B)")
+    p_deploy.add_argument("--model", default=None, help="Model name (e.g. Qwen/Qwen3-0.6B). Required unless --image is set.")
     p_deploy.add_argument("--gpu", required=True, help="GPU type (e.g. L40S, A100, H100)")
     p_deploy.add_argument("--gpu-count", type=int, default=1)
     p_deploy.add_argument("--tp-size", type=int, default=1, help="Tensor parallel size")
@@ -1067,6 +1109,14 @@ def main() -> None:
                           help="Azure region (e.g. eastus)")
     p_deploy.add_argument("--azure-environment", default=None,
                           help="Name of existing Container Apps environment to reuse")
+    # BYOC (Bring Your Own Container)
+    p_deploy.add_argument("--image", default=None,
+                          help="Docker image URI for BYOC mode (e.g. choprahetarth/sam2-server:latest). "
+                               "Skips vLLM and deploys your container directly.")
+    p_deploy.add_argument("--container-port", type=int, default=8080,
+                          help="Port the BYOC container listens on (default: 8080)")
+    p_deploy.add_argument("--container-args", nargs="*", default=None,
+                          help="Optional CMD override for the BYOC container")
     p_deploy.set_defaults(func=cmd_deploy)
 
     # -- check --

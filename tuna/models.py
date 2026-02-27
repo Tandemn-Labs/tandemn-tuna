@@ -27,6 +27,15 @@ class DeployRequest:
     public: bool = False  # If True, make endpoints publicly accessible (no auth)
     vllm_version: str = "0.15.1"  # Set by orchestrator to match serverless provider
     serverless_only: bool = False  # skip spot + router
+    # BYOC (Bring Your Own Container) fields
+    image: Optional[str] = None           # Docker image URI (triggers BYOC mode)
+    container_port: int = 8080            # Port the container listens on
+    container_args: Optional[list[str]] = None  # Optional CMD override
+
+    @property
+    def is_byoc(self) -> bool:
+        """True when deploying a user-provided container image (not vLLM)."""
+        return self.image is not None
 
     def __post_init__(self):
         import re

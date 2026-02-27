@@ -394,12 +394,16 @@ def launch_hybrid(request: DeployRequest, *, separate_router_vm: bool = False) -
         If *True*, launch the router on a dedicated CPU VM (legacy 3-VM mode).
         If *False* (default), colocate the router on the SkyServe controller VM.
     """
-    vllm_cmd = build_vllm_cmd(request)
-
-    # Pin vLLM version to match the selected serverless provider
     serverless_prov = get_provider(request.serverless_provider)
-    request.vllm_version = serverless_prov.vllm_version()
-    logger.info("vLLM version: %s (from %s)", request.vllm_version, request.serverless_provider)
+
+    if request.is_byoc:
+        vllm_cmd = ""
+        logger.info("BYOC mode: image=%s port=%d", request.image, request.container_port)
+    else:
+        # Pin vLLM version to match the selected serverless provider
+        request.vllm_version = serverless_prov.vllm_version()
+        logger.info("vLLM version: %s (from %s)", request.vllm_version, request.serverless_provider)
+        vllm_cmd = build_vllm_cmd(request)
 
     # Auth token the router needs to proxy to this serverless backend
     _backend_auth_token = serverless_prov.auth_token()
@@ -686,10 +690,14 @@ def launch_serverless_only(request: DeployRequest) -> HybridDeployment:
             )
         )
 
-    # vLLM command
-    request.vllm_version = serverless_prov.vllm_version()
-    logger.info("vLLM version: %s (from %s)", request.vllm_version, request.serverless_provider)
-    vllm_cmd = build_vllm_cmd(request)
+    if request.is_byoc:
+        vllm_cmd = ""
+        logger.info("BYOC mode: image=%s port=%d", request.image, request.container_port)
+    else:
+        # vLLM command
+        request.vllm_version = serverless_prov.vllm_version()
+        logger.info("vLLM version: %s (from %s)", request.vllm_version, request.serverless_provider)
+        vllm_cmd = build_vllm_cmd(request)
 
     # Plan + deploy (catch exceptions to preserve plan metadata for cleanup)
     _meta: dict[str, str] = {}

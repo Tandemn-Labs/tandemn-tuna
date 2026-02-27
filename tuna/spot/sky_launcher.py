@@ -63,6 +63,45 @@ class SkyLauncher(InferenceProvider):
             str(TEMPLATES_DIR / "vllm.yaml.tpl"), replacements
         )
 
+    def _render_byoc_yaml(self, request: DeployRequest, min_replicas: int) -> str:
+        """Render the BYOC SkyServe YAML template."""
+        spot = request.scaling.spot
+        cloud = request.spots_cloud.lower()
+        if request.region:
+            region_block = (
+                f"  any_of:\n    - infra: {cloud}/{request.region}"
+            )
+        else:
+            region_block = f"  cloud: {cloud}"
+
+        port = str(request.container_port)
+
+        # Build the run command: user's container_args override Docker CMD,
+        # empty string uses the image's default CMD/ENTRYPOINT
+        if request.container_args:
+            import shlex
+            run_cmd = " ".join(shlex.quote(a) for a in request.container_args)
+        else:
+            run_cmd = ""
+
+        replacements = {
+            "gpu": to_skypilot_gpu_name(request.gpu),
+            "gpu_count": str(request.gpu_count),
+            "port": port,
+            "image": request.image,
+            "run_cmd": run_cmd,
+            "min_replicas": str(min_replicas),
+            "max_replicas": str(spot.max_replicas),
+            "target_qps": str(spot.target_qps),
+            "upscale_delay": str(spot.upscale_delay),
+            "downscale_delay": str(spot.downscale_delay),
+            "region_block": region_block,
+        }
+
+        return render_template(
+            str(TEMPLATES_DIR / "byoc.yaml.tpl"), replacements
+        )
+
     def plan(self, request: DeployRequest, vllm_cmd: str) -> ProviderPlan:
         service_name = f"{request.service_name}-spot"
 
@@ -73,7 +112,10 @@ class SkyLauncher(InferenceProvider):
         # min_replicas back to 0 if the user wants scale-to-zero.
         boot_min_replicas = max(1, request.scaling.spot.min_replicas)
 
-        rendered = self._render_yaml(request, vllm_cmd, boot_min_replicas)
+        if request.is_byoc:
+            rendered = self._render_byoc_yaml(request, boot_min_replicas)
+        else:
+            rendered = self._render_yaml(request, vllm_cmd, boot_min_replicas)
 
         return ProviderPlan(
             provider=self.name(),
@@ -89,10 +131,13 @@ class SkyLauncher(InferenceProvider):
         Only the ``service:`` section changes, so SkyPilot reuses
         running replicas.
         """
-        from tuna.orchestrator import build_vllm_cmd
-        vllm_cmd = build_vllm_cmd(request)
+        if request.is_byoc:
+            rendered = self._render_byoc_yaml(request, min_replicas=0)
+        else:
+            from tuna.orchestrator import build_vllm_cmd
+            vllm_cmd = build_vllm_cmd(request)
+            rendered = self._render_yaml(request, vllm_cmd, min_replicas=0)
 
-        rendered = self._render_yaml(request, vllm_cmd, min_replicas=0)
         task = task_from_yaml_str(rendered)
         logger.info("Updating %s: min_replicas 1 -> 0 (enabling scale-to-zero)", service_name)
         serve_update(task, service_name)

@@ -231,6 +231,8 @@ class CerebriumProvider(InferenceProvider):
     # -- Plan ---------------------------------------------------------------
 
     def plan(self, request: DeployRequest, vllm_cmd: str) -> ProviderPlan:
+        if request.is_byoc:
+            raise ValueError("BYOC (--image) is not supported by Cerebrium yet. Use --serverless-provider cloudrun.")
         try:
             gpu_compute = provider_gpu_id(request.gpu, "cerebrium")
         except KeyError:

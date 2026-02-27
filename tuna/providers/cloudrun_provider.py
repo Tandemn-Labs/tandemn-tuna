@@ -354,6 +354,9 @@ class CloudRunProvider(InferenceProvider):
         service_name = f"{request.service_name}-serverless"
         serverless = request.scaling.serverless
 
+        if request.is_byoc:
+            return self._plan_byoc(request, project_id, region, service_name, serverless, gpu_accelerator)
+
         # Build environment variables for the vLLM container
         env: dict[str, str] = {
             "MODEL_NAME": request.model_name,
@@ -406,6 +409,37 @@ class CloudRunProvider(InferenceProvider):
             metadata=metadata,
         )
 
+    def _plan_byoc(self, request: DeployRequest, project_id: str, region: str,
+                   service_name: str, serverless, gpu_accelerator: str) -> ProviderPlan:
+        """Plan a BYOC deployment — user-provided container image, no vLLM."""
+        port = request.container_port
+        container_args = request.container_args or []
+
+        metadata: dict[str, str] = {
+            "service_name": service_name,
+            "project_id": project_id,
+            "region": region,
+            "image": request.image,
+            "gpu_accelerator": gpu_accelerator,
+            "container_port": str(port),
+            "container_args": json.dumps(container_args),
+            "min_instance_count": str(serverless.workers_min),
+            "max_instance_count": str(serverless.workers_max),
+            "max_concurrency": str(serverless.concurrency),
+            "timeout_seconds": str(serverless.timeout),
+            "cpu": "8",
+            "memory": "32Gi",
+            "public_access": str(request.public).lower(),
+            "probe_type": "http",
+        }
+
+        return ProviderPlan(
+            provider=self.name(),
+            rendered_script="",
+            env={},
+            metadata=metadata,
+        )
+
     def deploy(self, plan: ProviderPlan) -> DeploymentResult:
         try:
             ServicesClient = _require_cloudrun_sdk()
@@ -413,6 +447,7 @@ class CloudRunProvider(InferenceProvider):
                 Container,
                 ContainerPort,
                 EnvVar,
+                HTTPGetAction,
                 NodeSelector,
                 Probe,
                 ResourceRequirements,
@@ -443,6 +478,24 @@ class CloudRunProvider(InferenceProvider):
         # Build container definition
         env_vars = [EnvVar(name=k, value=v) for k, v in plan.env.items()]
 
+        # BYOC containers use HTTP /health probe; vLLM uses TCP socket
+        if plan.metadata.get("probe_type") == "http":
+            startup_probe = Probe(
+                http_get=HTTPGetAction(path="/health", port=port),
+                initial_delay_seconds=10,
+                period_seconds=10,
+                failure_threshold=30,
+                timeout_seconds=5,
+            )
+        else:
+            startup_probe = Probe(
+                tcp_socket=TCPSocketAction(port=port),
+                initial_delay_seconds=30,
+                period_seconds=10,
+                failure_threshold=30,
+                timeout_seconds=5,
+            )
+
         container = Container(
             image=plan.metadata["image"],
             args=container_args,
@@ -455,13 +508,7 @@ class CloudRunProvider(InferenceProvider):
                 },
             ),
             env=env_vars,
-            startup_probe=Probe(
-                tcp_socket=TCPSocketAction(port=port),
-                initial_delay_seconds=30,
-                period_seconds=10,
-                failure_threshold=30,
-                timeout_seconds=5,
-            ),
+            startup_probe=startup_probe,
         )
 
         # Build revision template
@@ -474,10 +521,9 @@ class CloudRunProvider(InferenceProvider):
             max_instance_request_concurrency=int(plan.metadata["max_concurrency"]),
             timeout=duration_pb2.Duration(seconds=int(plan.metadata["timeout_seconds"])),
             node_selector=NodeSelector(accelerator=plan.metadata["gpu_accelerator"]),
-            # GPU zonal redundancy requires explicit quota approval from Google.
-            # Most users won't have this quota, so we disable it by default.
-            # TODO: expose as a CLI flag (e.g. --gpu-zonal-redundancy) once
-            # users actually need multi-zone GPU deployments.
+            # Disable GPU zonal redundancy — most users don't have the
+            # "with zonal redundancy" quota, which requires explicit approval.
+            # The "without zonal redundancy" quota is the default.
             gpu_zonal_redundancy_disabled=True,
         )
 

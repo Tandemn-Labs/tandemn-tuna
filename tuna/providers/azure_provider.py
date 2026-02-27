@@ -357,6 +357,8 @@ class AzureProvider(InferenceProvider):
     # -- Plan / Deploy / Destroy -----------------------------------------
 
     def plan(self, request: DeployRequest, vllm_cmd: str) -> ProviderPlan:
+        if request.is_byoc:
+            raise ValueError("BYOC (--image) is not supported by Azure yet. Use --serverless-provider cloudrun.")
         # Validate GPU
         try:
             gpu_profile = provider_gpu_id(request.gpu, "azure")

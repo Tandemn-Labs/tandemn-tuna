@@ -182,6 +182,8 @@ class BasetenProvider(InferenceProvider):
     # -- Plan / Deploy / Destroy -----------------------------------------
 
     def plan(self, request: DeployRequest, vllm_cmd: str) -> ProviderPlan:
+        if request.is_byoc:
+            raise ValueError("BYOC (--image) is not supported by Baseten yet. Use --serverless-provider cloudrun.")
         service_name = f"{request.service_name}-serverless"
 
         try:

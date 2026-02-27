@@ -54,6 +54,39 @@ class TestDeployRequest:
         assert req.gpu == "UNKNOWN_GPU"
 
 
+class TestDeployRequestByoc:
+    def test_is_byoc_false_by_default(self):
+        req = DeployRequest(model_name="m", gpu="g")
+        assert req.is_byoc is False
+        assert req.image is None
+
+    def test_is_byoc_true_when_image_set(self):
+        req = DeployRequest(
+            model_name="sam2-server", gpu="T4",
+            image="choprahetarth/sam2-server:latest",
+        )
+        assert req.is_byoc is True
+        assert req.image == "choprahetarth/sam2-server:latest"
+
+    def test_byoc_defaults(self):
+        req = DeployRequest(
+            model_name="m", gpu="g",
+            image="my/image:v1",
+        )
+        assert req.container_port == 8080
+        assert req.container_args is None
+
+    def test_byoc_custom_port_and_args(self):
+        req = DeployRequest(
+            model_name="m", gpu="g",
+            image="my/image:v1",
+            container_port=5000,
+            container_args=["python", "serve.py"],
+        )
+        assert req.container_port == 5000
+        assert req.container_args == ["python", "serve.py"]
+
+
 class TestProviderPlan:
     def test_defaults(self):
         plan = ProviderPlan(provider="modal", rendered_script="# script")
