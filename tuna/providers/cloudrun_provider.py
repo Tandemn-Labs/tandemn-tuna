@@ -568,19 +568,35 @@ class CloudRunProvider(InferenceProvider):
         service_uri = result_service.uri
 
         # Only grant public access when explicitly requested via --public
+        public_access_ok = False
         if plan.metadata.get("public_access") == "true":
-            self._set_public_access(client, result_service.name)
+            public_access_ok = self._set_public_access(client, result_service.name)
+            if not public_access_ok:
+                logger.warning(
+                    "⚠️  Public access could not be granted (org policy likely blocks allUsers). "
+                    "Requests to %s will require an auth token:\n"
+                    "  curl -H 'Authorization: Bearer $(gcloud auth print-identity-token)' %s/health",
+                    service_uri,
+                    service_uri,
+                )
+
+        result_metadata = dict(plan.metadata)
+        result_metadata["auth_required"] = "false" if public_access_ok else "true"
 
         logger.info("Cloud Run service %s deployed at %s", service_name, service_uri)
         return DeploymentResult(
             provider=self.name(),
             endpoint_url=service_uri,
             health_url=f"{service_uri}/health",
-            metadata=dict(plan.metadata),
+            metadata=result_metadata,
         )
 
-    def _set_public_access(self, client, resource_name: str) -> None:
-        """Grant allUsers the roles/run.invoker role. Non-fatal on failure."""
+    def _set_public_access(self, client, resource_name: str) -> bool:
+        """Grant allUsers the roles/run.invoker role.
+
+        Returns True if public access was successfully granted, False if it
+        failed (e.g. blocked by a GCP org policy). Non-fatal either way.
+        """
         try:
             from google.iam.v1 import iam_policy_pb2, policy_pb2
 
@@ -594,7 +610,8 @@ class CloudRunProvider(InferenceProvider):
             # Check if binding already exists
             for binding in policy.bindings:
                 if binding.role == invoker_role and all_users_member in binding.members:
-                    return
+                    logger.info("Public access already granted to %s", resource_name)
+                    return True
 
             policy.bindings.append(
                 policy_pb2.Binding(
@@ -610,12 +627,14 @@ class CloudRunProvider(InferenceProvider):
                 )
             )
             logger.info("Public access granted to %s", resource_name)
+            return True
         except Exception as e:
             logger.warning(
-                "Could not set public access on %s: %s (service works but requires auth)",
+                "Could not set public access on %s: %s",
                 resource_name,
                 e,
             )
+            return False
 
     def destroy(self, result: DeploymentResult) -> None:
         service_name = result.metadata.get("service_name")

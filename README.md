@@ -361,6 +361,16 @@ curl http://<router-ip>:8080/predict \
 
 **Note:** `--tp-size` and `--max-model-len` are ignored in BYOC mode (no vLLM involved). Tuna will warn you if you pass them.
 
+**GCP region for Cloud Run GPU:** Use `--gcp-region europe-west1` or `--gcp-region us-east4`. Other regions have zero L4 GPU quota by default. `us-central1` will fail silently.
+
+**Cloud Run GPU quota:** New projects are auto-granted **3 L4 GPUs per region** on first deploy. This is a Google-managed limit — increasing it requires a paid GCP support plan or demonstrated billing history on the project. To request more, go to `console.cloud.google.com/iam-admin/quotas` and search `nvidia_l4_gpu_allocation_no_zonal_redundancy`.
+
+**Org policy and `--public`:** If your GCP organization blocks public Cloud Run services (common in company accounts), Tuna will deploy successfully but requests will require an identity token. You'll see a warning in the deploy output. To call the endpoint:
+```bash
+curl -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
+  https://<your-service>.run.app/health
+```
+
 </details>
 
 **7. Send requests** (OpenAI-compatible)

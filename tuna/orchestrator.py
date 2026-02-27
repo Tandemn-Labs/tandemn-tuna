@@ -663,6 +663,20 @@ def _warmup_serverless(health_url: str, timeout: int = 300) -> bool:
             print(" ready!")
             logger.info("Serverless container is healthy")
             return True
+        if resp.status_code == 403:
+            # Service is running but public access is blocked (e.g. GCP org policy).
+            # 403 from Cloud Run means the container IS up — it's responding, just
+            # rejecting unauthenticated requests. Treat as healthy from Tuna's POV.
+            print(" ready (auth required — public access blocked by org policy)")
+            logger.warning(
+                "Warmup returned 403 for %s — service is up but requires an auth token. "
+                "GCP org policy likely blocked allUsers IAM binding. "
+                "Authenticate requests with: "
+                "curl -H 'Authorization: Bearer $(gcloud auth print-identity-token)' %s",
+                health_url,
+                health_url.replace("/health", ""),
+            )
+            return True
         print(" unhealthy (status %d)" % resp.status_code)
         logger.warning("Warmup returned %d for %s", resp.status_code, health_url)
         return False
