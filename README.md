@@ -301,6 +301,68 @@ tuna deploy --model Qwen/Qwen3-0.6B --gpu L4 --serverless-only
 
 Returns the provider's direct endpoint. No AWS credentials needed.
 
+**6b. (Alternative) Deploy your own Docker image (BYOC)**
+
+<details>
+<summary><b>Bring Your Own Container — deploy any GPU workload, not just vLLM</b></summary>
+
+BYOC mode lets you deploy any Docker image — SAM2, Whisper, custom inference servers, anything with a GPU — using the same spot + serverless hybrid setup. `--model` is not required; just pass your image.
+
+**Requirements for your container:**
+- Must expose a `GET /health` endpoint that returns HTTP 200 when ready
+- Must listen on the port you specify (default `8080`)
+- Should be pushed to a public or GCP Artifact Registry / Docker Hub repo accessible from the deployment environment
+
+**Serverless (Cloud Run) + GCP spot:**
+
+```bash
+tuna deploy \
+  --image myrepo/sam2-server:latest \
+  --gpu L4 \
+  --spots-cloud gcp \
+  --service-name my-byoc-app
+```
+
+Tuna auto-selects Cloud Run as the serverless backend (best custom container support). GCP spot is used for the cheap persistent replica.
+
+**Serverless-only (Cloud Run, no spot):**
+
+```bash
+tuna deploy \
+  --image myrepo/sam2-server:latest \
+  --gpu L4 \
+  --serverless-only \
+  --service-name my-byoc-serverless
+```
+
+**Custom port or startup args:**
+
+```bash
+tuna deploy \
+  --image myrepo/my-server:latest \
+  --gpu L4 \
+  --container-port 9000 \
+  --container-args "--workers 4" "--log-level info" \
+  --spots-cloud gcp \
+  --service-name my-byoc-app
+```
+
+**Send requests:**
+
+BYOC containers expose your own API — whatever routes your server implements. There is no `/v1/chat/completions` unless your container provides it:
+
+```bash
+curl http://<router-ip>:8080/predict \
+  -H "Content-Type: application/json" \
+  -d '{"input": "..."}'
+```
+
+**Provider support:** BYOC currently works with **Cloud Run** (serverless) and **GCP spot** (via SkyPilot). Modal, RunPod, Azure, Baseten, and Cerebrium are not yet supported in BYOC mode.
+
+**Note:** `--tp-size` and `--max-model-len` are ignored in BYOC mode (no vLLM involved). Tuna will warn you if you pass them.
+
+</details>
+
 **7. Send requests** (OpenAI-compatible)
 
 ```bash
@@ -379,8 +441,11 @@ The router:
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--model` | *(required)* | HuggingFace model ID (e.g. `Qwen/Qwen3-0.6B`) |
+| `--model` | *(required unless `--image` set)* | HuggingFace model ID (e.g. `Qwen/Qwen3-0.6B`) |
 | `--gpu` | *(required)* | GPU type (e.g. `L4`, `L40S`, `A100`, `H100`) |
+| `--image` | — | Docker image URI for BYOC mode (e.g. `myrepo/sam2-server:latest`). When set, skips all vLLM logic. See [BYOC](#6b-alternative-deploy-your-own-docker-image-byoc) |
+| `--container-port` | `8080` | Port your BYOC container listens on (BYOC mode only) |
+| `--container-args` | — | Override container CMD args (BYOC mode only) |
 | `--gpu-count` | `1` | Number of GPUs |
 | `--serverless-provider` | auto (cheapest for GPU) | `modal`, `runpod`, `cloudrun`, `baseten`, `azure`, or `cerebrium` |
 | `--spots-cloud` | `aws` | Cloud provider for spot GPUs |
@@ -478,6 +543,50 @@ export HF_TOKEN=<your-token>
 ```
 
 Then redeploy.
+
+### BYOC-specific issues
+
+<details>
+<summary><b>Deployment times out / never becomes healthy</b></summary>
+
+The most common cause is a missing or broken `/health` endpoint. BYOC containers **must** expose `GET /health` returning HTTP 200 when ready. Tuna uses this to detect when your container is up before routing traffic.
+
+Test locally:
+```bash
+docker run --gpus all -p 8080:8080 myrepo/my-server:latest
+curl http://localhost:8080/health   # should return 200
+```
+
+</details>
+
+<details>
+<summary><b>Image pull fails on Cloud Run or GCP spot</b></summary>
+
+Cloud Run can pull from Docker Hub (public images) or GCP Artifact Registry. If your image is private, push it to Artifact Registry and make sure your GCP service account has `roles/artifactregistry.reader`.
+
+For GCP spot (SkyPilot), the spot VM runs `docker pull` during setup — same rules apply. Public Docker Hub images work out of the box.
+
+</details>
+
+<details>
+<summary><b>Wrong port — requests timing out</b></summary>
+
+If your container listens on a port other than `8080`, pass `--container-port`:
+
+```bash
+tuna deploy --image myrepo/server:latest --gpu L4 --container-port 9000 --spots-cloud gcp
+```
+
+Mismatched ports are the second most common BYOC failure after missing `/health`.
+
+</details>
+
+<details>
+<summary><b>Unsupported provider error</b></summary>
+
+BYOC currently only works with **Cloud Run** (serverless) and **GCP spot**. If you see `"BYOC not supported for provider X"`, you've selected a provider that hasn't been wired up yet. Switch to `--spots-cloud gcp` and let Tuna auto-select Cloud Run as the serverless backend.
+
+</details>
 
 ## Contact
 
