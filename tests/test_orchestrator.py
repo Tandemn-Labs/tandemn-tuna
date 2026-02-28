@@ -925,7 +925,7 @@ class TestHybridDeployWarmup:
         launch_hybrid(request)
 
         # Warmup must be called regardless of whether push was needed
-        mock_warmup.assert_called_once_with("https://modal.run/abc/health")
+        mock_warmup.assert_called_once_with("https://modal.run/abc/health", auth_headers={})
 
     @patch("tuna.orchestrator._warmup_serverless")
     @patch("tuna.orchestrator._wait_for_router", return_value=True)
@@ -962,7 +962,7 @@ class TestHybridDeployWarmup:
         )
         launch_hybrid(request, separate_router_vm=True)
 
-        mock_warmup.assert_called_once_with("https://modal.run/abc/health")
+        mock_warmup.assert_called_once_with("https://modal.run/abc/health", auth_headers={})
 
     @patch("tuna.orchestrator._warmup_serverless")
     @patch("tuna.orchestrator._wait_for_router", return_value=True)
@@ -999,7 +999,7 @@ class TestHybridDeployWarmup:
         )
         launch_hybrid(request, separate_router_vm=True)
 
-        mock_warmup.assert_called_once_with("https://modal.run/abc/health")
+        mock_warmup.assert_called_once_with("https://modal.run/abc/health", auth_headers={})
 
 
 class TestWaitForRouter:

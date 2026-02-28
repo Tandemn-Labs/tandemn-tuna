@@ -404,6 +404,9 @@ def launch_hybrid(request: DeployRequest, *, separate_router_vm: bool = False) -
     # Auth token the router needs to proxy to this serverless backend
     _backend_auth_token = serverless_prov.auth_token()
 
+    # Auth headers for warmup health checks (Baseten/RunPod require auth)
+    _warmup_auth_headers = _build_warmup_headers(request.serverless_provider, _backend_auth_token)
+
     # Early preflight — fail fast before launching any VMs
     preflight = serverless_prov.preflight(request)
     if not preflight.ok:
@@ -500,7 +503,7 @@ def launch_hybrid(request: DeployRequest, *, separate_router_vm: bool = False) -
 
             if router_url and serverless_result and serverless_result.endpoint_url:
                 health_url = serverless_result.health_url or f"{serverless_result.endpoint_url}/health"
-                _warmup_serverless(health_url)
+                _warmup_serverless(health_url, auth_headers=_warmup_auth_headers)
                 logger.info("Pushing serverless URL to router: %s", serverless_result.endpoint_url)
                 push_url_to_router(
                     router_url,
@@ -609,7 +612,7 @@ def launch_hybrid(request: DeployRequest, *, separate_router_vm: bool = False) -
         # of whether the URL was already baked in at router launch or needs pushing now.
         if serverless_result and serverless_result.endpoint_url:
             health_url = serverless_result.health_url or f"{serverless_result.endpoint_url}/health"
-            _warmup_serverless(health_url)
+            _warmup_serverless(health_url, auth_headers=_warmup_auth_headers)
 
         # Push serverless URL if router is up and serverless wasn't baked in at launch
         if (router_url and serverless_result and serverless_result.endpoint_url
@@ -643,7 +646,20 @@ def launch_hybrid(request: DeployRequest, *, separate_router_vm: bool = False) -
     )
 
 
-def _warmup_serverless(health_url: str, timeout: int = 300) -> bool:
+def _build_warmup_headers(provider_name: str, auth_token: str) -> dict[str, str]:
+    """Build auth headers for health check warmup requests."""
+    if not auth_token:
+        return {}
+    if provider_name == "baseten":
+        return {"Authorization": f"Api-Key {auth_token}"}
+    if provider_name in ("runpod", "cerebrium"):
+        return {"Authorization": f"Bearer {auth_token}"}
+    return {}
+
+
+def _warmup_serverless(
+    health_url: str, timeout: int = 300, auth_headers: dict[str, str] | None = None,
+) -> bool:
     """Send a single health request to trigger the cold start and wait for it.
 
     Returns True if the endpoint became healthy, False on timeout.
@@ -654,7 +670,7 @@ def _warmup_serverless(health_url: str, timeout: int = 300) -> bool:
     print("Warming up container...", end="", flush=True)
 
     try:
-        resp = requests.get(health_url, timeout=timeout)
+        resp = requests.get(health_url, headers=auth_headers or {}, timeout=timeout)
         if resp.status_code == 200:
             print(" ready!")
             logger.info("Serverless container is healthy")
@@ -713,8 +729,10 @@ def launch_serverless_only(request: DeployRequest) -> HybridDeployment:
     logger.info("Serverless endpoint: %s", serverless_result.endpoint_url)
 
     # Warm up the container — trigger cold start so the endpoint is ready
+    _backend_auth_token = serverless_prov.auth_token()
+    _warmup_auth = _build_warmup_headers(request.serverless_provider, _backend_auth_token)
     health_url = serverless_result.health_url or f"{serverless_result.endpoint_url}/health"
-    _warmup_serverless(health_url)
+    _warmup_serverless(health_url, auth_headers=_warmup_auth)
 
     return HybridDeployment(
         serverless=serverless_result,

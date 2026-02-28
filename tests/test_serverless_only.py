@@ -69,7 +69,7 @@ class TestLaunchServerlessOnly:
         mock_prov.preflight.assert_called_once()
         mock_prov.plan.assert_called_once()
         mock_prov.deploy.assert_called_once()
-        mock_warmup.assert_called_once_with("https://modal.run/test/health")
+        mock_warmup.assert_called_once_with("https://modal.run/test/health", auth_headers={})
 
     @patch("tuna.orchestrator.get_provider")
     def test_preflight_fail(self, mock_get_provider):
@@ -152,7 +152,9 @@ class TestWarmupServerless:
         result = _warmup_serverless("https://example.com/health", timeout=10)
 
         assert result is True
-        mock_requests.get.assert_called_once_with("https://example.com/health", timeout=10)
+        mock_requests.get.assert_called_once_with(
+            "https://example.com/health", headers={}, timeout=10,
+        )
 
     @patch("tuna.orchestrator.requests")
     def test_unhealthy_status(self, mock_requests):
