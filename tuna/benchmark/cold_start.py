@@ -68,7 +68,7 @@ def _wait_for_cold(
     health_url: str,
     auth_headers: dict[str, str],
     timeout: float = 300,
-    cooldown: float = 45,
+    cooldown: float = 120,
     consecutive_required: int = 3,
     metadata: dict | None = None,
 ) -> bool:
