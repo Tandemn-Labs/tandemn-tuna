@@ -333,16 +333,6 @@ def run_fresh_cold_start(
 
     ensure_provider_registered(provider)
 
-    # Start log watcher BEFORE deploy so it captures boot/model load phases
-    # We need metadata for the watcher, but we only know service_name at this point.
-    # Build metadata from what we know (provider-specific names are predictable).
-    pre_metadata = {"service_name": f"{request.service_name}-serverless"}
-    watcher = None
-    if supports_log_phases(provider):
-        watcher = create_log_watcher(provider, pre_metadata)
-        if watcher:
-            watcher.start()
-
     print(f"Deploying {model} on {provider} ({gpu})...")
     t_deploy_start = time.monotonic()
     result = launch_serverless_only(request)
@@ -353,17 +343,6 @@ def run_fresh_cold_start(
     from tuna.state import save_deployment
 
     save_deployment(request, result)
-
-    # Extract log phases from the deploy (same clock domain: wall-clock diffs)
-    container_boot_s = None
-    model_load_s = None
-    if watcher:
-        watcher.stop()
-        p = watcher.phases
-        if p.container_start and p.model_load_start:
-            container_boot_s = p.model_load_start - p.container_start
-        if p.model_load_start and p.ready:
-            model_load_s = p.ready - p.model_load_start
 
     if not result.serverless or not result.serverless.endpoint_url:
         err = "Deployment failed — no endpoint returned"
@@ -377,21 +356,38 @@ def run_fresh_cold_start(
                 gpu=gpu,
                 total_s=deploy_time,
                 deploy_time_s=deploy_time,
-                container_boot_s=container_boot_s,
-                model_load_s=model_load_s,
                 error=err,
             )
         ]
 
     endpoint_url = result.serverless.endpoint_url
     health_url = result.serverless.health_url or f"{endpoint_url}/health"
+    metadata = dict(result.serverless.metadata or {})
     auth_headers = get_auth_headers(provider)
+
+    # Start log watcher AFTER deploy — we now have real metadata (model_id, etc.)
+    watcher = None
+    if supports_log_phases(provider):
+        watcher = create_log_watcher(provider, metadata)
+        if watcher:
+            watcher.start()
 
     # The deploy CLI returns fast but the container may still be booting.
     # Wait for health to be ready — this is the real cold start.
     t0 = time.monotonic()
     print("  Waiting for container to be ready...")
     health_ready_s = _wait_for_health(health_url, auth_headers, timeout=600)
+
+    # Extract log phases (wall-clock diffs)
+    container_boot_s = None
+    model_load_s = None
+    if watcher:
+        watcher.stop()
+        p = watcher.phases
+        if p.container_start and p.model_load_start:
+            container_boot_s = p.model_load_start - p.container_start
+        if p.model_load_start and p.ready:
+            model_load_s = p.ready - p.model_load_start
 
     if health_ready_s is None:
         total_s = time.monotonic() - t0 + deploy_time
