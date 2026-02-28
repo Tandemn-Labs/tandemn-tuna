@@ -172,6 +172,8 @@ class BasetenProvider(InferenceProvider):
         except (FileNotFoundError, subprocess.TimeoutExpired):
             pass
 
+        # TODO: auto-fix by running `truss login --api-key $BASETEN_API_KEY`
+        #       when BASETEN_API_KEY is set (like other auto_fixed checks).
         return PreflightCheck(
             name="truss_authenticated",
             passed=False,
