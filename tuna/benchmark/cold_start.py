@@ -318,6 +318,11 @@ def run_fresh_cold_start(
     deploy_time = time.monotonic() - t_deploy_start
     print(f"  Deploy completed in {deploy_time:.1f}s")
 
+    # Save to state so destroy_hybrid can find it
+    from tuna.state import save_deployment
+
+    save_deployment(request, result)
+
     if not result.serverless or not result.serverless.endpoint_url:
         err = "Deployment failed — no endpoint returned"
         if result.serverless and result.serverless.error:
