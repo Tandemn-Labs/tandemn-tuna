@@ -215,7 +215,7 @@ def _single_run(
     )
     trigger_thread.start()
 
-    hw = _wait_for_health(health_url, auth_headers, timeout=600)
+    health_ready_s = _wait_for_health(health_url, auth_headers, timeout=600)
     ttft_s, inference_s = _measure_ttft(endpoint_url, model, auth_headers)
     total_s = time.monotonic() - t0
 

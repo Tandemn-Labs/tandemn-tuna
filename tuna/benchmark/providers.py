@@ -48,6 +48,8 @@ def is_cold(
         return _is_cold_runpod(health_url, auth_headers)
     if provider_name == "cerebrium" and metadata:
         return _is_cold_cerebrium(metadata)
+    if provider_name == "baseten" and metadata:
+        return _is_cold_baseten(metadata)
     return _is_cold_http(health_url, auth_headers)
 
 
@@ -64,6 +66,33 @@ def _is_cold_runpod(health_url: str, auth_headers: dict[str, str]) -> bool:
             and w.get("initializing", 0) == 0
         )
     except (requests.RequestException, ValueError):
+        return True
+
+
+def _is_cold_baseten(metadata: dict) -> bool:
+    """Check Baseten model status via REST API — doesn't wake the container."""
+    model_id = metadata.get("model_id", "")
+    if not model_id:
+        return True
+    api_key = os.environ.get("BASETEN_API_KEY", "")
+    if not api_key:
+        return True
+    try:
+        resp = requests.get(
+            f"https://api.baseten.co/v1/models/{model_id}",
+            headers={"Authorization": f"Api-Key {api_key}"},
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            return True
+        data = resp.json()
+        # Check if any replicas are running in the production environment
+        for env in data.get("model", {}).get("environments", []):
+            if env.get("name") == "production":
+                replicas = env.get("current_replicas", 0)
+                return replicas == 0
+        return True
+    except (requests.RequestException, ValueError, KeyError):
         return True
 
 
