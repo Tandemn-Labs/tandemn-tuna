@@ -160,14 +160,17 @@ def _measure_ttft(
             timeout=600,
             stream=True,
         )
+        if resp.status_code != 200:
+            print(f"  Warning: inference returned {resp.status_code}", file=sys.stderr)
+            return None, None
         for chunk in resp.iter_lines():
             if ttft is None and chunk:
                 ttft = time.monotonic() - start
         total = time.monotonic() - start
         return ttft, total
-    except requests.RequestException:
-        total = time.monotonic() - start
-        return ttft, total
+    except requests.RequestException as e:
+        print(f"  Warning: inference request failed: {e}", file=sys.stderr)
+        return None, None
 
 
 def _single_run(
@@ -279,6 +282,23 @@ def run_warm_cold_start(
     return results
 
 
+def _teardown(service_name: str) -> None:
+    """Tear down a deployment by service name."""
+    print("  Tearing down deployment...")
+    try:
+        from tuna.orchestrator import destroy_hybrid
+        from tuna.providers.registry import ensure_providers_for_deployment
+        from tuna.state import update_deployment_status
+
+        record = load_deployment(service_name)
+        if record:
+            ensure_providers_for_deployment(record)
+        destroy_hybrid(service_name, record=record)
+        update_deployment_status(service_name, "destroyed")
+    except Exception as e:
+        print(f"  Warning: teardown failed: {e}", file=sys.stderr)
+
+
 def run_fresh_cold_start(
     provider: str,
     gpu: str,
@@ -366,17 +386,40 @@ def run_fresh_cold_start(
     health_url = result.serverless.health_url or f"{endpoint_url}/health"
     auth_headers = get_auth_headers(provider)
 
-    # For fresh deploys, the cold start already happened during deploy.
-    # Measure a single inference to get TTFT, but use deploy_time as the real total.
+    # The deploy CLI returns fast but the container may still be booting.
+    # Wait for health to be ready — this is the real cold start.
+    t0 = time.monotonic()
+    print("  Waiting for container to be ready...")
+    health_ready_s = _wait_for_health(health_url, auth_headers, timeout=600)
+
+    if health_ready_s is None:
+        total_s = time.monotonic() - t0 + deploy_time
+        run = RunResult(
+            scenario="fresh_cold_start",
+            provider=provider,
+            gpu=gpu,
+            total_s=total_s,
+            deploy_time_s=deploy_time,
+            container_boot_s=container_boot_s,
+            model_load_s=model_load_s,
+            error="Health endpoint never became ready (timeout 600s)",
+        )
+        # Skip teardown below, jump to teardown section
+        if not no_teardown:
+            _teardown(request.service_name)
+        return [run]
+
     print("  Measuring first inference...")
     ttft_s, inference_s = _measure_ttft(endpoint_url, model, auth_headers)
+    total_s = time.monotonic() - t0 + deploy_time
 
     run = RunResult(
         scenario="fresh_cold_start",
         provider=provider,
         gpu=gpu,
-        total_s=deploy_time,
+        total_s=total_s,
         deploy_time_s=deploy_time,
+        health_ready_s=health_ready_s + deploy_time,
         first_inference_s=inference_s,
         ttft_s=ttft_s,
         container_boot_s=container_boot_s,
@@ -384,16 +427,7 @@ def run_fresh_cold_start(
     )
 
     if not no_teardown:
-        print("  Tearing down deployment...")
-        try:
-            from tuna.orchestrator import destroy_hybrid
-            from tuna.state import update_deployment_status
-
-            record = load_deployment(request.service_name)
-            destroy_hybrid(request.service_name, record=record)
-            update_deployment_status(request.service_name, "destroyed")
-        except Exception as e:
-            print(f"  Warning: teardown failed: {e}", file=sys.stderr)
+        _teardown(request.service_name)
 
     return [run]
 
