@@ -319,6 +319,10 @@ def run_fresh_cold_start(
     print(f"  Deploy completed in {deploy_time:.1f}s")
 
     if not result.serverless or not result.serverless.endpoint_url:
+        err = "Deployment failed — no endpoint returned"
+        if result.serverless and result.serverless.error:
+            err = result.serverless.error
+        print(f"  ERROR: {err}", file=sys.stderr)
         return [
             RunResult(
                 scenario="fresh_cold_start",
@@ -326,7 +330,7 @@ def run_fresh_cold_start(
                 gpu=gpu,
                 total_s=deploy_time,
                 deploy_time_s=deploy_time,
-                error="Deployment failed — no endpoint returned",
+                error=err,
             )
         ]
 
@@ -422,8 +426,12 @@ def _print_table(results: list[RunResult]) -> None:
     table.add_column("First Inference")
     table.add_column("Total")
 
+    has_errors = any(r.error for r in results)
+    if has_errors:
+        table.add_column("Error")
+
     for r in results:
-        table.add_row(
+        row = [
             r.provider,
             r.gpu,
             r.scenario,
@@ -432,7 +440,10 @@ def _print_table(results: list[RunResult]) -> None:
             f"{r.health_ready_s:.1f}s" if r.health_ready_s else "\u2014",
             f"{r.first_inference_s:.1f}s" if r.first_inference_s else "\u2014",
             f"{r.total_s:.1f}s",
-        )
+        ]
+        if has_errors:
+            row.append(r.error or "")
+        table.add_row(*row)
     Console().print(table)
 
 
