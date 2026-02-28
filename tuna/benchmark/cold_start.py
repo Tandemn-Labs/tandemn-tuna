@@ -70,6 +70,7 @@ def _wait_for_cold(
     timeout: float = 300,
     cooldown: float = 45,
     consecutive_required: int = 3,
+    metadata: dict | None = None,
 ) -> bool:
     """Wait for the endpoint to scale to zero.
 
@@ -99,7 +100,7 @@ def _wait_for_cold(
             break
 
         # Single check after quiet period
-        cold = is_cold(provider_name, health_url, auth_headers)
+        cold = is_cold(provider_name, health_url, auth_headers, metadata=metadata)
         if cold:
             elapsed = time.monotonic() - start
             print(f"  Scale-to-zero confirmed after {elapsed:.0f}s")
@@ -284,7 +285,7 @@ def run_warm_cold_start(
         print(f"\n--- Warm cold start run {i + 1}/{repeat} ---")
 
         print("  Waiting for scale-to-zero...")
-        if not _wait_for_cold(provider, health_url, auth_headers, timeout=idle_wait):
+        if not _wait_for_cold(provider, health_url, auth_headers, timeout=idle_wait, metadata=metadata):
             print(f"  Skipping run {i + 1}: endpoint did not scale to zero")
             continue
 

@@ -37,10 +37,17 @@ def get_auth_headers(provider_name: str) -> dict[str, str]:
     return {}
 
 
-def is_cold(provider_name: str, health_url: str, auth_headers: dict[str, str]) -> bool:
+def is_cold(
+    provider_name: str,
+    health_url: str,
+    auth_headers: dict[str, str],
+    metadata: dict | None = None,
+) -> bool:
     """Check whether a provider endpoint is currently scaled to zero."""
     if provider_name == "runpod":
         return _is_cold_runpod(health_url, auth_headers)
+    if provider_name == "cerebrium" and metadata:
+        return _is_cold_cerebrium(metadata)
     return _is_cold_http(health_url, auth_headers)
 
 
@@ -57,6 +64,35 @@ def _is_cold_runpod(health_url: str, auth_headers: dict[str, str]) -> bool:
             and w.get("initializing", 0) == 0
         )
     except (requests.RequestException, ValueError):
+        return True
+
+
+def _is_cold_cerebrium(metadata: dict) -> bool:
+    """Check Cerebrium app status via CLI — doesn't wake the container."""
+    import subprocess
+
+    svc = metadata.get("service_name", "")
+    project_id = metadata.get("project_id", "")
+    app_id = f"{project_id}-{svc}" if project_id else svc
+    try:
+        proc = subprocess.run(
+            ["cerebrium", "apps", "get", app_id, "--no-color"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        output = proc.stdout.lower()
+        # If app not found or replicas show 0, it's cold
+        if proc.returncode != 0:
+            return True
+        if "replicas: 0" in output or "running replicas: 0" in output:
+            return True
+        # If output contains replica info showing > 0, it's warm
+        if "replicas:" in output or "running" in output:
+            return False
+        # Can't determine — assume cold
+        return True
+    except (subprocess.TimeoutExpired, FileNotFoundError):
         return True
 
 
