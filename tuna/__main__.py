@@ -1027,6 +1027,12 @@ def cmd_benchmark_cold_start(args: argparse.Namespace) -> None:
     from tuna.benchmark.providers import get_auth_headers, validate_provider
     from tuna.state import load_deployment
 
+    # Set GCP env vars so cloudrun provider picks them up
+    if getattr(args, "gcp_project", None):
+        os.environ["GOOGLE_CLOUD_PROJECT"] = args.gcp_project
+    if getattr(args, "gcp_region", None):
+        os.environ["GOOGLE_CLOUD_REGION"] = args.gcp_region
+
     try:
         validate_provider(args.provider)
     except ValueError as e:
@@ -1220,6 +1226,8 @@ def main() -> None:
     p_cold.add_argument(
         "--endpoint-url", default=None, help="Use existing endpoint URL directly"
     )
+    p_cold.add_argument("--gcp-project", default=None, help="Google Cloud project ID")
+    p_cold.add_argument("--gcp-region", default=None, help="Google Cloud region (e.g. europe-west1)")
     p_cold.set_defaults(func=cmd_benchmark_cold_start)
 
     args = parser.parse_args()
