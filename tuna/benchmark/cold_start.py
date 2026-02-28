@@ -73,45 +73,43 @@ def _wait_for_cold(
 ) -> bool:
     """Wait for the endpoint to scale to zero.
 
-    First waits ``cooldown`` seconds without sending any requests
-    (so health polls don't reset the provider's scaledown timer),
-    then polls to confirm the endpoint is actually cold.
+    Waits ``cooldown`` seconds without sending any requests (so health
+    polls don't reset the provider's scaledown timer), then does a
+    single check.  If still warm, goes quiet again for another full
+    cooldown cycle.  RunPod uses JSON worker status so a single cold
+    check is enough.
     """
     start = time.monotonic()
 
-    # Phase 1: silent wait — let the scaledown timer expire
-    print(f"  Quiet period ({cooldown:.0f}s) — letting scaledown timer expire...")
-    while time.monotonic() - start < cooldown:
-        remaining = cooldown - (time.monotonic() - start)
-        if remaining > 15:
-            time.sleep(15)
-            print(f"  Quiet period... {time.monotonic() - start:.0f}s elapsed", flush=True)
-        else:
-            time.sleep(max(remaining, 0))
-
-    # Phase 2: poll to confirm cold
-    consecutive_cold = 0
-    last_progress = time.monotonic()
-
     while time.monotonic() - start < timeout:
+        # Quiet period — no requests, let the scaledown timer expire
+        quiet_end = time.monotonic() + cooldown
+        print(f"  Quiet period ({cooldown:.0f}s)...", flush=True)
+        while time.monotonic() < quiet_end:
+            if time.monotonic() - start >= timeout:
+                break
+            time.sleep(min(15, max(quiet_end - time.monotonic(), 0)))
+            if time.monotonic() < quiet_end:
+                print(
+                    f"  Quiet period... {time.monotonic() - start:.0f}s elapsed",
+                    flush=True,
+                )
+
+        if time.monotonic() - start >= timeout:
+            break
+
+        # Single check after quiet period
         cold = is_cold(provider_name, health_url, auth_headers)
         if cold:
-            consecutive_cold += 1
-            if provider_name == "runpod" or consecutive_cold >= consecutive_required:
-                elapsed = time.monotonic() - start
-                print(f"  Scale-to-zero confirmed after {elapsed:.0f}s")
-                return True
-        else:
-            consecutive_cold = 0
+            elapsed = time.monotonic() - start
+            print(f"  Scale-to-zero confirmed after {elapsed:.0f}s")
+            return True
 
-        now = time.monotonic()
-        if now - last_progress >= 15:
-            print(
-                f"  Waiting for scale-to-zero... {now - start:.0f}s elapsed",
-                flush=True,
-            )
-            last_progress = now
-        time.sleep(5)
+        print(
+            f"  Still warm after {time.monotonic() - start:.0f}s, "
+            "restarting quiet period...",
+            flush=True,
+        )
 
     print(
         f"  WARNING: scale-to-zero not confirmed after {timeout:.0f}s",
@@ -275,7 +273,7 @@ def run_warm_cold_start(
     health_url: str,
     metadata: dict,
     repeat: int = 3,
-    idle_wait: int = 120,
+    idle_wait: int = 300,
 ) -> list[RunResult]:
     """Benchmark cold start on an existing (warm) deployment."""
     validate_provider(provider)
@@ -464,7 +462,7 @@ def run_auto(
     model: str,
     scenario: str = "both",
     repeat: int = 3,
-    idle_wait: int = 120,
+    idle_wait: int = 300,
     max_model_len: int = 512,
     no_teardown: bool = False,
 ) -> list[RunResult]:

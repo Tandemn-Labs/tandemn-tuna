@@ -1207,7 +1207,7 @@ def main() -> None:
         default="both",
     )
     p_cold.add_argument("--repeat", type=int, default=3)
-    p_cold.add_argument("--idle-wait", type=int, default=120)
+    p_cold.add_argument("--idle-wait", type=int, default=300)
     p_cold.add_argument(
         "--output",
         choices=["table", "json", "csv"],

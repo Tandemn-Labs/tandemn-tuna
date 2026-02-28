@@ -107,12 +107,12 @@ def test_mean_single_run():
 
 @patch("tuna.benchmark.cold_start.is_cold")
 @patch("tuna.benchmark.cold_start.time.sleep")
-def test_wait_for_cold_consecutive(mock_sleep, mock_is_cold):
-    """3 consecutive cold checks → True."""
+def test_wait_for_cold_single_check(mock_sleep, mock_is_cold):
+    """Single cold check after quiet period → True."""
     mock_is_cold.return_value = True
     result = _wait_for_cold("modal", "http://h", {}, timeout=60, cooldown=0)
     assert result is True
-    assert mock_is_cold.call_count == 3
+    assert mock_is_cold.call_count == 1
 
 
 @patch("tuna.benchmark.cold_start.is_cold")
@@ -144,13 +144,12 @@ def test_wait_for_cold_timeout(mock_mono, mock_sleep, mock_is_cold):
 
 @patch("tuna.benchmark.cold_start.is_cold")
 @patch("tuna.benchmark.cold_start.time.sleep")
-def test_wait_for_cold_interrupted(mock_sleep, mock_is_cold):
-    """Cold interrupted by warm → resets counter, eventually succeeds."""
-    # cold, cold, warm, cold, cold, cold → success
-    mock_is_cold.side_effect = [True, True, False, True, True, True]
+def test_wait_for_cold_warm_then_cold(mock_sleep, mock_is_cold):
+    """Warm on first check → retries quiet period, cold on second → True."""
+    mock_is_cold.side_effect = [False, True]
     result = _wait_for_cold("modal", "http://h", {}, timeout=300, cooldown=0)
     assert result is True
-    assert mock_is_cold.call_count == 6
+    assert mock_is_cold.call_count == 2
 
 
 # -- _find_existing_deployment --
