@@ -355,7 +355,11 @@ def run_fresh_cold_start(
         print("  Tearing down deployment...")
         try:
             from tuna.orchestrator import destroy_hybrid
-            destroy_hybrid(request.service_name)
+            from tuna.state import update_deployment_status
+
+            record = load_deployment(request.service_name)
+            destroy_hybrid(request.service_name, record=record)
+            update_deployment_status(request.service_name, "destroyed")
         except Exception as e:
             print(f"  Warning: teardown failed: {e}", file=sys.stderr)
 
