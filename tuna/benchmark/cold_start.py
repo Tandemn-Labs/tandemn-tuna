@@ -333,6 +333,16 @@ def run_fresh_cold_start(
 
     ensure_provider_registered(provider)
 
+    # Try to start log watcher BEFORE deploy with pre-known metadata.
+    # Works for providers where service_name/app_name is enough (Modal, Cerebrium, CloudRun).
+    # For providers needing post-deploy IDs (Baseten), this returns None and we retry after.
+    pre_metadata = {"service_name": f"{request.service_name}-serverless"}
+    watcher = None
+    if supports_log_phases(provider):
+        watcher = create_log_watcher(provider, pre_metadata)
+        if watcher:
+            watcher.start()
+
     print(f"Deploying {model} on {provider} ({gpu})...")
     t_deploy_start = time.monotonic()
     result = launch_serverless_only(request)
@@ -345,6 +355,8 @@ def run_fresh_cold_start(
     save_deployment(request, result)
 
     if not result.serverless or not result.serverless.endpoint_url:
+        if watcher:
+            watcher.stop()
         err = "Deployment failed — no endpoint returned"
         if result.serverless and result.serverless.error:
             err = result.serverless.error
@@ -365,9 +377,9 @@ def run_fresh_cold_start(
     metadata = dict(result.serverless.metadata or {})
     auth_headers = get_auth_headers(provider)
 
-    # Start log watcher AFTER deploy — we now have real metadata (model_id, etc.)
-    watcher = None
-    if supports_log_phases(provider):
+    # If pre-deploy watcher wasn't possible (e.g. Baseten needs model_id),
+    # start it now with real metadata — container is still booting.
+    if watcher is None and supports_log_phases(provider):
         watcher = create_log_watcher(provider, metadata)
         if watcher:
             watcher.start()
