@@ -312,6 +312,16 @@ def run_fresh_cold_start(
 
     ensure_provider_registered(provider)
 
+    # Start log watcher BEFORE deploy so it captures boot/model load phases
+    # We need metadata for the watcher, but we only know service_name at this point.
+    # Build metadata from what we know (provider-specific names are predictable).
+    pre_metadata = {"service_name": f"{request.service_name}-serverless"}
+    watcher = None
+    if supports_log_phases(provider):
+        watcher = create_log_watcher(provider, pre_metadata)
+        if watcher:
+            watcher.start()
+
     print(f"Deploying {model} on {provider} ({gpu})...")
     t_deploy_start = time.monotonic()
     result = launch_serverless_only(request)
@@ -322,6 +332,17 @@ def run_fresh_cold_start(
     from tuna.state import save_deployment
 
     save_deployment(request, result)
+
+    # Extract log phases from the deploy (same clock domain: wall-clock diffs)
+    container_boot_s = None
+    model_load_s = None
+    if watcher:
+        watcher.stop()
+        p = watcher.phases
+        if p.container_start and p.model_load_start:
+            container_boot_s = p.model_load_start - p.container_start
+        if p.model_load_start and p.ready:
+            model_load_s = p.ready - p.model_load_start
 
     if not result.serverless or not result.serverless.endpoint_url:
         err = "Deployment failed — no endpoint returned"
@@ -335,21 +356,32 @@ def run_fresh_cold_start(
                 gpu=gpu,
                 total_s=deploy_time,
                 deploy_time_s=deploy_time,
+                container_boot_s=container_boot_s,
+                model_load_s=model_load_s,
                 error=err,
             )
         ]
 
     endpoint_url = result.serverless.endpoint_url
     health_url = result.serverless.health_url or f"{endpoint_url}/health"
-    metadata = dict(result.serverless.metadata or {})
     auth_headers = get_auth_headers(provider)
 
-    print("  Measuring fresh cold start...")
-    run = _single_run(
-        provider, endpoint_url, health_url, model, gpu,
-        auth_headers, metadata, "fresh_cold_start",
+    # For fresh deploys, the cold start already happened during deploy.
+    # Measure a single inference to get TTFT, but use deploy_time as the real total.
+    print("  Measuring first inference...")
+    ttft_s, inference_s = _measure_ttft(endpoint_url, model, auth_headers)
+
+    run = RunResult(
+        scenario="fresh_cold_start",
+        provider=provider,
+        gpu=gpu,
+        total_s=deploy_time,
+        deploy_time_s=deploy_time,
+        first_inference_s=inference_s,
+        ttft_s=ttft_s,
+        container_boot_s=container_boot_s,
+        model_load_s=model_load_s,
     )
-    run.deploy_time_s = deploy_time
 
     if not no_teardown:
         print("  Tearing down deployment...")
