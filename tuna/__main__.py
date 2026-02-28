@@ -1017,6 +1017,73 @@ def cmd_list(args: argparse.Namespace) -> None:
         print(f"{r.service_name:<30} {r.status:<12} {r.model_name:<30} {r.gpu:<10} {created:<26}")
 
 
+def cmd_benchmark_cold_start(args: argparse.Namespace) -> None:
+    from tuna.benchmark.cold_start import (
+        _record_to_result,
+        print_summary,
+        run_auto,
+        run_warm_cold_start,
+    )
+    from tuna.benchmark.providers import get_auth_headers, validate_provider
+    from tuna.state import load_deployment
+
+    try:
+        validate_provider(args.provider)
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    if args.service_name:
+        record = load_deployment(args.service_name)
+        if not record:
+            print(f"Error: deployment '{args.service_name}' not found", file=sys.stderr)
+            sys.exit(1)
+        dr = _record_to_result(record)
+        if not dr.endpoint_url:
+            print("Error: deployment has no endpoint URL", file=sys.stderr)
+            sys.exit(1)
+        results = run_warm_cold_start(
+            provider=args.provider,
+            gpu=args.gpu,
+            model=args.model,
+            endpoint_url=dr.endpoint_url,
+            health_url=dr.health_url or f"{dr.endpoint_url}/health",
+            metadata=dr.metadata,
+            repeat=args.repeat,
+            idle_wait=args.idle_wait,
+        )
+    elif args.endpoint_url:
+        endpoint = args.endpoint_url
+        health = f"{endpoint.rstrip('/')}/health"
+        results = run_warm_cold_start(
+            provider=args.provider,
+            gpu=args.gpu,
+            model=args.model,
+            endpoint_url=endpoint,
+            health_url=health,
+            metadata={},
+            repeat=args.repeat,
+            idle_wait=args.idle_wait,
+        )
+    else:
+        results = run_auto(
+            provider=args.provider,
+            gpu=args.gpu,
+            model=args.model,
+            scenario=args.scenario,
+            repeat=args.repeat,
+            idle_wait=args.idle_wait,
+            max_model_len=args.max_model_len,
+            no_teardown=args.no_teardown,
+        )
+
+    if results:
+        print_summary(results, output=args.output)
+    else:
+        print("No results collected.", file=sys.stderr)
+        sys.exit(1)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="tuna",
@@ -1122,6 +1189,38 @@ def main() -> None:
     p_list.add_argument("--status", default=None, choices=["active", "destroyed", "failed"],
                         help="Filter by deployment status")
     p_list.set_defaults(func=cmd_list)
+
+    # -- benchmark --
+    p_benchmark = subparsers.add_parser("benchmark", help="Benchmark tools")
+    benchmark_subs = p_benchmark.add_subparsers(dest="benchmark_command")
+    p_benchmark.set_defaults(func=lambda args: p_benchmark.print_help())
+
+    # -- benchmark cold-start --
+    p_cold = benchmark_subs.add_parser("cold-start", help="Measure cold start latency")
+    p_cold.add_argument("--provider", default="modal")
+    p_cold.add_argument("--gpu", default="T4")
+    p_cold.add_argument("--model", default="Qwen/Qwen3-0.6B")
+    p_cold.add_argument("--max-model-len", type=int, default=512)
+    p_cold.add_argument(
+        "--scenario",
+        choices=["fresh-cold", "warm-cold", "both"],
+        default="both",
+    )
+    p_cold.add_argument("--repeat", type=int, default=3)
+    p_cold.add_argument("--idle-wait", type=int, default=120)
+    p_cold.add_argument(
+        "--output",
+        choices=["table", "json", "csv"],
+        default="table",
+    )
+    p_cold.add_argument("--no-teardown", action="store_true")
+    p_cold.add_argument(
+        "--service-name", default=None, help="Use existing deployment by service name"
+    )
+    p_cold.add_argument(
+        "--endpoint-url", default=None, help="Use existing endpoint URL directly"
+    )
+    p_cold.set_defaults(func=cmd_benchmark_cold_start)
 
     args = parser.parse_args()
 
