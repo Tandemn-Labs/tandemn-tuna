@@ -425,6 +425,9 @@ def _print_table(results: list[RunResult]) -> None:
     table.add_column("Provider")
     table.add_column("GPU")
     table.add_column("Scenario")
+    has_deploy = any(r.deploy_time_s for r in results)
+    if has_deploy:
+        table.add_column("Deploy")
     table.add_column("Container Boot")
     table.add_column("Model Load")
     table.add_column("Health Ready")
@@ -440,12 +443,16 @@ def _print_table(results: list[RunResult]) -> None:
             r.provider,
             r.gpu,
             r.scenario,
+        ]
+        if has_deploy:
+            row.append(f"{r.deploy_time_s:.1f}s" if r.deploy_time_s else "\u2014")
+        row.extend([
             f"{r.container_boot_s:.1f}s" if r.container_boot_s else "\u2014",
             f"{r.model_load_s:.1f}s" if r.model_load_s else "\u2014",
             f"{r.health_ready_s:.1f}s" if r.health_ready_s else "\u2014",
             f"{r.first_inference_s:.1f}s" if r.first_inference_s else "\u2014",
             f"{r.total_s:.1f}s",
-        ]
+        ])
         if has_errors:
             row.append(r.error or "")
         table.add_row(*row)
