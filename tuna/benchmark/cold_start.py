@@ -308,6 +308,10 @@ def run_fresh_cold_start(
         scaling=scaling,
     )
 
+    from tuna.providers.registry import ensure_provider_registered
+
+    ensure_provider_registered(provider)
+
     print(f"Deploying {model} on {provider} ({gpu})...")
     t_deploy_start = time.monotonic()
     result = launch_serverless_only(request)
