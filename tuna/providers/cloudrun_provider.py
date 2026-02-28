@@ -122,6 +122,10 @@ class CloudRunProvider(InferenceProvider):
             valid_regions = provider_regions(request.gpu, "cloudrun")
             result.checks.append(self._check_gpu_region(gpu_accelerator, region, valid_regions))
 
+        # 7. Cloud NAT (GPU containers use VPC egress, need NAT for internet)
+        if gpu_accelerator:
+            result.checks.append(self._check_and_setup_cloud_nat(project_id, region))
+
         return result
 
     def _check_gcloud_installed(self) -> PreflightCheck:
@@ -330,6 +334,106 @@ class CloudRunProvider(InferenceProvider):
             fix_command=f"Use --region with one of: {', '.join(valid_regions)}",
         )
 
+    def _check_and_setup_cloud_nat(self, project_id: str, region: str) -> PreflightCheck:
+        """Check for Cloud NAT (needed for GPU containers to reach the internet).
+
+        Cloud Run GPU workloads use Direct VPC egress, which blocks outbound
+        internet unless Cloud NAT is configured. Auto-creates router + NAT if
+        missing.
+        """
+        router_name = f"tuna-nat-router-{region}"
+        nat_name = "tuna-nat-config"
+
+        # Check if a NAT already exists in this region on any router
+        try:
+            proc = subprocess.run(
+                [
+                    "gcloud", "compute", "routers", "list",
+                    f"--project={project_id}", f"--regions={region}",
+                    "--format=value(name)",
+                ],
+                capture_output=True, text=True, timeout=15,
+            )
+            if proc.returncode == 0:
+                for router in proc.stdout.strip().splitlines():
+                    nat_proc = subprocess.run(
+                        [
+                            "gcloud", "compute", "routers", "nats", "list",
+                            f"--router={router}",
+                            f"--project={project_id}", f"--region={region}",
+                            "--format=value(name)",
+                        ],
+                        capture_output=True, text=True, timeout=15,
+                    )
+                    if nat_proc.returncode == 0 and nat_proc.stdout.strip():
+                        return PreflightCheck(
+                            name="cloud_nat",
+                            passed=True,
+                            message=f"Cloud NAT found in {region} (router: {router})",
+                        )
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+
+        # No NAT found — create router + NAT
+        logger.info("No Cloud NAT in %s, creating router + NAT...", region)
+        try:
+            # Create router
+            proc = subprocess.run(
+                [
+                    "gcloud", "compute", "routers", "create", router_name,
+                    "--network=default", f"--region={region}",
+                    f"--project={project_id}",
+                ],
+                capture_output=True, text=True, timeout=60,
+            )
+            if proc.returncode != 0 and "already exists" not in proc.stderr:
+                return PreflightCheck(
+                    name="cloud_nat",
+                    passed=False,
+                    message=f"Failed to create NAT router: {proc.stderr.strip()[:200]}",
+                    fix_command=(
+                        f"gcloud compute routers create {router_name} "
+                        f"--network=default --region={region} --project={project_id}"
+                    ),
+                )
+
+            # Create NAT config
+            proc = subprocess.run(
+                [
+                    "gcloud", "compute", "routers", "nats", "create", nat_name,
+                    f"--router={router_name}", f"--region={region}",
+                    "--auto-allocate-nat-external-ips",
+                    "--nat-all-subnet-ip-ranges",
+                    f"--project={project_id}",
+                ],
+                capture_output=True, text=True, timeout=60,
+            )
+            if proc.returncode != 0 and "already exists" not in proc.stderr:
+                return PreflightCheck(
+                    name="cloud_nat",
+                    passed=False,
+                    message=f"Failed to create NAT config: {proc.stderr.strip()[:200]}",
+                    fix_command=(
+                        f"gcloud compute routers nats create {nat_name} "
+                        f"--router={router_name} --region={region} "
+                        f"--auto-allocate-nat-external-ips --nat-all-subnet-ip-ranges "
+                        f"--project={project_id}"
+                    ),
+                )
+
+            return PreflightCheck(
+                name="cloud_nat",
+                passed=True,
+                message=f"Cloud NAT auto-created in {region}",
+                auto_fixed=True,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+            return PreflightCheck(
+                name="cloud_nat",
+                passed=False,
+                message=f"Failed to setup Cloud NAT: {e}",
+            )
+
     # -- Plan / Deploy / Destroy -----------------------------------------
 
     def plan(self, request: DeployRequest, vllm_cmd: str) -> ProviderPlan:
@@ -459,7 +563,7 @@ class CloudRunProvider(InferenceProvider):
                 tcp_socket=TCPSocketAction(port=port),
                 initial_delay_seconds=30,
                 period_seconds=10,
-                failure_threshold=30,
+                failure_threshold=60,
                 timeout_seconds=5,
             ),
         )
