@@ -454,9 +454,15 @@ def run_auto(
     validate_provider(provider)
     results: list[RunResult] = []
 
+    # For "both": keep fresh deploy alive so warm phase can use it
+    keep_for_warm = scenario == "both"
+
     if scenario in ("fresh-cold", "both"):
         results.extend(
-            run_fresh_cold_start(provider, gpu, model, max_model_len, no_teardown)
+            run_fresh_cold_start(
+                provider, gpu, model, max_model_len,
+                no_teardown=no_teardown or keep_for_warm,
+            )
         )
 
     if scenario in ("warm-cold", "both"):
@@ -475,6 +481,9 @@ def run_auto(
                     idle_wait=idle_wait,
                 )
             )
+            # Teardown after warm phase completes (unless --no-teardown)
+            if not no_teardown and keep_for_warm:
+                _teardown(record.service_name)
         elif scenario == "warm-cold":
             print(
                 f"No active deployment found for {provider}/{model}. "
