@@ -150,6 +150,38 @@ class CerebriumLogWatcher(LogWatcher):
         super().stop()
 
 
+class BasetenLogWatcher(LogWatcher):
+    """Streams logs via `truss model-logs --model-id <id> --deployment-id <id> --tail`."""
+
+    def __init__(self, model_id: str, deployment_id: str) -> None:
+        super().__init__()
+        self.model_id = model_id
+        self.deployment_id = deployment_id
+        self._proc: Optional[subprocess.Popen] = None
+
+    def _stream_lines(self) -> Iterator[tuple[float, str]]:
+        self._proc = subprocess.Popen(
+            [
+                "truss", "model-logs",
+                "--model-id", self.model_id,
+                "--deployment-id", self.deployment_id,
+                "--tail",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        assert self._proc.stdout is not None
+        for line in self._proc.stdout:
+            yield time.time(), line.rstrip()
+        self._proc.wait()
+
+    def stop(self) -> None:
+        if self._proc and self._proc.poll() is None:
+            self._proc.terminate()
+        super().stop()
+
+
 def create_log_watcher(provider_name: str, metadata: dict) -> LogWatcher | None:
     """Factory: returns a log watcher for supported providers, else None."""
     if provider_name == "modal":
@@ -166,4 +198,9 @@ def create_log_watcher(provider_name: str, metadata: dict) -> LogWatcher | None:
         svc = metadata.get("service_name")
         if svc:
             return CerebriumLogWatcher(svc)
+    elif provider_name == "baseten":
+        model_id = metadata.get("model_id")
+        deployment_id = metadata.get("deployment_id")
+        if model_id and deployment_id:
+            return BasetenLogWatcher(model_id, deployment_id)
     return None

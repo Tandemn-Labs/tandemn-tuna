@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from tuna.benchmark.log_watchers import (
+    BasetenLogWatcher,
     CloudRunLogWatcher,
     CerebriumLogWatcher,
     LogPhases,
@@ -83,12 +84,20 @@ def test_create_log_watcher_cerebrium():
     assert isinstance(watcher, CerebriumLogWatcher)
 
 
+def test_create_log_watcher_baseten():
+    meta = {"model_id": "abc123", "deployment_id": "dep456"}
+    watcher = create_log_watcher("baseten", meta)
+    assert isinstance(watcher, BasetenLogWatcher)
+    assert watcher.model_id == "abc123"
+    assert watcher.deployment_id == "dep456"
+
+
+def test_create_log_watcher_baseten_missing_ids():
+    assert create_log_watcher("baseten", {}) is None
+
+
 def test_create_log_watcher_runpod_returns_none():
     assert create_log_watcher("runpod", {}) is None
-
-
-def test_create_log_watcher_baseten_returns_none():
-    assert create_log_watcher("baseten", {}) is None
 
 
 def test_create_log_watcher_modal_missing_app_name():

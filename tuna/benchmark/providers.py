@@ -6,7 +6,7 @@ import os
 
 import requests
 
-LOG_CAPABLE_PROVIDERS = frozenset({"modal", "cloudrun", "cerebrium"})
+LOG_CAPABLE_PROVIDERS = frozenset({"modal", "cloudrun", "cerebrium", "baseten"})
 EXCLUDED_PROVIDERS = frozenset({"azure"})
 EXCLUDED_REASON = {
     "azure": (

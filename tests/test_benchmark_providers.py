@@ -148,6 +148,10 @@ def test_modal_supports_logs():
     assert supports_log_phases("modal") is True
 
 
+def test_baseten_supports_logs():
+    assert supports_log_phases("baseten") is True
+
+
 def test_runpod_no_logs():
     assert supports_log_phases("runpod") is False
 

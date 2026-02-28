@@ -107,15 +107,15 @@ def _wait_for_health(
     auth_headers: dict[str, str],
     timeout: float = 600,
 ) -> float | None:
-    """Wait for health endpoint to return 200. Returns monotonic duration."""
+    """Wait for health endpoint to return 200. Returns monotonic duration or None on timeout."""
+    import requests as req
+
     start = time.monotonic()
     last_progress = start
 
     while time.monotonic() - start < timeout:
         try:
-            import requests
-
-            resp = requests.get(health_url, headers=auth_headers, timeout=10)
+            resp = req.get(health_url, headers=auth_headers, timeout=10)
             if resp.status_code == 200:
                 return time.monotonic() - start
         except Exception:
@@ -198,10 +198,11 @@ def _single_run(
     )
     trigger_thread.start()
 
-    health_ready_s = _wait_for_health(health_url, auth_headers, timeout=600)
+    hw = _wait_for_health(health_url, auth_headers, timeout=600)
     ttft_s, inference_s = _measure_ttft(endpoint_url, model, auth_headers)
     total_s = time.monotonic() - t0
 
+    # Phase breakdown: prefer log watcher (more precise), fall back to HTTP timing
     container_boot_s = None
     model_load_s = None
     if watcher:
@@ -404,7 +405,6 @@ def run_fresh_cold_start(
             model_load_s=model_load_s,
             error="Health endpoint never became ready (timeout 600s)",
         )
-        # Skip teardown below, jump to teardown section
         if not no_teardown:
             _teardown(request.service_name)
         return [run]
