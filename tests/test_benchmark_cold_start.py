@@ -110,7 +110,7 @@ def test_mean_single_run():
 def test_wait_for_cold_consecutive(mock_sleep, mock_is_cold):
     """3 consecutive cold checks → True."""
     mock_is_cold.return_value = True
-    result = _wait_for_cold("modal", "http://h", {}, timeout=60)
+    result = _wait_for_cold("modal", "http://h", {}, timeout=60, cooldown=0)
     assert result is True
     assert mock_is_cold.call_count == 3
 
@@ -120,7 +120,7 @@ def test_wait_for_cold_consecutive(mock_sleep, mock_is_cold):
 def test_wait_for_cold_runpod_immediate(mock_sleep, mock_is_cold):
     """RunPod: single cold check → True (no consecutive needed)."""
     mock_is_cold.return_value = True
-    result = _wait_for_cold("runpod", "http://h", {}, timeout=60)
+    result = _wait_for_cold("runpod", "http://h", {}, timeout=60, cooldown=0)
     assert result is True
     assert mock_is_cold.call_count == 1
 
@@ -138,7 +138,7 @@ def test_wait_for_cold_timeout(mock_mono, mock_sleep, mock_is_cold):
         return call_count * 10.0
     mock_mono.side_effect = mono_side
     mock_is_cold.return_value = False
-    result = _wait_for_cold("modal", "http://h", {}, timeout=30)
+    result = _wait_for_cold("modal", "http://h", {}, timeout=30, cooldown=0)
     assert result is False
 
 
@@ -148,7 +148,7 @@ def test_wait_for_cold_interrupted(mock_sleep, mock_is_cold):
     """Cold interrupted by warm → resets counter, eventually succeeds."""
     # cold, cold, warm, cold, cold, cold → success
     mock_is_cold.side_effect = [True, True, False, True, True, True]
-    result = _wait_for_cold("modal", "http://h", {}, timeout=300)
+    result = _wait_for_cold("modal", "http://h", {}, timeout=300, cooldown=0)
     assert result is True
     assert mock_is_cold.call_count == 6
 

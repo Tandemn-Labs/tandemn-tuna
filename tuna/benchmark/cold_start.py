@@ -68,12 +68,30 @@ def _wait_for_cold(
     health_url: str,
     auth_headers: dict[str, str],
     timeout: float = 300,
+    cooldown: float = 45,
     consecutive_required: int = 3,
 ) -> bool:
-    """Wait for the endpoint to scale to zero."""
+    """Wait for the endpoint to scale to zero.
+
+    First waits ``cooldown`` seconds without sending any requests
+    (so health polls don't reset the provider's scaledown timer),
+    then polls to confirm the endpoint is actually cold.
+    """
     start = time.monotonic()
+
+    # Phase 1: silent wait — let the scaledown timer expire
+    print(f"  Quiet period ({cooldown:.0f}s) — letting scaledown timer expire...")
+    while time.monotonic() - start < cooldown:
+        remaining = cooldown - (time.monotonic() - start)
+        if remaining > 15:
+            time.sleep(15)
+            print(f"  Quiet period... {time.monotonic() - start:.0f}s elapsed", flush=True)
+        else:
+            time.sleep(max(remaining, 0))
+
+    # Phase 2: poll to confirm cold
     consecutive_cold = 0
-    last_progress = start
+    last_progress = time.monotonic()
 
     while time.monotonic() - start < timeout:
         cold = is_cold(provider_name, health_url, auth_headers)
