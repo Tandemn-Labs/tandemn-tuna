@@ -27,6 +27,7 @@ class DeployRequest:
     public: bool = False  # If True, make endpoints publicly accessible (no auth)
     vllm_version: str = "0.15.1"  # Set by orchestrator to match serverless provider
     serverless_only: bool = False  # skip spot + router
+    quantization: Optional[str] = None  # e.g. "awq", "gptq", "fp8"
 
     def __post_init__(self):
         import re
