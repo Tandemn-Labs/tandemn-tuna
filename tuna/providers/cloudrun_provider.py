@@ -14,11 +14,36 @@ from tuna.models import DeployRequest, DeploymentResult, PreflightCheck, Preflig
 from tuna.providers.base import InferenceProvider
 from tuna.providers.registry import register
 
+import requests as _requests
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_REGION = "us-central1"
 DEFAULT_IMAGE = "vllm/vllm-openai:v0.15.1"
 VLLM_PORT = 8000
+
+
+def _get_model_size_gb(model_name: str) -> float:
+    """Fetch total safetensors size in GB from HuggingFace API.
+
+    Returns 0.0 if the size cannot be determined.
+    """
+    try:
+        resp = _requests.get(
+            f"https://huggingface.co/api/models/{model_name}",
+            params={"blobs": "true"},
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            return 0.0
+        total = sum(
+            s.get("size", 0)
+            for s in resp.json().get("siblings", [])
+            if s.get("rfilename", "").endswith(".safetensors")
+        )
+        return total / 1e9
+    except Exception:
+        return 0.0
 
 REQUIRED_APIS = ["run.googleapis.com", "iam.googleapis.com"]
 
@@ -121,6 +146,10 @@ class CloudRunProvider(InferenceProvider):
         if gpu_accelerator:
             valid_regions = provider_regions(request.gpu, "cloudrun")
             result.checks.append(self._check_gpu_region(gpu_accelerator, region, valid_regions))
+
+        # 7. HF_TOKEN warning for GPU workloads (non-blocking)
+        if gpu_accelerator:
+            result.checks.append(self._check_hf_token())
 
         return result
 
@@ -330,6 +359,25 @@ class CloudRunProvider(InferenceProvider):
             fix_command=f"Use --region with one of: {', '.join(valid_regions)}",
         )
 
+    def _check_hf_token(self) -> PreflightCheck:
+        """Warn if HF_TOKEN is not set — anonymous HuggingFace downloads are rate-limited."""
+        hf_token = os.environ.get("HF_TOKEN", "")
+        if hf_token:
+            return PreflightCheck(
+                name="hf_token",
+                passed=True,
+                message="HF_TOKEN is set",
+            )
+        return PreflightCheck(
+            name="hf_token",
+            passed=True,  # Non-blocking: warn but don't fail
+            message=(
+                "HF_TOKEN not set — model downloads may be rate-limited by HuggingFace. "
+                "Set HF_TOKEN env var for reliable GPU deployments"
+            ),
+            fix_command="export HF_TOKEN=<your-token>  # https://huggingface.co/settings/tokens",
+        )
+
     # -- Plan / Deploy / Destroy -----------------------------------------
 
     def plan(self, request: DeployRequest, vllm_cmd: str) -> ProviderPlan:
@@ -365,9 +413,15 @@ class CloudRunProvider(InferenceProvider):
         if request.cold_start_mode == "fast_boot":
             env["ENFORCE_EAGER"] = "true"
 
+        env["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
+
         hf_token = os.environ.get("HF_TOKEN", "")
         if hf_token:
             env["HF_TOKEN"] = hf_token
+
+        # Use HF mirror to avoid IP-based rate limits on shared Cloud Run egress IPs
+        hf_endpoint = os.environ.get("HF_ENDPOINT", "https://hf-mirror.com")
+        env["HF_ENDPOINT"] = hf_endpoint
 
         # Build vLLM CLI args — always tp=1 regardless of request
         container_args = [
@@ -381,6 +435,18 @@ class CloudRunProvider(InferenceProvider):
         ]
         if request.cold_start_mode == "fast_boot":
             container_args.append("--enforce-eager")
+        if hf_token:
+            container_args.extend(["--hf-token", hf_token])
+
+        # Scale startup probe with model size: ~15s per GB for download + load,
+        # with a floor of 120 checks (= 20 min at 10s period).
+        model_gb = _get_model_size_gb(request.model_name)
+        startup_failure_threshold = max(120, int(model_gb * 15))
+        logger.info(
+            "Model size: %.1f GB → startup probe failure_threshold=%d (max %ds)",
+            model_gb, startup_failure_threshold,
+            30 + startup_failure_threshold * 10,
+        )
 
         metadata: dict[str, str] = {
             "service_name": service_name,
@@ -394,6 +460,7 @@ class CloudRunProvider(InferenceProvider):
             "max_instance_count": str(serverless.workers_max),
             "max_concurrency": str(serverless.concurrency),
             "timeout_seconds": str(serverless.timeout),
+            "startup_failure_threshold": str(startup_failure_threshold),
             "cpu": "8",
             "memory": "32Gi",
             "public_access": str(request.public).lower(),
@@ -459,7 +526,7 @@ class CloudRunProvider(InferenceProvider):
                 tcp_socket=TCPSocketAction(port=port),
                 initial_delay_seconds=30,
                 period_seconds=10,
-                failure_threshold=30,
+                failure_threshold=int(plan.metadata.get("startup_failure_threshold", "120")),
                 timeout_seconds=5,
             ),
         )
@@ -481,13 +548,31 @@ class CloudRunProvider(InferenceProvider):
             gpu_zonal_redundancy_disabled=True,
         )
 
+        # Disable IAM invoker check when public access is requested.
+        # This works even when org policies block allUsers IAM bindings.
+        public = plan.metadata.get("public_access") == "true"
         service = Service(
             template=revision_template,
+            invoker_iam_disabled=public,
         )
 
         client = ServicesClient()
+        full_name = f"{parent}/services/{service_name}"
 
-        # Create or update the service
+        # Delete any existing service first — failed revisions keep retrying
+        # and burn through HuggingFace rate limits.
+        try:
+            logger.info("Deleting existing service %s (if any)...", service_name)
+            client.delete_service(name=full_name).result()
+            logger.info("Deleted existing service %s", service_name)
+        except Exception as del_err:
+            error_str = str(del_err)
+            if "NotFound" in error_str or "404" in error_str:
+                logger.debug("No existing service %s to delete", service_name)
+            else:
+                logger.warning("Could not delete existing service %s: %s", service_name, del_err)
+
+        # Create the service fresh
         try:
             logger.info("Creating Cloud Run service: %s in %s", service_name, region)
             operation = client.create_service(
@@ -497,27 +582,12 @@ class CloudRunProvider(InferenceProvider):
             )
             result_service = operation.result()
         except Exception as e:
-            error_str = str(e)
-            if "AlreadyExists" in error_str or "409" in error_str:
-                logger.info("Service %s already exists, updating...", service_name)
-                try:
-                    service.name = f"{parent}/services/{service_name}"
-                    operation = client.update_service(service=service)
-                    result_service = operation.result()
-                except Exception as update_err:
-                    logger.error("Cloud Run service update failed: %s", update_err)
-                    return DeploymentResult(
-                        provider=self.name(),
-                        error=f"Service update failed: {update_err}",
-                        metadata=dict(plan.metadata),
-                    )
-            else:
-                logger.error("Cloud Run service creation failed: %s", e)
-                return DeploymentResult(
-                    provider=self.name(),
-                    error=f"Service creation failed: {e}",
-                    metadata=dict(plan.metadata),
-                )
+            logger.error("Cloud Run service creation failed: %s", e)
+            return DeploymentResult(
+                provider=self.name(),
+                error=f"Service creation failed: {e}",
+                metadata=dict(plan.metadata),
+            )
 
         service_uri = result_service.uri
 

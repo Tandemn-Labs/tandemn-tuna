@@ -172,6 +172,8 @@ class BasetenProvider(InferenceProvider):
         except (FileNotFoundError, subprocess.TimeoutExpired):
             pass
 
+        # TODO: auto-fix by running `truss login --api-key $BASETEN_API_KEY`
+        #       when BASETEN_API_KEY is set (like other auto_fixed checks).
         return PreflightCheck(
             name="truss_authenticated",
             passed=False,
@@ -276,11 +278,16 @@ class BasetenProvider(InferenceProvider):
                     metadata=dict(plan.metadata),
                 )
 
+            # Parse deployment_id from logs URL (for log streaming)
+            deployment_id = self._parse_deployment_id(result.stdout)
+
             # /production/sync passes through all paths to the container
             # so the router can call /v1/chat/completions, /health, etc.
             endpoint_url = f"https://model-{model_id}.api.baseten.co/production/sync"
             metadata = dict(plan.metadata)
             metadata["model_id"] = model_id
+            if deployment_id:
+                metadata["deployment_id"] = deployment_id
 
             self._configure_autoscaling(
                 model_id,
@@ -316,6 +323,16 @@ class BasetenProvider(InferenceProvider):
                 if match:
                     return match.group(1)
         return None
+
+    def _parse_deployment_id(self, stdout: str) -> str | None:
+        """Extract deployment_id from truss push stdout logs URL.
+
+        Format: https://app.baseten.co/models/<model_id>/logs/<deployment_id>
+        """
+        match = re.search(
+            r"app\.baseten\.co/models/[a-zA-Z0-9]+/logs/([a-zA-Z0-9]+)", stdout,
+        )
+        return match.group(1) if match else None
 
     def _configure_autoscaling(
         self, model_id: str, *, concurrency_target: int, scale_down_delay: int

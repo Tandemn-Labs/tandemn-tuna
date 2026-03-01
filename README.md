@@ -130,6 +130,12 @@ gcloud config set project <YOUR_PROJECT_ID>
 
 You also need billing enabled and the Cloud Run API (`run.googleapis.com`) enabled on your project.
 
+**GPU deployments:** For reliable GPU deploys, set `HF_TOKEN` so model downloads aren't rate-limited by HuggingFace:
+
+```bash
+export HF_TOKEN=<your-token>  # https://huggingface.co/settings/tokens
+```
+
 </details>
 
 <details>

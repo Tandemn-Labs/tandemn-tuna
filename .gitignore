@@ -44,5 +44,8 @@ service-account*.json
 *.pem
 *.key
 
+# Logs
+tmp/
+
 # Misc
 n

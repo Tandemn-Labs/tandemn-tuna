@@ -28,10 +28,11 @@ image = (
         "libglib2.0-0",
         "libsm6",
     )
-    .pip_install("vllm=={vllm_version}", "huggingface-hub")
+    .pip_install("vllm=={vllm_version}", "huggingface-hub", "hf_transfer")
     .env(
         {{
             "HF_XET_HIGH_PERFORMANCE": "1",
+            "HF_HUB_ENABLE_HF_TRANSFER": "1",
             "HF_HUB_CACHE": HF_CACHE_PATH,
         }}
     )

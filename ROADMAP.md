@@ -57,7 +57,7 @@ Spot (via SkyPilot):
   - DCGM metrics: GPU utilization, memory, power, temperature (from spot VMs)
   - Router metrics: latency p50/p95/p99, throughput, backend split, error rates
   - Cost metrics: real-time spend per backend, savings vs on-demand baseline
-- Cold start benchmarking suite — automated scripts measuring cold start across providers, broken down by phase (container pull, weight download, model load, warmup)
+- ~~Cold start benchmarking suite — automated scripts measuring cold start across providers, broken down by phase (container pull, weight download, model load, warmup)~~
   ```
   tuna benchmark cold-start --providers modal,runpod,baseten,cloudrun --gpu T4 --model Qwen/Qwen3-0.6B
   ```
@@ -128,7 +128,7 @@ Spot (via SkyPilot):
 - Automatic vLLM version alignment across providers
 - Graceful spot drain — finish in-flight requests on preemption signal
 - Model registry integration (S3, GCS, custom)
-- BDN/weights migration (Baseten) — revisit when BDN pre-mounting works reliably
+- ~~BDN/weights migration (Baseten) — revisit when BDN pre-mounting works reliably~~
 - Batch inference mode on spot GPUs
 - LoRA adapter hot-swapping on a single base model
 

@@ -11,23 +11,22 @@ model_metadata:
 base_image:
   image: vllm/vllm-openai:v{vllm_version}
 
-model_cache:
-  - repo_id: {model}
-    revision: main
-    use_volume: true
-    volume_folder: {model_cache_folder}
+weights:
+  - source: "hf://{model}@main"
+    mount_location: "/models/{model_cache_folder}"
+    allow_patterns: ["*.safetensors", "*.json"]
 
 docker_server:
   start_command: >-
-    bash -c "truss-transfer-cli &&
-    vllm serve {model}
+    vllm serve /models/{model_cache_folder}
+    --served-model-name {model}
     --host 0.0.0.0
     --port 8000
     --max-model-len {max_model_len}
     --tensor-parallel-size {tp_size}
     --gpu-memory-utilization 0.95
     --disable-log-requests
-    {eager_flag}"
+    {eager_flag}
   readiness_endpoint: /health
   liveness_endpoint: /health
   predict_endpoint: /v1/chat/completions
