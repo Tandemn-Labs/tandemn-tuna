@@ -7,8 +7,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from tuna.benchmark.providers import (
+    BENCHMARKABLE_PROVIDERS,
     get_auth_headers,
     is_cold,
+    resolve_providers,
     supports_log_phases,
     trigger_cold_start,
     validate_provider,
@@ -29,6 +31,38 @@ def test_modal_allowed():
 
 def test_runpod_allowed():
     validate_provider("runpod")
+
+
+# -- resolve_providers --
+
+
+def test_resolve_all():
+    result = resolve_providers("all")
+    assert result == BENCHMARKABLE_PROVIDERS
+    assert "azure" not in result
+    assert "skyserve" not in result
+
+
+def test_resolve_single():
+    assert resolve_providers("modal") == ["modal"]
+
+
+def test_resolve_comma_separated():
+    assert resolve_providers("modal,runpod,baseten") == ["modal", "runpod", "baseten"]
+
+
+def test_resolve_comma_with_spaces():
+    assert resolve_providers("modal , runpod") == ["modal", "runpod"]
+
+
+def test_resolve_azure_rejected():
+    with pytest.raises(ValueError, match="30\\+ min"):
+        resolve_providers("azure")
+
+
+def test_resolve_comma_with_azure_rejected():
+    with pytest.raises(ValueError, match="30\\+ min"):
+        resolve_providers("modal,azure")
 
 
 # -- get_auth_headers --

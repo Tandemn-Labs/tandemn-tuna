@@ -14,12 +14,23 @@ EXCLUDED_REASON = {
         "making cold start benchmarking impractical."
     ),
 }
+BENCHMARKABLE_PROVIDERS = ["modal", "runpod", "cloudrun", "baseten", "cerebrium"]
 
 
 def validate_provider(provider: str) -> None:
     """Reject providers unsuitable for cold start benchmarking."""
     if provider in EXCLUDED_PROVIDERS:
         raise ValueError(EXCLUDED_REASON[provider])
+
+
+def resolve_providers(value: str) -> list[str]:
+    """Resolve provider arg: 'all', comma-separated, or single name."""
+    if value == "all":
+        return list(BENCHMARKABLE_PROVIDERS)
+    providers = [p.strip() for p in value.split(",")]
+    for p in providers:
+        validate_provider(p)
+    return providers
 
 
 def get_auth_headers(provider_name: str) -> dict[str, str]:
