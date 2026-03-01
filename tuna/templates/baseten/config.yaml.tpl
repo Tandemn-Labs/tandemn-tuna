@@ -19,7 +19,8 @@ model_cache:
 
 docker_server:
   start_command: >-
-    bash -c "truss-transfer-cli &&
+    bash -c "export HF_HUB_ENABLE_HF_TRANSFER=1 &&
+    truss-transfer-cli &&
     vllm serve {model}
     --host 0.0.0.0
     --port 8000

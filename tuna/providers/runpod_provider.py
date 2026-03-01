@@ -144,6 +144,8 @@ class RunPodProvider(InferenceProvider):
         if request.cold_start_mode == "fast_boot":
             env["ENFORCE_EAGER"] = "true"
 
+        env["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
+
         hf_token = os.environ.get("HF_TOKEN", "")
         if hf_token:
             env["HF_TOKEN"] = hf_token

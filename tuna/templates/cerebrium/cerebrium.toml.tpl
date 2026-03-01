@@ -22,6 +22,10 @@ load_balancing = "min-connections"
 
 [cerebrium.dependencies.pip]
 vllm = "=={vllm_version}"
+hf-transfer = "*"
+
+[cerebrium.runtime.env]
+HF_HUB_ENABLE_HF_TRANSFER = "1"
 
 [cerebrium.runtime.custom]
 entrypoint = ["vllm", "serve", "{model}", "--host", "0.0.0.0", "--port", "8080", "--max-model-len", "{max_model_len}", "--tensor-parallel-size", "{tp_size}", "--gpu-memory-utilization", "0.95", "--disable-log-requests", "--served-model-name", "{model}"{eager_flag}]
