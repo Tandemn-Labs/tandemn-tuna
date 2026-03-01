@@ -274,32 +274,32 @@ class TestBasetenProviderBasics:
 
 
 # ---------------------------------------------------------------------------
-# model_cache + truss-transfer-cli template tests
+# BDN weights template tests
 # ---------------------------------------------------------------------------
 
-class TestBasetenModelCache:
-    def test_template_has_model_cache_block(self, provider, request_l4, vllm_cmd):
+class TestBasetenWeights:
+    def test_template_has_weights_block(self, provider, request_l4, vllm_cmd):
         plan = provider.plan(request_l4, vllm_cmd)
         parsed = yaml.safe_load(plan.rendered_script)
-        assert "model_cache" in parsed
-        assert len(parsed["model_cache"]) == 1
-        assert parsed["model_cache"][0]["repo_id"] == "Qwen/Qwen3-0.6B"
-        assert parsed["model_cache"][0]["revision"] == "main"
-        assert parsed["model_cache"][0]["use_volume"] is True
-        assert parsed["model_cache"][0]["volume_folder"] == "Qwen--Qwen3-0.6B"
+        assert "weights" in parsed
+        assert "model_cache" not in parsed
+        assert len(parsed["weights"]) == 1
+        assert parsed["weights"][0]["source"] == "hf://Qwen/Qwen3-0.6B@main"
+        assert parsed["weights"][0]["mount_location"] == "/models/Qwen--Qwen3-0.6B"
+        assert parsed["weights"][0]["allow_patterns"] == ["*.safetensors", "*.json"]
 
-    def test_template_has_truss_transfer_cli(self, provider, request_l4, vllm_cmd):
+    def test_template_no_truss_transfer_cli(self, provider, request_l4, vllm_cmd):
         plan = provider.plan(request_l4, vllm_cmd)
-        assert "truss-transfer-cli &&" in plan.rendered_script
+        assert "truss-transfer-cli" not in plan.rendered_script
 
-    def test_start_command_begins_with_bash_truss_transfer(self, provider, request_l4, vllm_cmd):
+    def test_start_command_uses_local_mount_path(self, provider, request_l4, vllm_cmd):
         plan = provider.plan(request_l4, vllm_cmd)
         parsed = yaml.safe_load(plan.rendered_script)
         start_cmd = parsed["docker_server"]["start_command"]
-        assert start_cmd.strip().startswith("bash -c")
-        assert "truss-transfer-cli &&" in start_cmd
+        assert start_cmd.strip().startswith("vllm serve /models/")
+        assert "bash -c" not in start_cmd
 
-    def test_model_cache_repo_id_matches_model(self, provider, vllm_cmd):
+    def test_weights_source_matches_model(self, provider, vllm_cmd):
         req = DeployRequest(
             model_name="meta-llama/Llama-3-8B",
             gpu="H100",
@@ -308,7 +308,7 @@ class TestBasetenModelCache:
         )
         plan = provider.plan(req, vllm_cmd)
         parsed = yaml.safe_load(plan.rendered_script)
-        assert parsed["model_cache"][0]["repo_id"] == "meta-llama/Llama-3-8B"
+        assert parsed["weights"][0]["source"] == "hf://meta-llama/Llama-3-8B@main"
 
 
 # ---------------------------------------------------------------------------
