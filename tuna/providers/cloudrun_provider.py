@@ -435,6 +435,8 @@ class CloudRunProvider(InferenceProvider):
         ]
         if request.cold_start_mode == "fast_boot":
             container_args.append("--enforce-eager")
+        if request.quantization:
+            container_args.extend(["--quantization", request.quantization])
         if hf_token:
             container_args.extend(["--hf-token", hf_token])
 
