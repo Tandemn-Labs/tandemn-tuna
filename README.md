@@ -130,11 +130,10 @@ gcloud config set project <YOUR_PROJECT_ID>
 
 You also need billing enabled and the Cloud Run API (`run.googleapis.com`) enabled on your project.
 
-**GPU deployments:** Cloud Run GPU containers use VPC egress and need [Cloud NAT](https://cloud.google.com/nat/docs/overview) for internet access (e.g. downloading model weights from HuggingFace). Tuna auto-creates a NAT router during preflight checks, but you can also set it up manually:
+**GPU deployments:** For reliable GPU deploys, set `HF_TOKEN` so model downloads aren't rate-limited by HuggingFace:
 
 ```bash
-gcloud compute routers create tuna-nat-router-<REGION> --network=default --region=<REGION> --project=<PROJECT_ID>
-gcloud compute routers nats create tuna-nat-config --router=tuna-nat-router-<REGION> --region=<REGION> --auto-allocate-nat-external-ips --nat-all-subnet-ip-ranges --project=<PROJECT_ID>
+export HF_TOKEN=<your-token>  # https://huggingface.co/settings/tokens
 ```
 
 </details>

@@ -189,11 +189,15 @@ class TestCloudRunDeploy:
         mock_service.uri = "https://test-svc-serverless-abc123.a.run.app"
         mock_service.name = "projects/test-project/locations/us-central1/services/test-svc-serverless"
 
-        mock_operation = MagicMock()
-        mock_operation.result.return_value = mock_service
+        mock_create_op = MagicMock()
+        mock_create_op.result.return_value = mock_service
+
+        mock_delete_op = MagicMock()
+        mock_delete_op.result.return_value = None
 
         mock_client = MagicMock()
-        mock_client.create_service.return_value = mock_operation
+        mock_client.delete_service.return_value = mock_delete_op
+        mock_client.create_service.return_value = mock_create_op
 
         with patch("google.cloud.run_v2.ServicesClient", return_value=mock_client):
             result = self.provider.deploy(plan)
@@ -201,6 +205,7 @@ class TestCloudRunDeploy:
         assert result.error is None
         assert result.endpoint_url == "https://test-svc-serverless-abc123.a.run.app"
         assert result.health_url == "https://test-svc-serverless-abc123.a.run.app/health"
+        mock_client.delete_service.assert_called_once()
         mock_client.create_service.assert_called_once()
         mock_set_public.assert_not_called()  # Private by default
 
@@ -219,11 +224,15 @@ class TestCloudRunDeploy:
         mock_service.uri = "https://test-svc-serverless-abc123.a.run.app"
         mock_service.name = "projects/test-project/locations/us-central1/services/test-svc-serverless"
 
-        mock_operation = MagicMock()
-        mock_operation.result.return_value = mock_service
+        mock_create_op = MagicMock()
+        mock_create_op.result.return_value = mock_service
+
+        mock_delete_op = MagicMock()
+        mock_delete_op.result.return_value = None
 
         mock_client = MagicMock()
-        mock_client.create_service.return_value = mock_operation
+        mock_client.delete_service.return_value = mock_delete_op
+        mock_client.create_service.return_value = mock_create_op
 
         with patch("google.cloud.run_v2.ServicesClient", return_value=mock_client):
             result = self.provider.deploy(plan)
@@ -280,7 +289,11 @@ class TestCloudRunDeploy:
     def test_create_service_failure(self):
         plan = self.provider.plan(self.request, self.vllm_cmd)
 
+        mock_delete_op = MagicMock()
+        mock_delete_op.result.return_value = None
+
         mock_client = MagicMock()
+        mock_client.delete_service.return_value = mock_delete_op
         mock_client.create_service.side_effect = Exception("Permission denied")
 
         with patch("google.cloud.run_v2.ServicesClient", return_value=mock_client):
@@ -291,26 +304,27 @@ class TestCloudRunDeploy:
 
     @patch.dict("os.environ", {"GOOGLE_CLOUD_PROJECT": "test-project"})
     @patch("tuna.providers.cloudrun_provider.CloudRunProvider._set_public_access")
-    def test_already_exists_triggers_update(self, mock_set_public):
+    def test_delete_before_create_not_found_is_ok(self, mock_set_public):
+        """Delete returning NotFound is fine — service didn't exist yet."""
         plan = self.provider.plan(self.request, self.vllm_cmd)
 
         mock_service = MagicMock()
         mock_service.uri = "https://test-svc-serverless-abc123.a.run.app"
         mock_service.name = "projects/test-project/locations/us-central1/services/test-svc-serverless"
 
-        mock_update_op = MagicMock()
-        mock_update_op.result.return_value = mock_service
+        mock_create_op = MagicMock()
+        mock_create_op.result.return_value = mock_service
 
         mock_client = MagicMock()
-        mock_client.create_service.side_effect = Exception("409 AlreadyExists")
-        mock_client.update_service.return_value = mock_update_op
+        mock_client.delete_service.side_effect = Exception("404 NotFound")
+        mock_client.create_service.return_value = mock_create_op
 
         with patch("google.cloud.run_v2.ServicesClient", return_value=mock_client):
             result = self.provider.deploy(plan)
 
         assert result.error is None
         assert result.endpoint_url == "https://test-svc-serverless-abc123.a.run.app"
-        mock_client.update_service.assert_called_once()
+        mock_client.create_service.assert_called_once()
 
 
 class TestCloudRunDestroy:

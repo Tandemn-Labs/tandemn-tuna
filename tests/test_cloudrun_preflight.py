@@ -279,8 +279,8 @@ class TestPreflightIntegration:
         assert result.ok is True
         assert len(result.failed) == 0
         assert result.provider == "cloudrun"
-        # Should have: gcloud_installed, credentials, project, billing, apis, gpu_region
-        assert len(result.checks) == 6
+        # Should have: gcloud_installed, credentials, project, billing, apis, gpu_region, hf_token
+        assert len(result.checks) == 7
 
     def test_gcloud_missing_short_circuits(self, provider, request_l4):
         """If gcloud is missing, we stop after the first check."""

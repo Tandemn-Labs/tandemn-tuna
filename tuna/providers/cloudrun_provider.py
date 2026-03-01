@@ -122,9 +122,9 @@ class CloudRunProvider(InferenceProvider):
             valid_regions = provider_regions(request.gpu, "cloudrun")
             result.checks.append(self._check_gpu_region(gpu_accelerator, region, valid_regions))
 
-        # 7. Cloud NAT (GPU containers use VPC egress, need NAT for internet)
+        # 7. HF_TOKEN warning for GPU workloads (non-blocking)
         if gpu_accelerator:
-            result.checks.append(self._check_and_setup_cloud_nat(project_id, region))
+            result.checks.append(self._check_hf_token())
 
         return result
 
@@ -334,105 +334,24 @@ class CloudRunProvider(InferenceProvider):
             fix_command=f"Use --region with one of: {', '.join(valid_regions)}",
         )
 
-    def _check_and_setup_cloud_nat(self, project_id: str, region: str) -> PreflightCheck:
-        """Check for Cloud NAT (needed for GPU containers to reach the internet).
-
-        Cloud Run GPU workloads use Direct VPC egress, which blocks outbound
-        internet unless Cloud NAT is configured. Auto-creates router + NAT if
-        missing.
-        """
-        router_name = f"tuna-nat-router-{region}"
-        nat_name = "tuna-nat-config"
-
-        # Check if a NAT already exists in this region on any router
-        try:
-            proc = subprocess.run(
-                [
-                    "gcloud", "compute", "routers", "list",
-                    f"--project={project_id}", f"--regions={region}",
-                    "--format=value(name)",
-                ],
-                capture_output=True, text=True, timeout=15,
-            )
-            if proc.returncode == 0:
-                for router in proc.stdout.strip().splitlines():
-                    nat_proc = subprocess.run(
-                        [
-                            "gcloud", "compute", "routers", "nats", "list",
-                            f"--router={router}",
-                            f"--project={project_id}", f"--region={region}",
-                            "--format=value(name)",
-                        ],
-                        capture_output=True, text=True, timeout=15,
-                    )
-                    if nat_proc.returncode == 0 and nat_proc.stdout.strip():
-                        return PreflightCheck(
-                            name="cloud_nat",
-                            passed=True,
-                            message=f"Cloud NAT found in {region} (router: {router})",
-                        )
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            pass
-
-        # No NAT found — create router + NAT
-        logger.info("No Cloud NAT in %s, creating router + NAT...", region)
-        try:
-            # Create router
-            proc = subprocess.run(
-                [
-                    "gcloud", "compute", "routers", "create", router_name,
-                    "--network=default", f"--region={region}",
-                    f"--project={project_id}",
-                ],
-                capture_output=True, text=True, timeout=60,
-            )
-            if proc.returncode != 0 and "already exists" not in proc.stderr:
-                return PreflightCheck(
-                    name="cloud_nat",
-                    passed=False,
-                    message=f"Failed to create NAT router: {proc.stderr.strip()[:200]}",
-                    fix_command=(
-                        f"gcloud compute routers create {router_name} "
-                        f"--network=default --region={region} --project={project_id}"
-                    ),
-                )
-
-            # Create NAT config
-            proc = subprocess.run(
-                [
-                    "gcloud", "compute", "routers", "nats", "create", nat_name,
-                    f"--router={router_name}", f"--region={region}",
-                    "--auto-allocate-nat-external-ips",
-                    "--nat-all-subnet-ip-ranges",
-                    f"--project={project_id}",
-                ],
-                capture_output=True, text=True, timeout=60,
-            )
-            if proc.returncode != 0 and "already exists" not in proc.stderr:
-                return PreflightCheck(
-                    name="cloud_nat",
-                    passed=False,
-                    message=f"Failed to create NAT config: {proc.stderr.strip()[:200]}",
-                    fix_command=(
-                        f"gcloud compute routers nats create {nat_name} "
-                        f"--router={router_name} --region={region} "
-                        f"--auto-allocate-nat-external-ips --nat-all-subnet-ip-ranges "
-                        f"--project={project_id}"
-                    ),
-                )
-
+    def _check_hf_token(self) -> PreflightCheck:
+        """Warn if HF_TOKEN is not set — anonymous HuggingFace downloads are rate-limited."""
+        hf_token = os.environ.get("HF_TOKEN", "")
+        if hf_token:
             return PreflightCheck(
-                name="cloud_nat",
+                name="hf_token",
                 passed=True,
-                message=f"Cloud NAT auto-created in {region}",
-                auto_fixed=True,
+                message="HF_TOKEN is set",
             )
-        except (FileNotFoundError, subprocess.TimeoutExpired) as e:
-            return PreflightCheck(
-                name="cloud_nat",
-                passed=False,
-                message=f"Failed to setup Cloud NAT: {e}",
-            )
+        return PreflightCheck(
+            name="hf_token",
+            passed=True,  # Non-blocking: warn but don't fail
+            message=(
+                "HF_TOKEN not set — model downloads may be rate-limited by HuggingFace. "
+                "Set HF_TOKEN env var for reliable GPU deployments"
+            ),
+            fix_command="export HF_TOKEN=<your-token>  # https://huggingface.co/settings/tokens",
+        )
 
     # -- Plan / Deploy / Destroy -----------------------------------------
 
@@ -473,6 +392,10 @@ class CloudRunProvider(InferenceProvider):
         if hf_token:
             env["HF_TOKEN"] = hf_token
 
+        # Use HF mirror to avoid IP-based rate limits on shared Cloud Run egress IPs
+        hf_endpoint = os.environ.get("HF_ENDPOINT", "https://hf-mirror.com")
+        env["HF_ENDPOINT"] = hf_endpoint
+
         # Build vLLM CLI args — always tp=1 regardless of request
         container_args = [
             "--model", request.model_name,
@@ -485,6 +408,8 @@ class CloudRunProvider(InferenceProvider):
         ]
         if request.cold_start_mode == "fast_boot":
             container_args.append("--enforce-eager")
+        if hf_token:
+            container_args.extend(["--hf-token", hf_token])
 
         metadata: dict[str, str] = {
             "service_name": service_name,
@@ -585,13 +510,31 @@ class CloudRunProvider(InferenceProvider):
             gpu_zonal_redundancy_disabled=True,
         )
 
+        # Disable IAM invoker check when public access is requested.
+        # This works even when org policies block allUsers IAM bindings.
+        public = plan.metadata.get("public_access") == "true"
         service = Service(
             template=revision_template,
+            invoker_iam_disabled=public,
         )
 
         client = ServicesClient()
+        full_name = f"{parent}/services/{service_name}"
 
-        # Create or update the service
+        # Delete any existing service first — failed revisions keep retrying
+        # and burn through HuggingFace rate limits.
+        try:
+            logger.info("Deleting existing service %s (if any)...", service_name)
+            client.delete_service(name=full_name).result()
+            logger.info("Deleted existing service %s", service_name)
+        except Exception as del_err:
+            error_str = str(del_err)
+            if "NotFound" in error_str or "404" in error_str:
+                logger.debug("No existing service %s to delete", service_name)
+            else:
+                logger.warning("Could not delete existing service %s: %s", service_name, del_err)
+
+        # Create the service fresh
         try:
             logger.info("Creating Cloud Run service: %s in %s", service_name, region)
             operation = client.create_service(
@@ -601,27 +544,12 @@ class CloudRunProvider(InferenceProvider):
             )
             result_service = operation.result()
         except Exception as e:
-            error_str = str(e)
-            if "AlreadyExists" in error_str or "409" in error_str:
-                logger.info("Service %s already exists, updating...", service_name)
-                try:
-                    service.name = f"{parent}/services/{service_name}"
-                    operation = client.update_service(service=service)
-                    result_service = operation.result()
-                except Exception as update_err:
-                    logger.error("Cloud Run service update failed: %s", update_err)
-                    return DeploymentResult(
-                        provider=self.name(),
-                        error=f"Service update failed: {update_err}",
-                        metadata=dict(plan.metadata),
-                    )
-            else:
-                logger.error("Cloud Run service creation failed: %s", e)
-                return DeploymentResult(
-                    provider=self.name(),
-                    error=f"Service creation failed: {e}",
-                    metadata=dict(plan.metadata),
-                )
+            logger.error("Cloud Run service creation failed: %s", e)
+            return DeploymentResult(
+                provider=self.name(),
+                error=f"Service creation failed: {e}",
+                metadata=dict(plan.metadata),
+            )
 
         service_uri = result_service.uri
 
