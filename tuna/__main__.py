@@ -67,6 +67,7 @@ def cmd_deploy(args: argparse.Namespace) -> None:
         service_name=args.service_name,
         public=args.public,
         serverless_only=args.serverless_only,
+        quantization=getattr(args, "quantization", None),
     )
 
     # Register only the providers we actually need
@@ -1195,6 +1196,8 @@ def main() -> None:
                                "WARNING: GPU services are expensive — only use for testing.")
     p_deploy.add_argument("--serverless-only", action="store_true", default=False,
                           help="Deploy serverless only — no spot, no router. Returns direct provider endpoint.")
+    p_deploy.add_argument("--quantization", default=None,
+                          help="Quantization method for vLLM (e.g. awq, gptq, fp8)")
     p_deploy.add_argument("--use-different-vm-for-lb", action="store_true", default=False,
                           help="Launch router on separate VM instead of colocating on SkyServe controller")
     p_deploy.add_argument("--gcp-project", default=None,
