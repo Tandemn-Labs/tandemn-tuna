@@ -249,6 +249,10 @@ class CerebriumProvider(InferenceProvider):
         if request.cold_start_mode == "fast_boot":
             eager_flag = ', "--enforce-eager"'
 
+        quantization_flag = ""
+        if request.quantization:
+            quantization_flag = f', "--quantization", "{request.quantization}"'
+
         replacements = {
             "service_name": service_name,
             "region": region,
@@ -264,6 +268,7 @@ class CerebriumProvider(InferenceProvider):
             "max_model_len": str(request.max_model_len),
             "tp_size": str(request.tp_size),
             "eager_flag": eager_flag,
+            "quantization_flag": quantization_flag,
         }
 
         rendered = render_template(

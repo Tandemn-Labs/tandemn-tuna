@@ -26,7 +26,7 @@ docker_server:
     --tensor-parallel-size {tp_size}
     --gpu-memory-utilization 0.95
     --disable-log-requests
-    {eager_flag}
+    {eager_flag} {quantization_flag}
   readiness_endpoint: /health
   liveness_endpoint: /health
   predict_endpoint: /v1/chat/completions
