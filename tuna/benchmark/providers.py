@@ -59,6 +59,8 @@ def is_cold(
         return _is_cold_runpod(health_url, auth_headers)
     if provider_name == "baseten" and metadata:
         return _is_cold_baseten(metadata)
+    if provider_name == "cerebrium" and metadata:
+        return _is_cold_cerebrium(metadata)
     return _is_cold_http(health_url, auth_headers)
 
 

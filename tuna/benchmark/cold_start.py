@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import csv
-import io
 import json
 import statistics
 import sys
@@ -69,7 +68,6 @@ def _wait_for_cold(
     auth_headers: dict[str, str],
     timeout: float = 300,
     cooldown: float = 120,
-    consecutive_required: int = 3,
     metadata: dict | None = None,
 ) -> bool:
     """Wait for the endpoint to scale to zero.
