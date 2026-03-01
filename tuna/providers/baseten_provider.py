@@ -195,6 +195,7 @@ class BasetenProvider(InferenceProvider):
             )
 
         eager_flag = "--enforce-eager" if request.cold_start_mode == "fast_boot" else ""
+        quantization_flag = f"--quantization {request.quantization}" if request.quantization else ""
         serverless = request.scaling.serverless
 
         # volume_folder must be a safe directory name (no slashes)
@@ -208,6 +209,7 @@ class BasetenProvider(InferenceProvider):
             "gpu": gpu_accelerator,
             "concurrency": str(serverless.concurrency),
             "eager_flag": eager_flag,
+            "quantization_flag": quantization_flag,
             "vllm_version": request.vllm_version,
             "model_cache_folder": model_cache_folder,
         }
