@@ -10,48 +10,48 @@ from tuna.benchmark.cold_start import (
     RunResult,
     _find_existing_deployment,
     _mean_run,
-    _record_to_result,
+    record_to_deployment_result,
     _wait_for_cold,
 )
 from tuna.state import DeploymentRecord
 
 
-# -- _record_to_result --
+# -- record_to_deployment_result --
 
 
-def test_record_to_result_maps_fields():
+def testrecord_to_deployment_result_maps_fields():
     record = DeploymentRecord(
         service_name="svc-1",
         serverless_provider_name="modal",
         serverless_endpoint="https://modal.run/ep",
         serverless_metadata={"app_name": "my-app"},
     )
-    result = _record_to_result(record)
+    result = record_to_deployment_result(record)
     assert result.provider == "modal"
     assert result.endpoint_url == "https://modal.run/ep"
     assert result.health_url == "https://modal.run/ep/health"
     assert result.metadata == {"app_name": "my-app"}
 
 
-def test_record_to_result_none_endpoint():
+def testrecord_to_deployment_result_none_endpoint():
     record = DeploymentRecord(
         service_name="svc-2",
         serverless_provider_name="runpod",
         serverless_endpoint=None,
     )
-    result = _record_to_result(record)
+    result = record_to_deployment_result(record)
     assert result.endpoint_url is None
     assert result.health_url is None
 
 
-def test_record_to_result_empty_metadata():
+def testrecord_to_deployment_result_empty_metadata():
     record = DeploymentRecord(
         service_name="svc-3",
         serverless_provider_name="modal",
         serverless_endpoint="https://modal.run/ep",
         serverless_metadata=None,
     )
-    result = _record_to_result(record)
+    result = record_to_deployment_result(record)
     assert result.metadata == {}
 
 

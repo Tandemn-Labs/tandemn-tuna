@@ -40,7 +40,7 @@ class RunResult:
     error: Optional[str] = None
 
 
-def _record_to_result(record: DeploymentRecord) -> DeploymentResult:
+def record_to_deployment_result(record: DeploymentRecord) -> DeploymentResult:
     """Map a DeploymentRecord to a DeploymentResult for benchmark use."""
     endpoint = record.serverless_endpoint
     return DeploymentResult(
@@ -483,7 +483,7 @@ def run_auto(
     if scenario in ("warm-cold", "both"):
         record = _find_existing_deployment(provider, model)
         if record and record.serverless_endpoint:
-            dr = _record_to_result(record)
+            dr = record_to_deployment_result(record)
             results.extend(
                 run_warm_cold_start(
                     provider,

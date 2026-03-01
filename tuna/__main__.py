@@ -1019,7 +1019,7 @@ def cmd_list(args: argparse.Namespace) -> None:
 
 def cmd_benchmark_cold_start(args: argparse.Namespace) -> None:
     from tuna.benchmark.cold_start import (
-        _record_to_result,
+        record_to_deployment_result,
         print_summary,
         run_auto,
         run_warm_cold_start,
@@ -1083,7 +1083,7 @@ def cmd_benchmark_cold_start(args: argparse.Namespace) -> None:
         if not record:
             print(f"Error: deployment '{args.service_name}' not found", file=sys.stderr)
             sys.exit(1)
-        dr = _record_to_result(record)
+        dr = record_to_deployment_result(record)
         if not dr.endpoint_url:
             print("Error: deployment has no endpoint URL", file=sys.stderr)
             sys.exit(1)
