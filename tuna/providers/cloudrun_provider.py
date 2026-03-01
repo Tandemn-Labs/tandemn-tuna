@@ -14,11 +14,36 @@ from tuna.models import DeployRequest, DeploymentResult, PreflightCheck, Preflig
 from tuna.providers.base import InferenceProvider
 from tuna.providers.registry import register
 
+import requests as _requests
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_REGION = "us-central1"
 DEFAULT_IMAGE = "vllm/vllm-openai:v0.15.1"
 VLLM_PORT = 8000
+
+
+def _get_model_size_gb(model_name: str) -> float:
+    """Fetch total safetensors size in GB from HuggingFace API.
+
+    Returns 0.0 if the size cannot be determined.
+    """
+    try:
+        resp = _requests.get(
+            f"https://huggingface.co/api/models/{model_name}",
+            params={"blobs": "true"},
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            return 0.0
+        total = sum(
+            s.get("size", 0)
+            for s in resp.json().get("siblings", [])
+            if s.get("rfilename", "").endswith(".safetensors")
+        )
+        return total / 1e9
+    except Exception:
+        return 0.0
 
 REQUIRED_APIS = ["run.googleapis.com", "iam.googleapis.com"]
 
@@ -413,6 +438,16 @@ class CloudRunProvider(InferenceProvider):
         if hf_token:
             container_args.extend(["--hf-token", hf_token])
 
+        # Scale startup probe with model size: ~15s per GB for download + load,
+        # with a floor of 120 checks (= 20 min at 10s period).
+        model_gb = _get_model_size_gb(request.model_name)
+        startup_failure_threshold = max(120, int(model_gb * 15))
+        logger.info(
+            "Model size: %.1f GB → startup probe failure_threshold=%d (max %ds)",
+            model_gb, startup_failure_threshold,
+            30 + startup_failure_threshold * 10,
+        )
+
         metadata: dict[str, str] = {
             "service_name": service_name,
             "project_id": project_id,
@@ -425,6 +460,7 @@ class CloudRunProvider(InferenceProvider):
             "max_instance_count": str(serverless.workers_max),
             "max_concurrency": str(serverless.concurrency),
             "timeout_seconds": str(serverless.timeout),
+            "startup_failure_threshold": str(startup_failure_threshold),
             "cpu": "8",
             "memory": "32Gi",
             "public_access": str(request.public).lower(),
@@ -490,7 +526,7 @@ class CloudRunProvider(InferenceProvider):
                 tcp_socket=TCPSocketAction(port=port),
                 initial_delay_seconds=30,
                 period_seconds=10,
-                failure_threshold=60,
+                failure_threshold=int(plan.metadata.get("startup_failure_threshold", "120")),
                 timeout_seconds=5,
             ),
         )
