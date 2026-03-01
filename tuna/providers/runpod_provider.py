@@ -143,6 +143,8 @@ class RunPodProvider(InferenceProvider):
 
         if request.cold_start_mode == "fast_boot":
             env["ENFORCE_EAGER"] = "true"
+        if request.quantization:
+            env["QUANTIZATION"] = request.quantization
 
         env["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
 

@@ -423,6 +423,8 @@ class AzureProvider(InferenceProvider):
         ]
         if request.cold_start_mode == "fast_boot":
             container_args.append("--enforce-eager")
+        if request.quantization:
+            container_args.extend(["--quantization", request.quantization])
 
         resources = _GPU_PROFILE_RESOURCES.get(gpu_profile, {"cpu": "8", "memory": "56Gi"})
 
