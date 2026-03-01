@@ -426,6 +426,17 @@ class CerebriumProvider(InferenceProvider):
             except Exception as e:
                 logger.warning("REST API delete failed: %s", e)
 
+    def clear_cache(self) -> None:
+        """Delete cached model weights from Cerebrium persistent storage."""
+        result = subprocess.run(
+            ["cerebrium", "rm", "/.cache/", "--no-color"],
+            capture_output=True, text=True, timeout=60,
+        )
+        if result.returncode == 0:
+            logger.info("Cleared Cerebrium persistent storage cache")
+        else:
+            logger.warning("Failed to clear Cerebrium cache: %s", result.stderr.strip())
+
     # -- Status -------------------------------------------------------------
 
     def status(self, service_name: str) -> dict:

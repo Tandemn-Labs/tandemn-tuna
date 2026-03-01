@@ -184,6 +184,20 @@ def cmd_deploy(args: argparse.Namespace) -> None:
               file=sys.stderr)
 
 
+def _clear_provider_caches(provider_names: set[str]) -> None:
+    """Clear model weight caches for the given providers."""
+    from tuna.providers.registry import ensure_provider_registered, get_provider
+
+    for pname in sorted(provider_names):
+        try:
+            ensure_provider_registered(pname)
+            provider = get_provider(pname)
+            print(f"Clearing cache for {pname}...")
+            provider.clear_cache()
+        except Exception as e:
+            print(f"Warning: failed to clear cache for {pname}: {e}", file=sys.stderr)
+
+
 def cmd_destroy(args: argparse.Namespace) -> None:
     from tuna.orchestrator import destroy_hybrid
     from tuna.providers.registry import ensure_providers_for_deployment
@@ -211,6 +225,12 @@ def cmd_destroy(args: argparse.Namespace) -> None:
                 errors.append(record.service_name)
         # Clean up the SkyServe controller once after all teardowns
         _cleanup_serve_controller()
+
+        # Optional: clear model weight caches
+        if getattr(args, "clear_cache", False):
+            _clear_provider_caches({r.serverless_provider_name for r in records
+                                    if r.serverless_provider_name})
+
         if errors:
             print(f"\nFailed to destroy: {', '.join(errors)}", file=sys.stderr)
             sys.exit(1)
@@ -240,6 +260,10 @@ def cmd_destroy(args: argparse.Namespace) -> None:
             )
             print("Deleting Azure environment (this takes 20+ min)...")
             provider.destroy_environment(azure_result)
+
+    # Optional: clear model weight caches
+    if getattr(args, "clear_cache", False) and record.serverless_provider_name:
+        _clear_provider_caches({record.serverless_provider_name})
 
     print("Done.")
 
@@ -1213,6 +1237,8 @@ def main() -> None:
                                help="Destroy all active deployments")
     p_destroy.add_argument("--azure-cleanup-env", action="store_true", default=False,
                            help="Also delete the Azure Container Apps environment (slow, 20+ min)")
+    p_destroy.add_argument("--clear-cache", action="store_true", default=False,
+                           help="Also clear cached model weights on providers (Modal volumes, Cerebrium persistent storage)")
     p_destroy.set_defaults(func=cmd_destroy)
 
     # -- status --

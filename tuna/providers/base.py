@@ -37,6 +37,10 @@ class InferenceProvider(ABC):
         """Tear down the deployment."""
         ...
 
+    def clear_cache(self) -> None:
+        """Clear cached model weights on this provider. Override per provider."""
+        pass
+
     def preflight(self, request: DeployRequest) -> PreflightResult:
         """Validate environment before plan/deploy. Override per provider."""
         return PreflightResult(provider=self.name())

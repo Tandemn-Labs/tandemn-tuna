@@ -115,6 +115,8 @@ export RUNPOD_API_KEY=<your-key>  # https://www.runpod.io/console/user/settings
 
 Add this to your `~/.bashrc` or `~/.zshrc` to persist it.
 
+**Cold start note:** RunPod does not currently support cold start optimization via the API. RunPod's "Cached Models" feature is console-only, and network volumes pin workers to a single datacenter — reducing GPU availability and increasing queue times. This means RunPod downloads model weights from HuggingFace on every cold start (~10 min for a 4B model). If cold start latency matters, consider Modal or Cerebrium which cache weights automatically.
+
 </details>
 
 <details>
