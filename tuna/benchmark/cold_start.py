@@ -30,7 +30,8 @@ class RunResult:
     scenario: str  # "fresh_cold_start" or "warm_cold_start"
     provider: str
     gpu: str
-    total_s: float
+    total_s: float  # Time to inference (the only metric that matters)
+    run_number: int = 0  # 1 = fresh deploy, 2+ = warm cold start
     health_ready_s: Optional[float] = None
     first_inference_s: Optional[float] = None
     ttft_s: Optional[float] = None
@@ -273,6 +274,7 @@ def run_warm_cold_start(
     metadata: dict,
     repeat: int = 3,
     idle_wait: int = 300,
+    start_run_number: int = 1,
 ) -> list[RunResult]:
     """Benchmark cold start on an existing (warm) deployment."""
     validate_provider(provider)
@@ -280,6 +282,7 @@ def run_warm_cold_start(
     results: list[RunResult] = []
 
     for i in range(repeat):
+        run_num = start_run_number + i
         print(f"\n--- Warm cold start run {i + 1}/{repeat} ---")
 
         print("  Waiting for scale-to-zero...")
@@ -292,6 +295,7 @@ def run_warm_cold_start(
             provider, endpoint_url, health_url, model, gpu,
             auth_headers, metadata, "warm_cold_start",
         )
+        result.run_number = run_num
         results.append(result)
         print(f"  Total: {result.total_s:.1f}s")
 
@@ -382,6 +386,7 @@ def run_fresh_cold_start(
                 provider=provider,
                 gpu=gpu,
                 total_s=deploy_time,
+                run_number=1,
                 deploy_time_s=deploy_time,
                 error=err,
             )
@@ -423,6 +428,7 @@ def run_fresh_cold_start(
             provider=provider,
             gpu=gpu,
             total_s=total_s,
+            run_number=1,
             deploy_time_s=deploy_time,
             container_boot_s=container_boot_s,
             model_load_s=model_load_s,
@@ -441,6 +447,7 @@ def run_fresh_cold_start(
         provider=provider,
         gpu=gpu,
         total_s=total_s,
+        run_number=1,
         deploy_time_s=deploy_time,
         health_ready_s=health_ready_s + deploy_time,
         first_inference_s=inference_s,
@@ -481,6 +488,8 @@ def run_auto(
         )
 
     if scenario in ("warm-cold", "both"):
+        # When running after fresh, warm runs start at run 2
+        warm_start = 2 if keep_for_warm else 1
         record = _find_existing_deployment(provider, model)
         if record and record.serverless_endpoint:
             dr = record_to_deployment_result(record)
@@ -494,6 +503,7 @@ def run_auto(
                     dr.metadata,
                     repeat=repeat,
                     idle_wait=idle_wait,
+                    start_run_number=warm_start,
                 )
             )
             # Teardown after warm phase completes (unless --no-teardown)
@@ -523,41 +533,59 @@ def _print_table(results: list[RunResult]) -> None:
     from rich.console import Console
     from rich.table import Table
 
-    table = Table(title="Cold Start Benchmark Results")
+    # Group results by provider, preserving order
+    from collections import OrderedDict
+
+    by_provider: OrderedDict[str, list[RunResult]] = OrderedDict()
+    for r in results:
+        by_provider.setdefault(r.provider, []).append(r)
+
+    # Determine max run number across all providers
+    max_run = max((r.run_number for r in results if r.run_number), default=1)
+
+    table = Table(title="Cold Start Benchmark: Time to Inference")
     table.add_column("Provider")
     table.add_column("GPU")
-    table.add_column("Scenario")
-    has_deploy = any(r.deploy_time_s for r in results)
-    if has_deploy:
-        table.add_column("Deploy")
-    table.add_column("Container Boot")
-    table.add_column("Model Load")
-    table.add_column("Health Ready")
-    table.add_column("First Inference")
-    table.add_column("Total")
+    for i in range(1, max_run + 1):
+        label = "Run 1 (Fresh)" if i == 1 else f"Run {i}"
+        table.add_column(label, justify="right")
+    if max_run > 1:
+        table.add_column("Avg (Warm)", justify="right")
 
     has_errors = any(r.error for r in results)
     if has_errors:
         table.add_column("Error")
 
-    for r in results:
-        row = [
-            r.provider,
-            r.gpu,
-            r.scenario,
-        ]
-        if has_deploy:
-            row.append(f"{r.deploy_time_s:.1f}s" if r.deploy_time_s else "\u2014")
-        row.extend([
-            f"{r.container_boot_s:.1f}s" if r.container_boot_s else "\u2014",
-            f"{r.model_load_s:.1f}s" if r.model_load_s else "\u2014",
-            f"{r.health_ready_s:.1f}s" if r.health_ready_s else "\u2014",
-            f"{r.first_inference_s:.1f}s" if r.first_inference_s else "\u2014",
-            f"{r.total_s:.1f}s",
-        ])
+    for provider, runs in by_provider.items():
+        # Index runs by run_number
+        by_num = {r.run_number: r for r in runs}
+        row = [provider, runs[0].gpu]
+
+        warm_times = []
+        errors = []
+        for i in range(1, max_run + 1):
+            r = by_num.get(i)
+            if r is None:
+                row.append("\u2014")
+            elif r.error:
+                row.append("ERR")
+                errors.append(r.error)
+            else:
+                row.append(f"{r.total_s:.1f}s")
+                if i > 1:
+                    warm_times.append(r.total_s)
+
+        if max_run > 1:
+            if warm_times:
+                row.append(f"{statistics.mean(warm_times):.1f}s")
+            else:
+                row.append("\u2014")
+
         if has_errors:
-            row.append(r.error or "")
+            row.append("; ".join(errors) if errors else "")
+
         table.add_row(*row)
+
     Console().print(table)
 
 

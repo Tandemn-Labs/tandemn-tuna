@@ -130,6 +130,27 @@ class ModalProvider(InferenceProvider):
             timeout=60,
         )
 
+    def clear_cache(self) -> None:
+        """Delete contents of huggingface-cache and vllm-cache Modal volumes."""
+        for vol_name in ("huggingface-cache", "vllm-cache"):
+            result = subprocess.run(
+                ["modal", "volume", "ls", vol_name, "/"],
+                capture_output=True, text=True, timeout=30,
+            )
+            if result.returncode != 0:
+                logger.warning("Could not list Modal volume %s: %s", vol_name, result.stderr.strip())
+                continue
+            entries = [e.strip() for e in result.stdout.strip().splitlines() if e.strip()]
+            if not entries:
+                logger.info("Modal volume %s is already empty", vol_name)
+                continue
+            for entry in entries:
+                subprocess.run(
+                    ["modal", "volume", "rm", vol_name, entry, "-r"],
+                    capture_output=True, text=True, timeout=60,
+                )
+            logger.info("Cleared Modal volume: %s", vol_name)
+
     def status(self, service_name: str) -> dict:
         app_name = f"{service_name}-serverless"
         try:
