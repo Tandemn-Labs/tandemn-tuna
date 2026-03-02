@@ -90,11 +90,12 @@ class TestRouterCostTracking:
 
         with meta_lb.app.test_client() as client:
             with patch.object(meta_lb.SESSION, "request") as mock_req:
-                mock_req.return_value = MagicMock(
-                    content=b'{"ok": true}',
+                mock_resp = MagicMock(
                     status_code=200,
                     headers={"content-type": "application/json"},
                 )
+                mock_resp.iter_content.return_value = iter([b'{"ok": true}'])
+                mock_req.return_value = mock_resp
                 client.post("/v1/chat/completions", json={"prompt": "hi"})
 
         meta_lb.API_KEY = original_key
