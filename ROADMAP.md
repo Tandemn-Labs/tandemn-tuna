@@ -2,7 +2,7 @@
 
 > Hybrid GPU inference orchestrator — serverless for speed, spot for savings, one endpoint for everything.
 
-Current state: v0.0.1a7 | 6 serverless providers (Modal, RunPod, Cloud Run, Baseten, Azure, Cerebrium) | 1 spot provider (AWS via SkyPilot) | ~462 tests
+Current state: v0.0.1a9 | 6 serverless providers (Modal, RunPod, Cloud Run, Baseten, Azure, Cerebrium) | 2 spot providers (AWS, GCP via SkyPilot) | ~572 tests
 
 ---
 

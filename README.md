@@ -370,6 +370,7 @@ The router:
 - Shifts traffic to spot once ready (cheaper)
 - Falls back to serverless if spot has issues or high latency
 - Scales serverless down to zero when spot is serving
+- Streams responses token-by-token (no buffering)
 
 ## CLI Reference
 
@@ -402,6 +403,7 @@ The router:
 | `--scaling-policy` | — | Path to scaling YAML (see below) |
 | `--service-name` | auto-generated | Custom service name (recommended — makes status/destroy easier) |
 | `--serverless-only` | off | Serverless only (no spot, no router). No AWS needed. |
+| `--quantization` | — | Quantization method for vLLM (e.g. `awq`, `gptq`, `fp8`) |
 | `--public` | off | Make service publicly accessible (no auth) |
 | `--use-different-vm-for-lb` | off | Launch router on a separate VM instead of colocating on controller |
 | `--gcp-project` | — | Google Cloud project ID |
