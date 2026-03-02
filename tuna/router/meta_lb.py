@@ -372,6 +372,27 @@ def _poke_skyserve_async() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Streaming helpers
+# ---------------------------------------------------------------------------
+
+def _stream_and_track(response, t0, backend_name):
+    """Yield chunks from an upstream response and track GPU seconds on completion."""
+    global _gpu_seconds_spot, _gpu_seconds_serverless
+    try:
+        for chunk in response.iter_content(chunk_size=4096):
+            if chunk:
+                yield chunk
+    finally:
+        response.close()
+        elapsed = time.time() - t0
+        with _state_lock:
+            if backend_name == "spot":
+                _gpu_seconds_spot += elapsed
+            else:
+                _gpu_seconds_serverless += elapsed
+
+
+# ---------------------------------------------------------------------------
 # Spot → serverless failover
 # ---------------------------------------------------------------------------
 
@@ -409,21 +430,8 @@ def _forward_to_serverless(path, headers, data, serverless_url):
         return Response("upstream_error", status=502)
 
     resp_headers = _filter_outgoing(r.headers)
-
-    def generate():
-        global _gpu_seconds_serverless
-        try:
-            for chunk in r.iter_content(chunk_size=4096):
-                if chunk:
-                    yield chunk
-        finally:
-            r.close()
-            elapsed = time.time() - t0
-            with _state_lock:
-                _gpu_seconds_serverless += elapsed
-
     return Response(
-        response=generate(),
+        response=_stream_and_track(r, t0, "serverless"),
         status=r.status_code,
         headers=resp_headers,
         content_type=r.headers.get("content-type"),
@@ -581,24 +589,8 @@ def proxy(path: str):
         return _forward_to_serverless(path, headers, data, serverless_url)
 
     resp_headers = _filter_outgoing(r.headers)
-
-    def generate():
-        global _gpu_seconds_spot, _gpu_seconds_serverless
-        try:
-            for chunk in r.iter_content(chunk_size=4096):
-                if chunk:
-                    yield chunk
-        finally:
-            r.close()
-            elapsed = time.time() - t0
-            with _state_lock:
-                if backend_name == "spot":
-                    _gpu_seconds_spot += elapsed
-                else:
-                    _gpu_seconds_serverless += elapsed
-
     return Response(
-        response=generate(),
+        response=_stream_and_track(r, t0, backend_name),
         status=r.status_code,
         headers=resp_headers,
         content_type=r.headers.get("content-type"),
