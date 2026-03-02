@@ -399,21 +399,35 @@ def _forward_to_serverless(path, headers, data, serverless_url):
             data=data if data else None,
             allow_redirects=True,
             timeout=(2.0, UPSTREAM_TIMEOUT_SECONDS),
+            stream=True,
         )
     except req_lib.RequestException as e:
-        logger.warning("Upstream error: %s", e)
-        return Response("upstream_error", status=502)
-    finally:
         elapsed = time.time() - t0
         with _state_lock:
             _gpu_seconds_serverless += elapsed
+        logger.warning("Upstream error: %s", e)
+        return Response("upstream_error", status=502)
 
     resp_headers = _filter_outgoing(r.headers)
+
+    def generate():
+        global _gpu_seconds_serverless
+        try:
+            for chunk in r.iter_content(chunk_size=4096):
+                if chunk:
+                    yield chunk
+        finally:
+            r.close()
+            elapsed = time.time() - t0
+            with _state_lock:
+                _gpu_seconds_serverless += elapsed
+
     return Response(
-        response=r.content,
+        response=generate(),
         status=r.status_code,
         headers=resp_headers,
-        mimetype=r.headers.get("content-type"),
+        content_type=r.headers.get("content-type"),
+        direct_passthrough=True,
     )
 
 
@@ -537,6 +551,7 @@ def proxy(path: str):
             data=data if data else None,
             allow_redirects=True,
             timeout=(2.0, UPSTREAM_TIMEOUT_SECONDS),
+            stream=True,
         )
     except req_lib.RequestException as e:
         elapsed = time.time() - t0
@@ -555,8 +570,9 @@ def proxy(path: str):
         logger.warning("Upstream error: %s", e)
         return Response("upstream_error", status=502)
 
-    # Retry on 5xx from spot (backend is unhealthy)
+    # Retry on 5xx from spot — we haven't streamed anything yet, safe to failover
     if backend_name == "spot" and r.status_code >= 500 and serverless_url:
+        r.close()
         elapsed = time.time() - t0
         with _state_lock:
             _gpu_seconds_spot += elapsed
@@ -564,19 +580,29 @@ def proxy(path: str):
         _set_ready(False, f"status={r.status_code}")
         return _forward_to_serverless(path, headers, data, serverless_url)
 
-    elapsed = time.time() - t0
-    with _state_lock:
-        if backend_name == "spot":
-            _gpu_seconds_spot += elapsed
-        else:
-            _gpu_seconds_serverless += elapsed
-
     resp_headers = _filter_outgoing(r.headers)
+
+    def generate():
+        global _gpu_seconds_spot, _gpu_seconds_serverless
+        try:
+            for chunk in r.iter_content(chunk_size=4096):
+                if chunk:
+                    yield chunk
+        finally:
+            r.close()
+            elapsed = time.time() - t0
+            with _state_lock:
+                if backend_name == "spot":
+                    _gpu_seconds_spot += elapsed
+                else:
+                    _gpu_seconds_serverless += elapsed
+
     return Response(
-        response=r.content,
+        response=generate(),
         status=r.status_code,
         headers=resp_headers,
-        mimetype=r.headers.get("content-type"),
+        content_type=r.headers.get("content-type"),
+        direct_passthrough=True,
     )
 
 

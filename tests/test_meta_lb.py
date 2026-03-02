@@ -8,6 +8,15 @@ import requests as req_lib
 from tuna.router import meta_lb
 
 
+def _mock_response(mocker, *, content=b"ok", status_code=200, headers=None):
+    """Create a mock response compatible with streaming (iter_content/close)."""
+    if headers is None:
+        headers = {}
+    resp = mocker.Mock(status_code=status_code, headers=headers)
+    resp.iter_content.return_value = iter([content])
+    return resp
+
+
 @pytest.fixture
 def client():
     """Flask test client with clean state per test."""
@@ -112,9 +121,8 @@ class TestRoutingDecision:
         meta_lb._set_ready(False)
 
         mock_request = mocker.patch.object(meta_lb.SESSION, "request")
-        mock_request.return_value = mocker.Mock(
-            content=b'{"ok": true}',
-            status_code=200,
+        mock_request.return_value = _mock_response(
+            mocker, content=b'{"ok": true}', status_code=200,
             headers={"content-type": "application/json"},
         )
 
@@ -131,9 +139,8 @@ class TestRoutingDecision:
         meta_lb._set_ready(True)
 
         mock_request = mocker.patch.object(meta_lb.SESSION, "request")
-        mock_request.return_value = mocker.Mock(
-            content=b'{"ok": true}',
-            status_code=200,
+        mock_request.return_value = _mock_response(
+            mocker, content=b'{"ok": true}', status_code=200,
             headers={"content-type": "application/json"},
         )
 
@@ -148,9 +155,8 @@ class TestRoutingDecision:
         meta_lb.set_serverless_url("http://serverless.example.com")
 
         mock_request = mocker.patch.object(meta_lb.SESSION, "request")
-        mock_request.return_value = mocker.Mock(
-            content=b"ok",
-            status_code=200,
+        mock_request.return_value = _mock_response(
+            mocker, content=b"ok", status_code=200,
             headers={"content-type": "text/plain"},
         )
 
@@ -172,11 +178,7 @@ class TestAuth:
         meta_lb.set_serverless_url("http://serverless.example.com")
 
         mock_request = mocker.patch.object(meta_lb.SESSION, "request")
-        mock_request.return_value = mocker.Mock(
-            content=b"ok",
-            status_code=200,
-            headers={},
-        )
+        mock_request.return_value = _mock_response(mocker)
 
         resp = client.get("/v1/models", headers={"x-api-key": "secret123"})
         assert resp.status_code == 200
@@ -186,11 +188,7 @@ class TestAuth:
         meta_lb.set_serverless_url("http://serverless.example.com")
 
         mock_request = mocker.patch.object(meta_lb.SESSION, "request")
-        mock_request.return_value = mocker.Mock(
-            content=b"ok",
-            status_code=200,
-            headers={},
-        )
+        mock_request.return_value = _mock_response(mocker)
 
         resp = client.get(
             "/v1/models", headers={"Authorization": "Bearer secret123"}
@@ -203,9 +201,7 @@ class TestRouteStats:
         meta_lb.set_serverless_url("http://serverless.example.com")
 
         mock_request = mocker.patch.object(meta_lb.SESSION, "request")
-        mock_request.return_value = mocker.Mock(
-            content=b"ok", status_code=200, headers={},
-        )
+        mock_request.return_value = _mock_response(mocker)
 
         for _ in range(5):
             client.get("/test")
@@ -227,8 +223,8 @@ class TestSpotFailoverRetry:
         # First call (spot) fails, second call (serverless) succeeds
         mock_request.side_effect = [
             req_lib.ConnectionError("spot died"),
-            mocker.Mock(
-                content=b'{"ok":true}', status_code=200,
+            _mock_response(
+                mocker, content=b'{"ok":true}', status_code=200,
                 headers={"content-type": "application/json"},
             ),
         ]
@@ -244,9 +240,9 @@ class TestSpotFailoverRetry:
 
         mock_request = mocker.patch.object(meta_lb.SESSION, "request")
         mock_request.side_effect = [
-            mocker.Mock(content=b"error", status_code=500, headers={}),
-            mocker.Mock(
-                content=b'{"ok":true}', status_code=200,
+            _mock_response(mocker, content=b"error", status_code=500),
+            _mock_response(
+                mocker, content=b'{"ok":true}', status_code=200,
                 headers={"content-type": "application/json"},
             ),
         ]
@@ -281,8 +277,8 @@ class TestSpotFailoverRetry:
         meta_lb._set_ready(True)
 
         mock_request = mocker.patch.object(meta_lb.SESSION, "request")
-        mock_request.return_value = mocker.Mock(
-            content=b"bad request", status_code=400,
+        mock_request.return_value = _mock_response(
+            mocker, content=b"bad request", status_code=400,
             headers={"content-type": "text/plain"},
         )
         resp = client.post("/v1/chat/completions", json={"prompt": "hi"})
