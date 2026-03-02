@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -195,7 +196,7 @@ class BasetenProvider(InferenceProvider):
             )
 
         eager_flag = "--enforce-eager" if request.cold_start_mode == "fast_boot" else ""
-        quantization_flag = f"--quantization {request.quantization}" if request.quantization else ""
+        quantization_flag = f"--quantization {shlex.quote(request.quantization)}" if request.quantization else ""
         serverless = request.scaling.serverless
 
         # volume_folder must be a safe directory name (no slashes)

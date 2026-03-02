@@ -43,7 +43,7 @@ def build_vllm_cmd(request: DeployRequest, port: str = "8001") -> str:
 
     eager_flag = "--enforce-eager" if request.cold_start_mode == "fast_boot" else ""
     dtype_flag = get_vllm_dtype_flag(request.gpu)
-    quantization_flag = f"--quantization {request.quantization}" if request.quantization else ""
+    quantization_flag = f"--quantization {shlex.quote(request.quantization)}" if request.quantization else ""
 
     replacements = {
         "model": shlex.quote(request.model_name),

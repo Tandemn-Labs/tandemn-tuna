@@ -145,10 +145,15 @@ class ModalProvider(InferenceProvider):
                 logger.info("Modal volume %s is already empty", vol_name)
                 continue
             for entry in entries:
-                subprocess.run(
+                rm_result = subprocess.run(
                     ["modal", "volume", "rm", vol_name, entry, "-r"],
                     capture_output=True, text=True, timeout=60,
                 )
+                if rm_result.returncode != 0:
+                    logger.warning(
+                        "Failed to remove '%s' from volume '%s': %s",
+                        entry, vol_name, rm_result.stderr.strip(),
+                    )
             logger.info("Cleared Modal volume: %s", vol_name)
 
     def status(self, service_name: str) -> dict:
