@@ -151,6 +151,12 @@ _gpu_seconds_spot: float = 0.0
 _gpu_seconds_serverless: float = 0.0
 _spot_ready_cumulative_s: float = 0.0
 _spot_ready_since: float | None = None
+_last_real_request_ts: float = 0.0
+
+# Suppress SkyServe health probes when no real inference request has been
+# routed for this many seconds.  This lets the SkyServe autoscaler's QPS
+# window drain to zero during idle periods, enabling scale-to-zero.
+IDLE_PROBE_SUPPRESS_SECONDS = _env_float("IDLE_PROBE_SUPPRESS_SECONDS", 60.0)
 
 
 # ---------------------------------------------------------------------------
@@ -214,10 +220,11 @@ def _is_ready() -> bool:
 # ---------------------------------------------------------------------------
 
 def _record_route(backend: str) -> None:
-    global _req_total, _req_to_spot, _req_to_serverless
+    global _req_total, _req_to_spot, _req_to_serverless, _last_real_request_ts
     with _state_lock:
         _req_total += 1
         _recent_routes.append(backend)
+        _last_real_request_ts = time.time()
         if backend == "spot":
             _req_to_spot += 1
         else:
@@ -312,7 +319,12 @@ def _check_skyserve_ready_async() -> None:
 
     global _last_check_ts
     now = time.time()
+
+    # Suppress probes during idle periods so SkyServe's QPS window can
+    # drain to zero and the autoscaler can trigger scale-to-zero.
     with _state_lock:
+        if _last_real_request_ts and now - _last_real_request_ts > IDLE_PROBE_SUPPRESS_SECONDS:
+            return
         if now - _last_check_ts < CHECK_MIN_INTERVAL_SECONDS:
             return
         _last_check_ts = now
@@ -337,6 +349,10 @@ def _check_skyserve_ready_sync() -> None:
     skyserve_url = _get_skyserve_url()
     if not skyserve_url:
         return
+    # Suppress probes during idle periods (same logic as async variant).
+    with _state_lock:
+        if _last_real_request_ts and time.time() - _last_real_request_ts > IDLE_PROBE_SUPPRESS_SECONDS:
+            return
     ready_url = _join_url(skyserve_url, SKYSERVE_READY_PATH)
     try:
         r = req_lib.get(ready_url, timeout=PROBE_TIMEOUT_SECONDS)
