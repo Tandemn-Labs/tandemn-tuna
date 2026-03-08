@@ -350,8 +350,11 @@ def push_url_to_router(
 
 
 def _schedule_scale_to_zero(request: DeployRequest, service_name: str) -> threading.Thread | None:
-    """Spawn a daemon thread that waits for the spot replica to reach READY,
-    then switches min_replicas from 1 to 0 to enable scale-to-zero.
+    """Wait for the spot replica to reach READY, then switch min_replicas
+    from 1 to 0 to enable scale-to-zero.
+
+    Runs synchronously in a non-daemon thread and joins before returning,
+    so the CLI process cannot exit before the update completes.
 
     Returns the thread (for testing) or None if scale-to-zero is disabled.
     """
@@ -380,7 +383,7 @@ def _schedule_scale_to_zero(request: DeployRequest, service_name: str) -> thread
             time.sleep(30)
         logger.warning("Timed out waiting for spot replica READY on %s", service_name)
 
-    thread = threading.Thread(target=_worker, name="scale-to-zero", daemon=True)
+    thread = threading.Thread(target=_worker, name="scale-to-zero", daemon=False)
     thread.start()
     return thread
 
