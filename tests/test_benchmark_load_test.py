@@ -122,20 +122,20 @@ def test_spike_small_max_users():
 # ---------------------------------------------------------------------------
 
 def test_day_cycle_ramp_start():
-    # At 0%: near 10% of max
+    # At 0%: start of ramp → 0 users
     result = _concurrency_for_profile("day-cycle", 0.0, 100.0, 100)
-    assert 1 <= result <= 15
+    assert 0 <= result <= 5
 
 
 def test_day_cycle_ramp_midpoint():
-    # At 7.5% (half of ramp phase): ~55% of max
-    result = _concurrency_for_profile("day-cycle", 7.5, 100.0, 100)
-    assert 40 <= result <= 65
+    # At 5% (half of ramp phase 0-10%): ~50% of max
+    result = _concurrency_for_profile("day-cycle", 5.0, 100.0, 100)
+    assert 40 <= result <= 60
 
 
 def test_day_cycle_peak():
-    # At 25%: peak phase → 100% of max
-    assert _concurrency_for_profile("day-cycle", 25.0, 100.0, 100) == 100
+    # At 15%: morning peak phase → 100% of max
+    assert _concurrency_for_profile("day-cycle", 15.0, 100.0, 100) == 100
 
 
 def test_day_cycle_steady():
@@ -144,19 +144,34 @@ def test_day_cycle_steady():
 
 
 def test_day_cycle_spike():
-    # At 60%: spike phase → 100% of max
-    assert _concurrency_for_profile("day-cycle", 60.0, 100.0, 100) == 100
+    # At 54%: afternoon spike → 100% of max
+    assert _concurrency_for_profile("day-cycle", 54.0, 100.0, 100) == 100
 
 
-def test_day_cycle_low():
-    # At 90%: low phase → 20% of max
-    assert _concurrency_for_profile("day-cycle", 90.0, 100.0, 100) == 20
+def test_day_cycle_zero_gap_1():
+    # At 32%: first zero-traffic gap → 0 users
+    assert _concurrency_for_profile("day-cycle", 32.0, 100.0, 100) == 0
 
 
-def test_day_cycle_wind_down():
-    # At 72.5% (midpoint of wind-down 65-80%): between 70% and 20% → ~45%
-    result = _concurrency_for_profile("day-cycle", 72.5, 100.0, 100)
-    assert 30 <= result <= 60
+def test_day_cycle_zero_gap_2():
+    # At 65%: second zero-traffic gap → 0 users
+    assert _concurrency_for_profile("day-cycle", 65.0, 100.0, 100) == 0
+
+
+def test_day_cycle_zero_gap_3():
+    # At 92%: third zero-traffic gap → 0 users
+    assert _concurrency_for_profile("day-cycle", 92.0, 100.0, 100) == 0
+
+
+def test_day_cycle_recovery_after_gap():
+    # At 38%: recovery ramp after gap 1 → should have some users
+    result = _concurrency_for_profile("day-cycle", 38.0, 100.0, 100)
+    assert 30 <= result <= 75
+
+
+def test_day_cycle_final_trickle():
+    # At 97%: final trickle phase → 20% of max
+    assert _concurrency_for_profile("day-cycle", 97.0, 100.0, 100) == 20
 
 
 def test_unknown_profile_raises():

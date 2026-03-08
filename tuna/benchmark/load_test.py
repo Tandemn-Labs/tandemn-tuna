@@ -65,19 +65,72 @@ def _concurrency_for_profile(
         return baseline
 
     if profile == "day-cycle":
-        # ramp 0-15%, peak 15-35%, steady 35-55%, spike 55-65%, wind-down 65-80%, low 80-100%
-        if pct < 0.15:
-            frac = pct / 0.15
-            return max(1, round(max_users * (0.1 + 0.9 * frac)))
+        # Realistic day-cycle with 3 zero-traffic gaps that trigger spot scale-down.
+        # Each gap is ~5% of duration (~6 min in a 2hr run) to exceed SkyPilot's
+        # 300s downscale_delay.
+        #
+        # Timeline (2hr example):
+        #   0:00-0:12  (0-10%)    Ramp up 1→max             [serverless absorbs, spot cold]
+        #   0:12-0:30  (10-25%)   Morning peak, max users   [spot takes over]
+        #   0:30-0:36  (25-30%)   Wind down to 0
+        #   0:36-0:42  (30-35%)   ☆ ZERO TRAFFIC (gap 1)   [spot scales down]
+        #   0:42-0:44  (35-37%)   Recovery ramp              [serverless absorbs again]
+        #   0:44-1:00  (37-50%)   Steady state, 70% users
+        #   1:00-1:10  (50-58%)   Afternoon spike, max users
+        #   1:10-1:16  (58-63%)   Wind down to 0
+        #   1:16-1:22  (63-68%)   ☆ ZERO TRAFFIC (gap 2)   [spot scales down]
+        #   1:22-1:24  (68-70%)   Recovery ramp              [serverless absorbs again]
+        #   1:24-1:42  (70-85%)   Evening steady, 70% users
+        #   1:42-1:48  (85-90%)   Wind down to 0
+        #   1:48-1:54  (90-95%)   ☆ ZERO TRAFFIC (gap 3)   [spot scales down]
+        #   1:54-2:00  (95-100%)  Final trickle, 20% users  [serverless handles tail]
+
+        # Phase 1: Ramp up (0-10%)
+        if pct < 0.10:
+            frac = pct / 0.10
+            return max(1, round(max_users * frac))
+        # Phase 2: Morning peak (10-25%)
+        if pct < 0.25:
+            return max_users
+        # Phase 3: Wind down to gap 1 (25-30%)
+        if pct < 0.30:
+            frac = (pct - 0.25) / 0.05
+            return max(0, round(max_users * (1.0 - frac)))
+        # Phase 4: ☆ ZERO TRAFFIC gap 1 (30-35%)
         if pct < 0.35:
-            return max_users
-        if pct < 0.55:
+            return 0
+        # Phase 5: Recovery ramp (35-37%)
+        if pct < 0.37:
+            frac = (pct - 0.35) / 0.02
+            return max(1, round(max_users * 0.7 * frac))
+        # Phase 6: Steady state (37-50%)
+        if pct < 0.50:
             return max(1, round(max_users * 0.7))
-        if pct < 0.65:
+        # Phase 7: Afternoon spike (50-58%)
+        if pct < 0.58:
             return max_users
-        if pct < 0.80:
-            frac = (pct - 0.65) / 0.15
-            return max(1, round(max_users * (0.7 - 0.5 * frac)))
+        # Phase 8: Wind down to gap 2 (58-63%)
+        if pct < 0.63:
+            frac = (pct - 0.58) / 0.05
+            return max(0, round(max_users * (1.0 - frac)))
+        # Phase 9: ☆ ZERO TRAFFIC gap 2 (63-68%)
+        if pct < 0.68:
+            return 0
+        # Phase 10: Recovery ramp (68-70%)
+        if pct < 0.70:
+            frac = (pct - 0.68) / 0.02
+            return max(1, round(max_users * 0.7 * frac))
+        # Phase 11: Evening steady (70-85%)
+        if pct < 0.85:
+            return max(1, round(max_users * 0.7))
+        # Phase 12: Wind down to gap 3 (85-90%)
+        if pct < 0.90:
+            frac = (pct - 0.85) / 0.05
+            return max(0, round(max_users * 0.7 * (1.0 - frac)))
+        # Phase 13: ☆ ZERO TRAFFIC gap 3 (90-95%)
+        if pct < 0.95:
+            return 0
+        # Phase 14: Final trickle (95-100%)
         return max(1, round(max_users * 0.2))
 
     raise ValueError(f"Unknown profile: {profile!r}")
