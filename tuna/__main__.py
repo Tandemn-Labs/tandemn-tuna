@@ -1042,6 +1042,32 @@ def cmd_list(args: argparse.Namespace) -> None:
         print(f"{r.service_name:<30} {r.status:<12} {r.model_name:<30} {r.gpu:<10} {created:<26}")
 
 
+def cmd_benchmark_load_test(args: argparse.Namespace) -> None:
+    from tuna.benchmark.load_test import _parse_duration, print_summary, run_load_test
+
+    try:
+        duration_s = _parse_duration(args.duration)
+    except ValueError as e:
+        print(f"Error: invalid --duration {args.duration!r}: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    print(
+        f"Starting load test: profile={args.profile} duration={args.duration} "
+        f"max-users={args.max_users} model={args.model}"
+    )
+
+    report = run_load_test(
+        endpoint_url=args.endpoint_url,
+        duration_s=duration_s,
+        max_users=args.max_users,
+        profile=args.profile,
+        model=args.model,
+        log_file=args.log_file,
+        api_key=args.api_key,
+    )
+    print_summary(report, output=args.output)
+
+
 def cmd_benchmark_cold_start(args: argparse.Namespace) -> None:
     from tuna.benchmark.cold_start import (
         record_to_deployment_result,
@@ -1308,6 +1334,42 @@ def main() -> None:
     p_cold.add_argument("--gcp-project", default=None, help="Google Cloud project ID")
     p_cold.add_argument("--gcp-region", default=None, help="Google Cloud region (e.g. europe-west1)")
     p_cold.set_defaults(func=cmd_benchmark_cold_start)
+
+    # -- benchmark load-test --
+    p_load = benchmark_subs.add_parser(
+        "load-test", help="Load test the meta load balancer router"
+    )
+    p_load.add_argument(
+        "--endpoint-url", required=True,
+        help="Router endpoint URL (e.g. http://localhost:8080)",
+    )
+    p_load.add_argument(
+        "--duration", default="10m",
+        help="Test duration: 10h, 30m, 90s, or bare seconds (default: 10m)",
+    )
+    p_load.add_argument(
+        "--max-users", type=int, default=5,
+        help="Peak concurrent simulated users (default: 5)",
+    )
+    p_load.add_argument(
+        "--profile",
+        choices=["day-cycle", "flat", "spike", "ramp"],
+        default="day-cycle",
+        help="Traffic profile (default: day-cycle)",
+    )
+    p_load.add_argument("--model", default="Qwen/Qwen3-0.6B")
+    p_load.add_argument(
+        "--output", choices=["table", "json", "csv"], default="table",
+    )
+    p_load.add_argument(
+        "--log-file", default=None,
+        help="JSONL file for per-request data (default: none)",
+    )
+    p_load.add_argument(
+        "--api-key", default=None,
+        help="API key for the router (sent as Authorization Bearer and x-api-key)",
+    )
+    p_load.set_defaults(func=cmd_benchmark_load_test)
 
     args = parser.parse_args()
 
