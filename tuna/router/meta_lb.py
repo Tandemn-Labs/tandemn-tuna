@@ -12,7 +12,7 @@ Env vars:
   SERVERLESS_BASE_URL     e.g. https://xxx.modal.run
   SKYSERVE_BASE_URL       e.g. http://x.x.x.x:30001
 
-  SKYSERVE_POKE_PATH      default: /v1/models (requires real replica to respond)
+  SKYSERVE_POKE_PATH      default: /health (maintains QPS for autoscaler)
 
   POKE_TIMEOUT_SECONDS    default: 0.3
   UPSTREAM_TIMEOUT_SECONDS default: 210.0
@@ -108,9 +108,9 @@ def _join_url(base: str, path: str) -> str:
 # Configuration (env-driven, same pattern as SAM)
 # ---------------------------------------------------------------------------
 
-SKYSERVE_POKE_PATH = os.getenv("SKYSERVE_POKE_PATH", "/v1/models")
+SKYSERVE_POKE_PATH = os.getenv("SKYSERVE_POKE_PATH", "/health")
 
-POKE_TIMEOUT_SECONDS = _env_float("POKE_TIMEOUT_SECONDS", 2.0)
+POKE_TIMEOUT_SECONDS = _env_float("POKE_TIMEOUT_SECONDS", 0.5)
 UPSTREAM_TIMEOUT_SECONDS = _env_float("UPSTREAM_TIMEOUT_SECONDS", 210.0)
 
 # Derived from SpotScaling config — no magic numbers
@@ -346,20 +346,22 @@ def _enter_warming() -> None:
     logger.info("Spot state: cold -> warming")
 
     def _warm_loop():
+        """Poke SkyServe LB to maintain QPS > 0 (prevents autoscaler from
+        killing the PROVISIONING replica).  Does NOT use poke responses
+        to determine readiness — the replica watcher handles that via
+        POST /router/spot-replicas.
+        """
         max_attempts = int(WARMUP_TIMEOUT_SECONDS / WARMUP_POKE_INTERVAL_SECONDS)
         skyserve_url = _get_skyserve_url()
         poke_url = _join_url(skyserve_url, SKYSERVE_POKE_PATH)
 
         for _ in range(max_attempts):
-            # Check if state changed externally (e.g., spot-replicas endpoint)
+            # Check if state changed externally (e.g., watcher reported replicas>0)
             with _state_lock:
                 if _spot_state != SpotState.WARMING:
                     return
             try:
-                r = req_lib.get(poke_url, timeout=POKE_TIMEOUT_SECONDS)
-                if 200 <= r.status_code < 300:
-                    _set_state(SpotState.READY)
-                    return
+                req_lib.get(poke_url, timeout=POKE_TIMEOUT_SECONDS)
             except Exception:
                 pass
             time.sleep(WARMUP_POKE_INTERVAL_SECONDS)
@@ -502,7 +504,7 @@ def update_spot_replicas():
     if replicas == 0 and current == SpotState.READY:
         logger.info("Replica watcher: 0 replicas, marking COLD")
         _set_state(SpotState.COLD)
-    elif replicas > 0 and current == SpotState.COLD:
+    elif replicas > 0 and current in (SpotState.COLD, SpotState.WARMING):
         logger.info("Replica watcher: %d replicas, marking READY", replicas)
         _set_state(SpotState.READY)
     return Response(json.dumps({"ok": True}), status=200, mimetype="application/json")
