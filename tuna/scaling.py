@@ -13,7 +13,7 @@ class SpotScaling:
     max_replicas: int = 5
     target_qps: int = 10
     upscale_delay: int = 5
-    downscale_delay: int = 300
+    downscale_delay: int = 60
 
 
 @dataclass
