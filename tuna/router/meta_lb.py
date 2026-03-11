@@ -12,7 +12,7 @@ Env vars:
   SERVERLESS_BASE_URL     e.g. https://xxx.modal.run
   SKYSERVE_BASE_URL       e.g. http://x.x.x.x:30001
 
-  SKYSERVE_POKE_PATH      default: /health (trigger scale-up)
+  SKYSERVE_POKE_PATH      default: /v1/models (requires real replica to respond)
 
   POKE_TIMEOUT_SECONDS    default: 0.3
   UPSTREAM_TIMEOUT_SECONDS default: 210.0
@@ -108,9 +108,9 @@ def _join_url(base: str, path: str) -> str:
 # Configuration (env-driven, same pattern as SAM)
 # ---------------------------------------------------------------------------
 
-SKYSERVE_POKE_PATH = os.getenv("SKYSERVE_POKE_PATH", "/health")
+SKYSERVE_POKE_PATH = os.getenv("SKYSERVE_POKE_PATH", "/v1/models")
 
-POKE_TIMEOUT_SECONDS = _env_float("POKE_TIMEOUT_SECONDS", 0.3)
+POKE_TIMEOUT_SECONDS = _env_float("POKE_TIMEOUT_SECONDS", 2.0)
 UPSTREAM_TIMEOUT_SECONDS = _env_float("UPSTREAM_TIMEOUT_SECONDS", 210.0)
 
 # Derived from SpotScaling config — no magic numbers
