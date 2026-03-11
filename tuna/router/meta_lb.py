@@ -346,22 +346,32 @@ def _enter_warming() -> None:
     logger.info("Spot state: cold -> warming")
 
     def _warm_loop():
-        """Poke SkyServe LB to maintain QPS > 0 (prevents autoscaler from
-        killing the PROVISIONING replica).  Does NOT use poke responses
-        to determine readiness — the replica watcher handles that via
-        POST /router/spot-replicas.
+        """Poke SkyServe LB every interval to maintain QPS > 0 (prevents
+        autoscaler from killing the PROVISIONING replica).  Also probes
+        /v1/models to verify a real replica is serving — transitions to
+        READY only when that succeeds.
         """
         max_attempts = int(WARMUP_TIMEOUT_SECONDS / WARMUP_POKE_INTERVAL_SECONDS)
         skyserve_url = _get_skyserve_url()
         poke_url = _join_url(skyserve_url, SKYSERVE_POKE_PATH)
+        readiness_url = _join_url(skyserve_url, "/v1/models")
 
         for _ in range(max_attempts):
             # Check if state changed externally (e.g., watcher reported replicas>0)
             with _state_lock:
                 if _spot_state != SpotState.WARMING:
                     return
+            # Poke /health to maintain QPS for autoscaler
             try:
                 req_lib.get(poke_url, timeout=POKE_TIMEOUT_SECONDS)
+            except Exception:
+                pass
+            # Probe /v1/models to verify a real replica is serving
+            try:
+                r = req_lib.get(readiness_url, timeout=5.0)
+                if 200 <= r.status_code < 300:
+                    _set_state(SpotState.READY)
+                    return
             except Exception:
                 pass
             time.sleep(WARMUP_POKE_INTERVAL_SECONDS)
@@ -526,6 +536,16 @@ def proxy(path: str):
 
     if not _is_authorized(request):
         return Response("unauthorized", status=401)
+
+    # Preemptive idle→cold: if spot is READY but no real traffic for
+    # downscale_delay seconds, SkyServe has likely scaled down already.
+    # Mark COLD to avoid routing to a dead spot (saves one failed request).
+    if skyserve_url and _is_ready():
+        with _state_lock:
+            idle_s = time.time() - _last_real_request_ts if _last_real_request_ts else 0
+        if idle_s > IDLE_TIMEOUT_SECONDS:
+            logger.info("Idle %.0fs > %.0fs, preemptively marking COLD", idle_s, IDLE_TIMEOUT_SECONDS)
+            _set_state(SpotState.COLD)
 
     # Decide backend: prefer spot (cheaper) if ready, else serverless (fast)
     if skyserve_url and _is_ready():
