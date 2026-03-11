@@ -6,54 +6,45 @@ ROUTER_URL="$2"
 API_KEY="$3"
 POLL_INTERVAL="${4:-30}"
 
-# Find the Python with SkyPilot installed (skypilot-runtime venv or system)
-SKY_PYTHON=""
+# Find the sky CLI binary (skypilot-runtime venv or system PATH)
+SKY_BIN=""
 for candidate in \
-    "$HOME/skypilot-runtime/bin/python" \
-    "$(which python3 2>/dev/null)"; do
+    "$HOME/skypilot-runtime/bin/sky" \
+    "$(which sky 2>/dev/null)"; do
     if [ -n "$candidate" ] && [ -x "$candidate" ]; then
-        if "$candidate" -c "import sky" 2>/dev/null; then
-            SKY_PYTHON="$candidate"
-            break
-        fi
+        SKY_BIN="$candidate"
+        break
     fi
 done
 
-if [ -z "$SKY_PYTHON" ]; then
-    echo "ERROR: Could not find Python with SkyPilot installed" >&2
+if [ -z "$SKY_BIN" ]; then
+    echo "ERROR: Could not find 'sky' CLI binary" >&2
     exit 1
 fi
-echo "Using Python: $SKY_PYTHON" >&2
+echo "Using sky CLI: $SKY_BIN" >&2
 
 while true; do
-    # Parse 'sky serve status' CLI output — more stable than internal Python API
-    REPLICAS=$("$SKY_PYTHON" -c "
-import subprocess, re
-try:
-    result = subprocess.run(
-        ['$SKY_PYTHON', '-m', 'sky.cli', 'serve', 'status', '$SERVICE_NAME'],
-        capture_output=True, text=True, timeout=30,
-    )
-    # Count lines in 'Service Replicas' section with status READY
-    lines = result.stdout.strip().split('\n')
-    ready = 0
-    in_replicas = False
-    for line in lines:
-        if 'Service Replicas' in line:
-            in_replicas = True
-            continue
-        if in_replicas and '$SERVICE_NAME' in line and 'READY' in line:
-            ready += 1
-    print(ready)
-except:
-    print(-1)
-" 2>/dev/null)
+    # Run 'sky serve status SERVICE_NAME' and count READY replicas
+    OUTPUT=$("$SKY_BIN" serve status "$SERVICE_NAME" 2>/dev/null)
+    if [ $? -eq 0 ] && [ -n "$OUTPUT" ]; then
+        # Count lines in 'Service Replicas' section with status READY
+        REPLICAS=$(echo "$OUTPUT" | awk -v svc="$SERVICE_NAME" '
+            /Service Replicas/ { in_replicas=1; next }
+            in_replicas && $0 ~ svc && /READY/ { ready++ }
+            END { print ready+0 }
+        ')
+    else
+        REPLICAS="-1"
+    fi
 
     if [ "$REPLICAS" != "-1" ]; then
         curl -s -X POST "$ROUTER_URL/router/spot-replicas" \
             -H "Content-Type: application/json" \
             -H "x-api-key: $API_KEY" \
             -d "{\"replicas\": $REPLICAS}" > /dev/null 2>&1
+        echo "$(date -u '+%Y-%m-%d %H:%M:%S') Pushed replicas=$REPLICAS" >&2
+    else
+        echo "$(date -u '+%Y-%m-%d %H:%M:%S') sky serve status failed, skipping" >&2
     fi
 
     sleep "$POLL_INTERVAL"
