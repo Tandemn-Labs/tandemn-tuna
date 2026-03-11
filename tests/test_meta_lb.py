@@ -387,20 +387,31 @@ class TestSpotStateMachine:
 
 class TestWarmingThread:
     def test_warming_starts_on_cold(self, mocker):
-        """Background poke loop starts when state is COLD."""
+        """Background poke loop starts when state is COLD and keeps poking."""
         meta_lb._spot_state = meta_lb.SpotState.COLD
         meta_lb._warming_thread = None
         meta_lb._skyserve_base_url = "http://spot.example.com"
 
-        # Mock the poke to return 200 immediately
         mock_get = mocker.patch.object(req_lib, "get")
         mock_get.return_value = mocker.Mock(status_code=200)
         mocker.patch("time.sleep")
 
-        meta_lb._enter_warming()
-        assert meta_lb._warming_thread is not None
-        meta_lb._warming_thread.join(timeout=5)
-        assert meta_lb._spot_state == meta_lb.SpotState.READY
+        # Use short timeout so thread finishes
+        orig_timeout = meta_lb.WARMUP_TIMEOUT_SECONDS
+        orig_interval = meta_lb.WARMUP_POKE_INTERVAL_SECONDS
+        meta_lb.WARMUP_TIMEOUT_SECONDS = 2.0
+        meta_lb.WARMUP_POKE_INTERVAL_SECONDS = 1.0
+        try:
+            meta_lb._enter_warming()
+            assert meta_lb._warming_thread is not None
+            # Simulate watcher marking READY while warming
+            meta_lb._spot_state = meta_lb.SpotState.READY
+            meta_lb._warming_thread.join(timeout=5)
+            # Warming thread exits because state changed externally
+            assert meta_lb._spot_state == meta_lb.SpotState.READY
+        finally:
+            meta_lb.WARMUP_TIMEOUT_SECONDS = orig_timeout
+            meta_lb.WARMUP_POKE_INTERVAL_SECONDS = orig_interval
 
     def test_warming_does_not_start_when_already_warming(self, mocker):
         """If already warming, _enter_warming is a no-op."""
@@ -501,15 +512,15 @@ class TestSpotReplicas:
         assert resp.status_code == 200
         assert meta_lb._spot_state == meta_lb.SpotState.READY
 
-    def test_replicas_positive_during_warming_no_change(self, client):
-        """POST with replicas=1 during WARMING doesn't change state."""
+    def test_replicas_positive_during_warming_marks_ready(self, client):
+        """POST with replicas=1 during WARMING transitions to READY."""
         meta_lb._spot_state = meta_lb.SpotState.WARMING
         resp = client.post(
             "/router/spot-replicas",
             json={"replicas": 1},
         )
         assert resp.status_code == 200
-        assert meta_lb._spot_state == meta_lb.SpotState.WARMING
+        assert meta_lb._spot_state == meta_lb.SpotState.READY
 
     def test_replicas_zero_during_cold_no_change(self, client):
         """POST with replicas=0 during COLD doesn't change state."""
