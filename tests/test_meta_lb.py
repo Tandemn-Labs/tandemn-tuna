@@ -453,7 +453,8 @@ class TestWarmingThread:
             meta_lb._warming_thread.join(timeout=10)
             # After all attempts fail, state returns to COLD
             assert meta_lb._spot_state == meta_lb.SpotState.COLD
-            assert mock_get.call_count == 3
+            # 2 calls per iteration (poke + readiness probe) × 3 attempts = 6
+            assert mock_get.call_count == 6
         finally:
             meta_lb.WARMUP_TIMEOUT_SECONDS = orig_timeout
             meta_lb.WARMUP_POKE_INTERVAL_SECONDS = orig_interval
@@ -484,8 +485,8 @@ class TestWarmingThread:
         try:
             meta_lb._enter_warming()
             meta_lb._warming_thread.join(timeout=5)
-            # Should have exited early — only 1 poke before external state change
-            assert call_count == 1
+            # 2 calls in first iteration (poke + readiness), then state check exits
+            assert call_count == 2
         finally:
             meta_lb.WARMUP_TIMEOUT_SECONDS = orig_timeout
             meta_lb.WARMUP_POKE_INTERVAL_SECONDS = orig_interval
