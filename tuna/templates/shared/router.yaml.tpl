@@ -18,5 +18,7 @@ run: |
   export SERVERLESS_BASE_URL="{serverless_url}"
   export SKYSERVE_BASE_URL="{spot_url}"
   export API_KEY="{router_api_key}"
+  export IDLE_TIMEOUT_SECONDS="{downscale_delay}"
+  export WARMUP_POKE_INTERVAL_SECONDS="{upscale_delay}"
   gunicorn -w 1 -k gthread --threads 16 --timeout 300 \
     --bind 0.0.0.0:8080 meta_lb:app

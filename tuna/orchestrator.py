@@ -34,6 +34,7 @@ logger = logging.getLogger(__name__)
 
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates" / "shared"
 META_LB_PATH = Path(__file__).resolve().parent / "router" / "meta_lb.py"
+REPLICA_WATCHER_PATH = Path(__file__).resolve().parent / "router" / "replica_watcher.sh"
 
 
 def build_vllm_cmd(request: DeployRequest, port: str = "8001") -> str:
@@ -86,6 +87,8 @@ def _launch_router_vm(request: DeployRequest, router_api_key: str = "") -> Deplo
         "meta_lb_local_path": str(META_LB_PATH),
         "region_block": region_block,
         "router_api_key": router_api_key,
+        "downscale_delay": str(request.scaling.spot.downscale_delay),
+        "upscale_delay": str(request.scaling.spot.upscale_delay),
     }
 
     rendered = render_template(
@@ -252,6 +255,8 @@ def _launch_router_on_controller(
         f"SERVERLESS_BASE_URL={shlex.quote(serverless_url)} "
         f"SERVERLESS_AUTH_TOKEN={shlex.quote(serverless_auth_token)} "
         f"SKYSERVE_BASE_URL='http://127.0.0.1:30001' "
+        f"IDLE_TIMEOUT_SECONDS={request.scaling.spot.downscale_delay} "
+        f"WARMUP_POKE_INTERVAL_SECONDS={request.scaling.spot.upscale_delay} "
         f"setsid gunicorn -w 1 -k gthread --threads 16 --timeout 300 "
         f"--bind 0.0.0.0:{router_port} "
         f"--chdir /tmp meta_lb:app > /tmp/meta_lb.log 2>&1 < /dev/null &"
@@ -264,6 +269,31 @@ def _launch_router_on_controller(
         )
     except subprocess.TimeoutExpired:
         logger.warning("SSH start command timed out — gunicorn may still be starting")
+
+    # 4. SCP and launch replica watcher (pushes replica count to router)
+    spot_service_name = f"{request.service_name}-spot"
+    try:
+        subprocess.run(
+            ["scp", *ssh_opts, str(REPLICA_WATCHER_PATH), f"{ssh_target}:/tmp/replica_watcher.sh"],
+            capture_output=True, text=True, timeout=30,
+        )
+        watcher_cmd = (
+            f"{conda_prefix} && "
+            f"chmod +x /tmp/replica_watcher.sh && "
+            f"setsid /tmp/replica_watcher.sh "
+            f"{shlex.quote(spot_service_name)} "
+            f"http://127.0.0.1:{router_port} "
+            f"{shlex.quote(router_api_key)} "
+            f"30 "
+            f"> /tmp/replica_watcher.log 2>&1 < /dev/null &"
+        )
+        subprocess.run(
+            ["ssh", *ssh_opts, ssh_target, watcher_cmd],
+            capture_output=True, text=True, timeout=30,
+        )
+        logger.info("Replica watcher started for %s", spot_service_name)
+    except Exception as e:
+        logger.warning("Failed to start replica watcher (non-fatal): %s", e)
 
     endpoint = f"http://{ip}:{router_port}"
     logger.info("Router colocated on controller at %s", endpoint)
@@ -383,7 +413,7 @@ def _schedule_scale_to_zero(request: DeployRequest, service_name: str) -> thread
             time.sleep(30)
         logger.warning("Timed out waiting for spot replica READY on %s", service_name)
 
-    thread = threading.Thread(target=_worker, name="scale-to-zero", daemon=False)
+    thread = threading.Thread(target=_worker, name="scale-to-zero", daemon=True)
     thread.start()
     return thread
 

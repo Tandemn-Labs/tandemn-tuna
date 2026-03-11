@@ -452,6 +452,60 @@ class TestLaunchRouterOnController:
         assert f"SERVERLESS_AUTH_TOKEN={shlex.quote(dangerous_token)}" in ssh_cmd
 
 
+    @patch("tuna.orchestrator._open_port_on_cluster", return_value=True)
+    @patch("tuna.orchestrator._get_ssh_user", return_value="ubuntu")
+    @patch("tuna.orchestrator._get_ssh_key_path", return_value="/home/user/.ssh/sky-key")
+    @patch("tuna.orchestrator._get_cluster_ip", return_value="10.0.0.1")
+    @patch("tuna.orchestrator.subprocess")
+    def test_idle_timeout_in_env(self, mock_subprocess, mock_ip, mock_key, mock_user, mock_port):
+        """Verify IDLE_TIMEOUT_SECONDS is passed in SSH command."""
+        mock_subprocess.run.return_value = MagicMock(returncode=0, stderr="")
+        mock_subprocess.TimeoutExpired = subprocess.TimeoutExpired
+        request = DeployRequest(model_name="m", gpu="g")
+        request.scaling.spot.downscale_delay = 45
+        _launch_router_on_controller(request, "sky-serve-controller-x")
+        ssh_call = mock_subprocess.run.call_args_list[2]
+        ssh_cmd = ssh_call[0][0][-1]
+        assert "IDLE_TIMEOUT_SECONDS=45" in ssh_cmd
+
+    @patch("tuna.orchestrator._open_port_on_cluster", return_value=True)
+    @patch("tuna.orchestrator._get_ssh_user", return_value="ubuntu")
+    @patch("tuna.orchestrator._get_ssh_key_path", return_value="/home/user/.ssh/sky-key")
+    @patch("tuna.orchestrator._get_cluster_ip", return_value="10.0.0.1")
+    @patch("tuna.orchestrator.subprocess")
+    def test_warmup_poke_interval_in_env(self, mock_subprocess, mock_ip, mock_key, mock_user, mock_port):
+        """Verify WARMUP_POKE_INTERVAL_SECONDS derived from upscale_delay."""
+        mock_subprocess.run.return_value = MagicMock(returncode=0, stderr="")
+        mock_subprocess.TimeoutExpired = subprocess.TimeoutExpired
+        request = DeployRequest(model_name="m", gpu="g")
+        request.scaling.spot.upscale_delay = 10
+        _launch_router_on_controller(request, "sky-serve-controller-x")
+        ssh_call = mock_subprocess.run.call_args_list[2]
+        ssh_cmd = ssh_call[0][0][-1]
+        assert "WARMUP_POKE_INTERVAL_SECONDS=10" in ssh_cmd
+
+    @patch("tuna.orchestrator._open_port_on_cluster", return_value=True)
+    @patch("tuna.orchestrator._get_ssh_user", return_value="ubuntu")
+    @patch("tuna.orchestrator._get_ssh_key_path", return_value="/home/user/.ssh/sky-key")
+    @patch("tuna.orchestrator._get_cluster_ip", return_value="10.0.0.1")
+    @patch("tuna.orchestrator.subprocess")
+    def test_replica_watcher_launched(self, mock_subprocess, mock_ip, mock_key, mock_user, mock_port):
+        """Verify replica watcher SCP + SSH launch."""
+        mock_subprocess.run.return_value = MagicMock(returncode=0, stderr="")
+        mock_subprocess.TimeoutExpired = subprocess.TimeoutExpired
+        request = DeployRequest(model_name="m", gpu="g", service_name="my-svc")
+        _launch_router_on_controller(
+            request, "sky-serve-controller-x", router_api_key="test-key",
+        )
+        # Call 3 = SCP watcher, Call 4 = SSH watcher start
+        scp_watcher = mock_subprocess.run.call_args_list[3]
+        assert "replica_watcher.sh" in scp_watcher[0][0][-1]
+        watcher_ssh = mock_subprocess.run.call_args_list[4]
+        watcher_cmd = watcher_ssh[0][0][-1]
+        assert "replica_watcher.sh" in watcher_cmd
+        assert "my-svc-spot" in watcher_cmd
+
+
 class TestDestroyHybridColocated:
     def _make_record(self, **kwargs):
         defaults = dict(
