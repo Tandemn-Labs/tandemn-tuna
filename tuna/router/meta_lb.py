@@ -3,19 +3,23 @@
 Adapted from the proven SAM load_balancer.py pattern. Provider-agnostic:
 only knows about URLs, never imports Modal/SkyPilot.
 
+Spot state machine (COLD → WARMING → READY):
+  COLD:    Spot is down. Route everything to serverless. Zero SkyServe LB hits.
+  WARMING: Waking spot up. Background thread pokes SkyServe periodically.
+  READY:   Spot is up. Route to spot. Zero probing — failures trigger COLD.
+
 Env vars:
   SERVERLESS_BASE_URL     e.g. https://xxx.modal.run
   SKYSERVE_BASE_URL       e.g. http://x.x.x.x:30001
 
-  SKYSERVE_READY_PATH     default: /health
   SKYSERVE_POKE_PATH      default: /health (trigger scale-up)
 
-  PROBE_TIMEOUT_SECONDS   default: 1.0
   POKE_TIMEOUT_SECONDS    default: 0.3
   UPSTREAM_TIMEOUT_SECONDS default: 210.0
 
-  CHECK_MIN_INTERVAL_SECONDS default: 1.0
-  POKE_MIN_INTERVAL_SECONDS  default: 0.5
+  IDLE_TIMEOUT_SECONDS          default: 60.0  (= spot.downscale_delay)
+  WARMUP_POKE_INTERVAL_SECONDS  default: 5.0   (= spot.upscale_delay)
+  WARMUP_TIMEOUT_SECONDS        default: 1200.0 (= readiness_probe.initial_delay_seconds)
 
   API_KEY                 if set, required for all requests
   API_KEY_HEADER          default: x-api-key
@@ -34,7 +38,6 @@ import os
 import threading
 import time
 from collections import deque
-from concurrent.futures import ThreadPoolExecutor
 from typing import Dict
 
 import requests as req_lib
@@ -105,17 +108,15 @@ def _join_url(base: str, path: str) -> str:
 # Configuration (env-driven, same pattern as SAM)
 # ---------------------------------------------------------------------------
 
-BG_MAX_WORKERS = int(os.getenv("BG_MAX_WORKERS", "4"))
-EXECUTOR = ThreadPoolExecutor(max_workers=BG_MAX_WORKERS)
-
-SKYSERVE_READY_PATH = os.getenv("SKYSERVE_READY_PATH", "/health")
 SKYSERVE_POKE_PATH = os.getenv("SKYSERVE_POKE_PATH", "/health")
 
-PROBE_TIMEOUT_SECONDS = _env_float("PROBE_TIMEOUT_SECONDS", 1.0)
 POKE_TIMEOUT_SECONDS = _env_float("POKE_TIMEOUT_SECONDS", 0.3)
 UPSTREAM_TIMEOUT_SECONDS = _env_float("UPSTREAM_TIMEOUT_SECONDS", 210.0)
-CHECK_MIN_INTERVAL_SECONDS = _env_float("CHECK_MIN_INTERVAL_SECONDS", 1.0)
-POKE_MIN_INTERVAL_SECONDS = _env_float("POKE_MIN_INTERVAL_SECONDS", 0.5)
+
+# Derived from SpotScaling config — no magic numbers
+IDLE_TIMEOUT_SECONDS = _env_float("IDLE_TIMEOUT_SECONDS", 60.0)
+WARMUP_POKE_INTERVAL_SECONDS = _env_float("WARMUP_POKE_INTERVAL_SECONDS", 5.0)
+WARMUP_TIMEOUT_SECONDS = _env_float("WARMUP_TIMEOUT_SECONDS", 1200.0)
 
 API_KEY = os.getenv("API_KEY", "")
 API_KEY_HEADER = os.getenv("API_KEY_HEADER", "x-api-key")
@@ -125,6 +126,17 @@ ROUTE_WINDOW_SIZE = int(os.getenv("ROUTE_WINDOW_SIZE", "200"))
 
 SESSION = req_lib.Session()
 
+
+# ---------------------------------------------------------------------------
+# Spot state machine
+# ---------------------------------------------------------------------------
+
+class SpotState:
+    COLD = "cold"
+    WARMING = "warming"
+    READY = "ready"
+
+
 # ---------------------------------------------------------------------------
 # Mutable state — backend URLs can be updated at runtime via /router/config
 # ---------------------------------------------------------------------------
@@ -133,11 +145,11 @@ _state_lock = threading.Lock()
 _serverless_base_url: str = os.environ.get("SERVERLESS_BASE_URL", "").rstrip("/")
 _serverless_auth_token: str = os.environ.get("SERVERLESS_AUTH_TOKEN", "")
 _skyserve_base_url: str = os.environ.get("SKYSERVE_BASE_URL", "").rstrip("/")
-_skyserve_ready: bool = False
+
+_spot_state: str = SpotState.COLD
+_warming_thread: threading.Thread | None = None
 _last_probe_ts: float | None = None
 _last_probe_err: str | None = None
-_last_check_ts: float = 0.0
-_last_poke_ts: float = 0.0
 
 # Route stats
 _req_total: int = 0
@@ -152,11 +164,6 @@ _gpu_seconds_serverless: float = 0.0
 _spot_ready_cumulative_s: float = 0.0
 _spot_ready_since: float | None = None
 _last_real_request_ts: float = 0.0
-
-# Suppress SkyServe health probes when no real inference request has been
-# routed for this many seconds.  This lets the SkyServe autoscaler's QPS
-# window drain to zero during idle periods, enabling scale-to-zero.
-IDLE_PROBE_SUPPRESS_SECONDS = _env_float("IDLE_PROBE_SUPPRESS_SECONDS", 60.0)
 
 
 # ---------------------------------------------------------------------------
@@ -194,25 +201,34 @@ def set_spot_url(url: str) -> None:
     logger.info("Spot URL updated: %s", url)
 
 
-def _set_ready(val: bool, err: str | None = None) -> None:
-    global _skyserve_ready, _last_probe_ts, _last_probe_err
+def _set_state(new_state: str, err: str | None = None) -> None:
+    """Transition the spot state machine and track ready-time accounting."""
+    global _spot_state, _last_probe_ts, _last_probe_err
     global _spot_ready_cumulative_s, _spot_ready_since
     with _state_lock:
+        old = _spot_state
         now = time.time()
         # Accumulate spot-ready time on state transitions
-        if _skyserve_ready and not val and _spot_ready_since is not None:
+        if old == SpotState.READY and new_state != SpotState.READY and _spot_ready_since is not None:
             _spot_ready_cumulative_s += now - _spot_ready_since
             _spot_ready_since = None
-        elif not _skyserve_ready and val:
+        elif old != SpotState.READY and new_state == SpotState.READY:
             _spot_ready_since = now
-        _skyserve_ready = val
+        _spot_state = new_state
         _last_probe_ts = now
         _last_probe_err = err
+    if old != new_state:
+        logger.info("Spot state: %s -> %s", old, new_state)
 
 
 def _is_ready() -> bool:
     with _state_lock:
-        return _skyserve_ready
+        return _spot_state == SpotState.READY
+
+
+# Backward-compat helper for _set_ready(bool) callers
+def _set_ready(val: bool, err: str | None = None) -> None:
+    _set_state(SpotState.READY if val else SpotState.COLD, err)
 
 
 # ---------------------------------------------------------------------------
@@ -309,82 +325,53 @@ def _is_authorized(req) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Background probes
+# Warming state machine — replaces proactive health probes
 # ---------------------------------------------------------------------------
 
-def _check_skyserve_ready_async() -> None:
-    skyserve_url = _get_skyserve_url()
-    if not skyserve_url:
-        return
+def _enter_warming() -> None:
+    """Start background warming thread that pokes SkyServe periodically.
 
-    global _last_check_ts
-    now = time.time()
-
-    # Suppress probes during idle periods so SkyServe's QPS window can
-    # drain to zero and the autoscaler can trigger scale-to-zero.
+    Keeps QPS > 0 so SkyServe doesn't kill the PROVISIONING replica.
+    Poke interval = upscale_delay (autoscaler's tick rate).
+    Timeout = readiness_probe.initial_delay_seconds (max time for replica to boot).
+    Reads poke responses to detect when spot becomes READY.
+    """
+    global _warming_thread, _spot_state, _last_probe_ts
     with _state_lock:
-        if _last_real_request_ts and now - _last_real_request_ts > IDLE_PROBE_SUPPRESS_SECONDS:
-            return
-        if now - _last_check_ts < CHECK_MIN_INTERVAL_SECONDS:
-            return
-        _last_check_ts = now
+        if _spot_state != SpotState.COLD:
+            return  # already warming or ready
+        # Inline transition to WARMING (avoid re-acquiring lock via _set_state)
+        _spot_state = SpotState.WARMING
+        _last_probe_ts = time.time()
+    logger.info("Spot state: cold -> warming")
 
-    ready_url = _join_url(skyserve_url, SKYSERVE_READY_PATH)
+    def _warm_loop():
+        max_attempts = int(WARMUP_TIMEOUT_SECONDS / WARMUP_POKE_INTERVAL_SECONDS)
+        skyserve_url = _get_skyserve_url()
+        poke_url = _join_url(skyserve_url, SKYSERVE_POKE_PATH)
 
-    def _do():
-        try:
-            r = req_lib.get(ready_url, timeout=PROBE_TIMEOUT_SECONDS)
-            if 200 <= r.status_code < 300:
-                _set_ready(True, None)
-            else:
-                _set_ready(False, f"status={r.status_code}")
-        except Exception as e:
-            _set_ready(False, str(e))
+        for _ in range(max_attempts):
+            # Check if state changed externally (e.g., spot-replicas endpoint)
+            with _state_lock:
+                if _spot_state != SpotState.WARMING:
+                    return
+            try:
+                r = req_lib.get(poke_url, timeout=POKE_TIMEOUT_SECONDS)
+                if 200 <= r.status_code < 300:
+                    _set_state(SpotState.READY)
+                    return
+            except Exception:
+                pass
+            time.sleep(WARMUP_POKE_INTERVAL_SECONDS)
 
-    threading.Thread(target=_do, daemon=True).start()
+        # Timeout — replica didn't become READY within initial_delay window
+        logger.warning(
+            "Spot warmup timed out after %.0fs", WARMUP_TIMEOUT_SECONDS,
+        )
+        _set_state(SpotState.COLD)
 
-
-def _check_skyserve_ready_sync() -> None:
-    """Synchronous readiness check — used by /router/health to avoid stale state."""
-    skyserve_url = _get_skyserve_url()
-    if not skyserve_url:
-        return
-    # Suppress probes during idle periods (same logic as async variant).
-    with _state_lock:
-        if _last_real_request_ts and time.time() - _last_real_request_ts > IDLE_PROBE_SUPPRESS_SECONDS:
-            return
-    ready_url = _join_url(skyserve_url, SKYSERVE_READY_PATH)
-    try:
-        r = req_lib.get(ready_url, timeout=PROBE_TIMEOUT_SECONDS)
-        if 200 <= r.status_code < 300:
-            _set_ready(True, None)
-        else:
-            _set_ready(False, f"status={r.status_code}")
-    except Exception as e:
-        _set_ready(False, str(e))
-
-
-def _poke_skyserve_async() -> None:
-    skyserve_url = _get_skyserve_url()
-    if not skyserve_url:
-        return
-
-    global _last_poke_ts
-    now = time.time()
-    with _state_lock:
-        if now - _last_poke_ts < POKE_MIN_INTERVAL_SECONDS:
-            return
-        _last_poke_ts = now
-
-    poke_url = _join_url(skyserve_url, SKYSERVE_POKE_PATH)
-
-    def _do():
-        try:
-            req_lib.get(poke_url, timeout=POKE_TIMEOUT_SECONDS)
-        except Exception:
-            pass
-
-    EXECUTOR.submit(_do)
+    _warming_thread = threading.Thread(target=_warm_loop, daemon=True, name="spot-warming")
+    _warming_thread.start()
 
 
 # ---------------------------------------------------------------------------
@@ -464,13 +451,12 @@ def router_health():
     if not ALLOW_HEALTH_NO_AUTH and not _is_authorized(request):
         return Response("unauthorized", status=401)
 
-    # Refresh spot readiness so cost stats aren't stale
-    _check_skyserve_ready_sync()
-
-    # Snapshot state and stats separately to avoid nested lock acquisition
+    # Pure read — no SkyServe LB hit. State is updated by proxy() results
+    # and the warming thread.
     with _state_lock:
         state = {
-            "skyserve_ready": _skyserve_ready,
+            "skyserve_ready": _spot_state == SpotState.READY,
+            "spot_state": _spot_state,
             "last_probe_ts": _last_probe_ts,
             "last_probe_err": _last_probe_err,
             "serverless_base_url": _serverless_base_url,
@@ -504,6 +490,24 @@ def update_config():
     )
 
 
+@app.route("/router/spot-replicas", methods=["POST"])
+def update_spot_replicas():
+    """Replica watcher pushes actual replica count here."""
+    if not _is_authorized(request):
+        return Response("unauthorized", status=401)
+    data = request.get_json(silent=True) or {}
+    replicas = data.get("replicas", 0)
+    with _state_lock:
+        current = _spot_state
+    if replicas == 0 and current == SpotState.READY:
+        logger.info("Replica watcher: 0 replicas, marking COLD")
+        _set_state(SpotState.COLD)
+    elif replicas > 0 and current == SpotState.COLD:
+        logger.info("Replica watcher: %d replicas, marking READY", replicas)
+        _set_state(SpotState.READY)
+    return Response(json.dumps({"ok": True}), status=200, mimetype="application/json")
+
+
 @app.route("/", defaults={"path": ""}, methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"])
 @app.route("/<path:path>", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"])
 def proxy(path: str):
@@ -530,10 +534,9 @@ def proxy(path: str):
         backend_base = serverless_url
         backend_name = "serverless"
         _record_route("serverless")
-        # Poke spot to trigger scale-up during cold start
-        if skyserve_url:
-            _poke_skyserve_async()
-            _check_skyserve_ready_async()
+        # Trigger warming if spot is cold and URL is configured
+        if skyserve_url and _spot_state == SpotState.COLD:
+            _enter_warming()
     else:
         # Only spot configured but not ready
         return Response(
@@ -546,9 +549,9 @@ def proxy(path: str):
     stats = _route_stats()
     if stats["total"] % 100 == 0 and stats["total"] > 0:
         logger.info(
-            "requests=%d spot=%d (%.0f%%) serverless=%d (%.0f%%) spot_ready=%s",
+            "requests=%d spot=%d (%.0f%%) serverless=%d (%.0f%%) spot_state=%s",
             stats["total"], stats["spot"], stats["pct_spot"],
-            stats["serverless"], stats["pct_serverless"], _is_ready(),
+            stats["serverless"], stats["pct_serverless"], _spot_state,
         )
 
     # Forward request
@@ -588,7 +591,7 @@ def proxy(path: str):
         # RETRY: if spot failed and serverless is available, retry there
         if backend_name == "spot" and serverless_url:
             logger.warning("Spot request failed (%s), retrying on serverless", e)
-            _set_ready(False, str(e))
+            _set_state(SpotState.COLD, str(e))
             return _forward_to_serverless(path, headers, data, serverless_url)
 
         logger.warning("Upstream error: %s", e)
@@ -601,7 +604,7 @@ def proxy(path: str):
         with _state_lock:
             _gpu_seconds_spot += elapsed
         logger.warning("Spot returned %d, retrying on serverless", r.status_code)
-        _set_ready(False, f"status={r.status_code}")
+        _set_state(SpotState.COLD, f"status={r.status_code}")
         return _forward_to_serverless(path, headers, data, serverless_url)
 
     resp_headers = _filter_outgoing(r.headers)
