@@ -365,11 +365,16 @@ tuna show-gpus --provider runpod                  # filter to one provider
      └───────────────────┘    └────────────────────┘
 ```
 
-The router:
-- Routes to serverless while spot instances are starting up
-- Shifts traffic to spot once ready (cheaper)
-- Falls back to serverless if spot has issues or high latency
-- Scales serverless down to zero when spot is serving
+The router uses a **3-state machine** (COLD → WARMING → READY):
+- **COLD** — spot is down, all traffic goes to serverless
+- **WARMING** — spot is booting, background pokes keep it alive, serverless handles requests
+- **READY** — spot is up, all traffic routes to spot (cheapest path)
+
+Key behaviors:
+- Auto-enters WARMING on startup — spot starts provisioning immediately
+- Falls back to serverless if spot fails (zero data loss)
+- Scales spot to zero when traffic stops (`min_replicas=0`, `downscale_delay=60s`)
+- Cold starts from zero in ~5 min when traffic resumes
 - Streams responses token-by-token (no buffering)
 
 ## CLI Reference
@@ -383,6 +388,8 @@ The router:
 | `list` | List all deployments (filter with `--status active\|destroyed\|failed`) |
 | `show-gpus` | GPU pricing across providers (filter with `--provider`, `--gpu`, `--spot`) |
 | `check` | Validate provider credentials and setup |
+| `benchmark cold-start` | Measure cold start latency across providers |
+| `benchmark load-test` | Load test with TTFT/ITL/throughput metrics + cost tracking |
 
 ### `deploy` flags
 
@@ -425,7 +432,7 @@ spot:
   max_replicas: 5
   target_qps: 10         # per-replica QPS target
   upscale_delay: 5       # seconds before adding replicas
-  downscale_delay: 300   # seconds before removing replicas
+  downscale_delay: 60    # seconds before removing replicas (default: 60)
 
 serverless:
   concurrency: 32        # max concurrent requests per container
@@ -439,6 +446,36 @@ serverless:
 **Precedence**: defaults <- YAML file <- CLI flags. For example, `--concurrency 64` overrides `serverless.concurrency` from the YAML. `--no-scale-to-zero` forces `spot.min_replicas` to at least 1 and sets `serverless.scaledown_window` to 300s.
 
 Unknown keys in the YAML will error immediately (catches typos).
+
+## Benchmarking
+
+Tuna includes built-in benchmarking for both cold starts and sustained load testing.
+
+**Cold start benchmark** — measure time-to-inference across providers:
+
+```bash
+tuna benchmark cold-start --provider modal,cerebrium --gpu L4 --model Qwen/Qwen3-0.6B
+```
+
+**Load test** — measure TTFT, ITL, throughput, and cost savings using [aiperf](https://github.com/ai-dynamo/aiperf):
+
+```bash
+# Install aiperf (separate from tuna due to dependency conflict with truss)
+uv pip install aiperf
+
+# Run load test against a deployment
+tuna benchmark load-test \
+  --endpoint-url http://<router-ip>:8080 \
+  --concurrency 30 \
+  --duration 2h \
+  --profile day-cycle \
+  --model Qwen/Qwen3-0.6B \
+  --api-key <key>
+```
+
+The `day-cycle` profile generates Poisson-distributed traffic with 3 zero-traffic gaps that trigger spot scale-to-zero and recovery. The benchmark reports both aiperf metrics (TTFT, ITL, token throughput) and tuna cost metrics (spot vs serverless split, savings vs alternatives).
+
+See [benchmark docs](tuna/benchmark/benchmark.md) for all options and profiles.
 
 ## Troubleshooting
 
@@ -477,7 +514,7 @@ Check which backend is serving traffic:
 curl http://<router-ip>:8080/router/health
 ```
 
-If `skyserve_ready` is `false`, spot instances are still booting — requests are going through serverless (which is working correctly). Once spot boots, traffic shifts automatically.
+Check `spot_state`: `cold` = spot is down (all traffic on serverless), `warming` = spot is booting (serverless handles requests), `ready` = spot is serving. This is working correctly — traffic shifts automatically once spot is ready.
 
 ### Gated model fails to load
 
