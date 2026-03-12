@@ -27,7 +27,7 @@ VALID_PROFILES = ("day-cycle", "flat", "spike", "ramp")
 # Duration parsing
 # ---------------------------------------------------------------------------
 
-def _parse_duration(s: str) -> float:
+def parse_duration(s: str) -> float:
     """Parse duration strings: '10h', '30m', '90s', or bare seconds."""
     s = s.strip()
     if s.endswith("h"):
@@ -350,8 +350,8 @@ async def _stats_poller(
                     gpu_s_spot=float(s.get("gpu_seconds_spot", 0.0)),
                     gpu_s_svl=float(s.get("gpu_seconds_serverless", 0.0)),
                 ))
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"Warning: stats poller failed: {e}", file=sys.stderr)
         try:
             await asyncio.wait_for(stop.wait(), timeout=interval)
         except asyncio.TimeoutError:
