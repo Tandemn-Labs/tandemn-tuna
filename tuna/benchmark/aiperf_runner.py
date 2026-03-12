@@ -140,20 +140,24 @@ def _count_failovers(snapshots: list[_RouterSnapshot]) -> int:
 # ---------------------------------------------------------------------------
 
 def _parse_aiperf_output(artifact_dir: str) -> dict:
-    """Parse aiperf's output.json from the artifact directory."""
-    # aiperf writes to artifacts/<model>-<endpoint_type>-<mode>/output.json
-    pattern = os.path.join(artifact_dir, "*", "output.json")
-    files = glob.glob(pattern)
-    if not files:
-        # Try top-level
-        top = os.path.join(artifact_dir, "output.json")
-        if os.path.exists(top):
-            files = [top]
-    if not files:
-        return {}
+    """Parse aiperf's JSON export from the artifact directory."""
+    # aiperf 0.6.0 writes profile_export_aiperf.json at the top level
+    candidates = [
+        os.path.join(artifact_dir, "profile_export_aiperf.json"),
+        os.path.join(artifact_dir, "output.json"),
+    ]
+    # Also check subdirectories
+    for pattern in [
+        os.path.join(artifact_dir, "*", "profile_export_aiperf.json"),
+        os.path.join(artifact_dir, "*", "output.json"),
+    ]:
+        candidates.extend(glob.glob(pattern))
 
-    with open(files[0]) as f:
-        return json.load(f)
+    for path in candidates:
+        if os.path.isfile(path):
+            with open(path) as f:
+                return json.load(f)
+    return {}
 
 
 def _extract_metric(data: dict, metric_name: str, stat: str = "avg") -> float:
@@ -346,21 +350,22 @@ def run_aiperf_benchmark(
         concurrency=concurrency,
         request_rate=request_rate or 0.0,
         actual_duration_s=round(actual_duration, 1),
-        # TTFT
-        ttft_p50_ms=_extract_metric(aiperf_data, "time_to_first_token", "p50") * 1000,
-        ttft_p90_ms=_extract_metric(aiperf_data, "time_to_first_token", "p90") * 1000,
-        ttft_p99_ms=_extract_metric(aiperf_data, "time_to_first_token", "p99") * 1000,
+        # TTFT (aiperf reports in ms already)
+        ttft_p50_ms=_extract_metric(aiperf_data, "time_to_first_token", "p50"),
+        ttft_p90_ms=_extract_metric(aiperf_data, "time_to_first_token", "p90"),
+        ttft_p99_ms=_extract_metric(aiperf_data, "time_to_first_token", "p99"),
         # ITL
-        itl_p50_ms=_extract_metric(aiperf_data, "inter_token_latency", "p50") * 1000,
-        itl_p90_ms=_extract_metric(aiperf_data, "inter_token_latency", "p90") * 1000,
-        itl_p99_ms=_extract_metric(aiperf_data, "inter_token_latency", "p99") * 1000,
+        itl_p50_ms=_extract_metric(aiperf_data, "inter_token_latency", "p50"),
+        itl_p90_ms=_extract_metric(aiperf_data, "inter_token_latency", "p90"),
+        itl_p99_ms=_extract_metric(aiperf_data, "inter_token_latency", "p99"),
         # Throughput
         output_token_throughput=_extract_metric(aiperf_data, "output_token_throughput", "avg"),
         request_throughput=_extract_metric(aiperf_data, "request_throughput", "avg"),
         # Request latency
-        request_latency_p50_ms=_extract_metric(aiperf_data, "request_latency", "p50") * 1000,
-        request_latency_p90_ms=_extract_metric(aiperf_data, "request_latency", "p90") * 1000,
-        request_latency_p99_ms=_extract_metric(aiperf_data, "request_latency", "p99") * 1000,
+        # Request latency (aiperf reports in ms already)
+        request_latency_p50_ms=_extract_metric(aiperf_data, "request_latency", "p50"),
+        request_latency_p90_ms=_extract_metric(aiperf_data, "request_latency", "p90"),
+        request_latency_p99_ms=_extract_metric(aiperf_data, "request_latency", "p99"),
         # Counts
         total_requests=int(_extract_metric(aiperf_data, "request_count", "avg") or
                            _extract_metric(aiperf_data, "total_requests", "avg")),
@@ -399,6 +404,40 @@ def run_aiperf_benchmark(
     if report.total_requests == 0:
         report.total_requests = report.spot_requests + report.serverless_requests
     report.success_count = report.total_requests - report.failure_count
+
+    # Compute costs using catalog prices
+    try:
+        from tuna.catalog import get_provider_price, fetch_spot_prices, fetch_on_demand_prices
+        # Infer GPU and provider from deployment state
+        from tuna.state import list_deployments
+        records = list_deployments()
+        active = [r for r in records if r.status == "active"]
+        if active:
+            rec = active[0]
+            svl_price = get_provider_price(rec.gpu, rec.serverless_provider)
+            spot_prices = fetch_spot_prices(cloud=rec.spots_cloud)
+            spot_entry = spot_prices.get(rec.gpu)
+            spot_price = spot_entry.price_per_gpu_hour if spot_entry else 0.0
+            od_prices = fetch_on_demand_prices(cloud=rec.spots_cloud)
+            od_entry = od_prices.get(rec.gpu)
+            od_price = od_entry.price_per_gpu_hour if od_entry else 0.0
+
+            report.estimated_cost_serverless = round(
+                (report.gpu_seconds_serverless / 3600) * svl_price, 4)
+            report.estimated_cost_spot = round(
+                (report.spot_ready_seconds / 3600) * spot_price, 4)
+            report.estimated_cost_hybrid = round(
+                report.estimated_cost_spot + report.estimated_cost_serverless, 4)
+            report.counterfactual_all_serverless = round(
+                ((report.gpu_seconds_spot + report.gpu_seconds_serverless) / 3600) * svl_price, 4)
+            report.counterfactual_all_on_demand = round(
+                (report.uptime_seconds / 3600) * od_price, 4)
+            report.savings_vs_serverless = round(
+                report.counterfactual_all_serverless - report.estimated_cost_hybrid, 4)
+            report.savings_vs_on_demand = round(
+                report.counterfactual_all_on_demand - report.estimated_cost_hybrid, 4)
+    except Exception:
+        pass  # cost computation is best-effort
 
     return report
 
