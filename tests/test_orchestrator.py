@@ -13,7 +13,7 @@ from tuna.orchestrator import (
     status_hybrid,
     _find_controller_cluster,
     _launch_router_on_controller,
-    _schedule_scale_to_zero,
+    _make_s2z_yaml,
     _wait_for_router,
 )
 from tuna.state import DeploymentRecord
@@ -1080,53 +1080,38 @@ class TestWaitForRouter:
         assert call_kwargs[1]["headers"]["x-api-key"] == "secret"
 
 
-class TestScheduleScaleToZero:
-    """Tests for _schedule_scale_to_zero background thread."""
+class TestMakeS2zYaml:
+    """Tests for _make_s2z_yaml (scale-to-zero YAML derivation)."""
 
     def test_returns_none_when_min_replicas_not_zero(self):
-        """When --no-scale-to-zero (min_replicas=1), no thread should be spawned."""
-        request = DeployRequest(model_name="m", gpu="g", service_name="test-svc")
-        request.scaling.spot.min_replicas = 1
-        thread = _schedule_scale_to_zero(request, "test-svc-spot")
-        assert thread is None
+        """When --no-scale-to-zero (min_replicas=1), no YAML should be produced."""
+        boot_yaml = "service:\n  replica_policy:\n    min_replicas: 1\n"
+        result = _make_s2z_yaml(boot_yaml, desired_min_replicas=1)
+        assert result is None
 
-    @patch("tuna.orchestrator.time.sleep")
-    @patch("tuna.orchestrator.serve_status")
-    def test_calls_enable_scale_to_zero_when_ready(self, mock_serve_status, mock_sleep):
-        """Thread should call enable_scale_to_zero once replica is READY."""
-        replica_info = [{"status_str": "READY"}]
-        mock_serve_status.return_value = [{"replica_info": replica_info}]
+    def test_replaces_min_replicas_1_with_0(self):
+        """When min_replicas=0, should swap min_replicas: 1 → 0."""
+        boot_yaml = "service:\n  replica_policy:\n    min_replicas: 1\n    max_replicas: 5\n"
+        result = _make_s2z_yaml(boot_yaml, desired_min_replicas=0)
+        assert result is not None
+        assert "min_replicas: 0" in result
+        assert "min_replicas: 1" not in result
 
-        request = DeployRequest(
-            model_name="m", gpu="g", service_name="test-svc",
-            vllm_version="0.8.5",
-        )
-        request.scaling.spot.min_replicas = 0
-
-        with patch("tuna.spot.sky_launcher.SkyLauncher.enable_scale_to_zero") as mock_enable:
-            thread = _schedule_scale_to_zero(request, "test-svc-spot")
-            assert thread is not None
-            thread.join(timeout=5)
-
-            mock_enable.assert_called_once_with("test-svc-spot", request)
-
-    @patch("tuna.orchestrator.time.sleep")
-    @patch("tuna.orchestrator.serve_status")
-    def test_spawned_thread_is_daemon(self, mock_serve_status, mock_sleep):
-        """Thread should be a daemon so it doesn't block process exit."""
-        mock_serve_status.return_value = [{"replica_info": [{"status_str": "READY"}]}]
+    def test_yaml_identical_except_min_replicas(self):
+        """The s2z YAML should be byte-identical to boot except for min_replicas."""
+        from tuna.spot.sky_launcher import SkyLauncher
+        from tuna.models import DeployRequest
 
         request = DeployRequest(
-            model_name="m", gpu="g", service_name="test-svc",
+            model_name="m", gpu="L4", service_name="test-svc",
             vllm_version="0.8.5",
         )
-        request.scaling.spot.min_replicas = 0
+        vllm_cmd = "python3 -m vllm.entrypoints.openai.api_server"
+        boot_yaml = SkyLauncher()._render_yaml(request, vllm_cmd, min_replicas=1)
+        s2z_yaml = _make_s2z_yaml(boot_yaml, desired_min_replicas=0)
 
-        with patch("tuna.spot.sky_launcher.serve_update"):
-            thread = _schedule_scale_to_zero(request, "test-svc-spot")
-            assert thread is not None
-            assert thread.daemon is True
-            thread.join(timeout=5)
+        assert s2z_yaml is not None
+        assert boot_yaml.replace("min_replicas: 1", "min_replicas: 0", 1) == s2z_yaml
 
 
 class TestGcpSpotDependencyCheck:
