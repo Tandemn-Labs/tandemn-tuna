@@ -66,14 +66,13 @@ class SkyLauncher(InferenceProvider):
     def plan(self, request: DeployRequest, vllm_cmd: str) -> ProviderPlan:
         service_name = f"{request.service_name}-spot"
 
-        # Deploy with min_replicas=1 to protect the replica during boot.
-        # The autoscaler's downscale_delay can kill a PROVISIONING replica
-        # before it becomes READY (especially on GCP where Docker boot >5 min).
-        # After the replica reaches READY, enable_scale_to_zero() switches
-        # min_replicas back to 0 if the user wants scale-to-zero.
-        boot_min_replicas = max(1, request.scaling.spot.min_replicas)
-
-        rendered = self._render_yaml(request, vllm_cmd, boot_min_replicas)
+        # Deploy with the user's actual min_replicas (default 0 for scale-to-zero).
+        # Boot protection for min_replicas=0 is handled by the router's warming
+        # thread: it pokes the SkyServe LB every upscale_delay seconds during
+        # WARMING state, keeping QPS > 0 so the autoscaler provisions and
+        # retains the replica.  The downscale_delay (default 60s) provides a
+        # large buffer — warming pokes every 5s mean QPS never drops to 0.
+        rendered = self._render_yaml(request, vllm_cmd, request.scaling.spot.min_replicas)
 
         return ProviderPlan(
             provider=self.name(),
