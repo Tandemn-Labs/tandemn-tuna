@@ -13,7 +13,6 @@ from tuna.orchestrator import (
     status_hybrid,
     _find_controller_cluster,
     _launch_router_on_controller,
-    _make_s2z_yaml,
     _wait_for_router,
 )
 from tuna.state import DeploymentRecord
@@ -1080,38 +1079,38 @@ class TestWaitForRouter:
         assert call_kwargs[1]["headers"]["x-api-key"] == "secret"
 
 
-class TestMakeS2zYaml:
-    """Tests for _make_s2z_yaml (scale-to-zero YAML derivation)."""
+class TestScaleToZeroDeployedDirectly:
+    """Verify that scale-to-zero deploys with min_replicas=0 from the start."""
 
-    def test_returns_none_when_min_replicas_not_zero(self):
-        """When --no-scale-to-zero (min_replicas=1), no YAML should be produced."""
-        boot_yaml = "service:\n  replica_policy:\n    min_replicas: 1\n"
-        result = _make_s2z_yaml(boot_yaml, desired_min_replicas=1)
-        assert result is None
-
-    def test_replaces_min_replicas_1_with_0(self):
-        """When min_replicas=0, should swap min_replicas: 1 → 0."""
-        boot_yaml = "service:\n  replica_policy:\n    min_replicas: 1\n    max_replicas: 5\n"
-        result = _make_s2z_yaml(boot_yaml, desired_min_replicas=0)
-        assert result is not None
-        assert "min_replicas: 0" in result
-        assert "min_replicas: 1" not in result
-
-    def test_yaml_identical_except_min_replicas(self):
-        """The s2z YAML should be byte-identical to boot except for min_replicas."""
+    def test_plan_deploys_with_actual_min_replicas(self):
+        """plan() should use the user's min_replicas directly (no boot override)."""
         from tuna.spot.sky_launcher import SkyLauncher
-        from tuna.models import DeployRequest
+        import yaml
 
         request = DeployRequest(
             model_name="m", gpu="L4", service_name="test-svc",
             vllm_version="0.8.5",
         )
+        request.scaling.spot.min_replicas = 0
         vllm_cmd = "python3 -m vllm.entrypoints.openai.api_server"
-        boot_yaml = SkyLauncher()._render_yaml(request, vllm_cmd, min_replicas=1)
-        s2z_yaml = _make_s2z_yaml(boot_yaml, desired_min_replicas=0)
+        plan = SkyLauncher().plan(request, vllm_cmd)
+        parsed = yaml.safe_load(plan.rendered_script)
+        assert parsed["service"]["replica_policy"]["min_replicas"] == 0
 
-        assert s2z_yaml is not None
-        assert boot_yaml.replace("min_replicas: 1", "min_replicas: 0", 1) == s2z_yaml
+    def test_plan_respects_no_scale_to_zero(self):
+        """With --no-scale-to-zero (min_replicas=1), plan uses 1."""
+        from tuna.spot.sky_launcher import SkyLauncher
+        import yaml
+
+        request = DeployRequest(
+            model_name="m", gpu="L4", service_name="test-svc",
+            vllm_version="0.8.5",
+        )
+        request.scaling.spot.min_replicas = 1
+        vllm_cmd = "python3 -m vllm.entrypoints.openai.api_server"
+        plan = SkyLauncher().plan(request, vllm_cmd)
+        parsed = yaml.safe_load(plan.rendered_script)
+        assert parsed["service"]["replica_policy"]["min_replicas"] == 1
 
 
 class TestGcpSpotDependencyCheck:

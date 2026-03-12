@@ -639,5 +639,19 @@ def proxy(path: str):
     )
 
 
+# ---------------------------------------------------------------------------
+# Auto-warming on startup
+# ---------------------------------------------------------------------------
+# When the router starts with a spot URL configured, immediately enter
+# WARMING.  This creates QPS on the SkyServe LB so the autoscaler
+# provisions a replica — critical when min_replicas=0 (scale-to-zero),
+# because without warming pokes there's no QPS to trigger provisioning.
+# With min_replicas>=1 the pokes are harmless (replica is already coming up).
+
+if _skyserve_base_url:
+    logger.info("Spot URL configured — auto-entering WARMING on startup")
+    _enter_warming()
+
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", "8080")))

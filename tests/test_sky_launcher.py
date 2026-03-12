@@ -37,12 +37,12 @@ class TestSkyLauncherPlan:
             "--disable-log-requests --uvicorn-log-level info --enforce-eager"
         )
 
-    def test_plan_boot_protection_min_replicas_1(self):
-        """plan() should override min_replicas to 1 to protect replica during boot."""
+    def test_plan_uses_actual_min_replicas(self):
+        """plan() should deploy with the user's min_replicas directly."""
         self.request.scaling.spot.min_replicas = 0
         plan = self.launcher.plan(self.request, self.vllm_cmd)
         parsed = yaml.safe_load(plan.rendered_script)
-        assert parsed["service"]["replica_policy"]["min_replicas"] == 1
+        assert parsed["service"]["replica_policy"]["min_replicas"] == 0
 
     def test_plan_provider(self):
         plan = self.launcher.plan(self.request, self.vllm_cmd)
@@ -69,11 +69,11 @@ class TestSkyLauncherPlan:
         parsed = yaml.safe_load(plan.rendered_script)
         assert parsed["resources"]["use_spot"] is True
 
-    def test_plan_default_deploys_with_min_replicas_1(self):
-        """Default scaling (min_replicas=0) still deploys with 1 for boot protection."""
+    def test_plan_default_deploys_with_min_replicas_0(self):
+        """Default scaling (min_replicas=0) deploys with 0 for scale-to-zero."""
         plan = self.launcher.plan(self.request, self.vllm_cmd)
         parsed = yaml.safe_load(plan.rendered_script)
-        assert parsed["service"]["replica_policy"]["min_replicas"] == 1
+        assert parsed["service"]["replica_policy"]["min_replicas"] == 0
 
     def test_plan_no_scale_to_zero(self):
         self.request.scaling.spot.min_replicas = 1
