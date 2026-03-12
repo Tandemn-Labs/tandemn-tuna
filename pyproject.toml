@@ -39,6 +39,7 @@ modal = ["modal>=0.73"]
 baseten = ["truss>=0.9"]
 azure = ["azure-mgmt-appcontainers>=4.0", "azure-identity>=1.15"]
 cerebrium = ["cerebrium"]
+# benchmark: aiperf conflicts with truss (rich version). Install separately: uv pip install aiperf
 gcp-spot = ["skypilot[gcp]>=0.11,<0.12"]
 all = [
     "google-cloud-run>=0.10.0",
