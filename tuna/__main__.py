@@ -1070,6 +1070,15 @@ def cmd_benchmark_load_test(args: argparse.Namespace) -> None:
             f"duration={args.duration} model={args.model}"
         )
 
+        # Pass profile if specified (generates trace with gaps for scale-to-zero)
+        profile = getattr(args, "profile", None)
+        if profile == "day-cycle":
+            profile = "day-cycle"  # map to aiperf trace profile
+        elif profile in ("flat", "spike"):
+            profile = profile
+        else:
+            profile = None  # no profile = use concurrency/request-rate mode
+
         report = run_aiperf_benchmark(
             endpoint_url=args.endpoint_url,
             model=args.model,
@@ -1082,6 +1091,7 @@ def cmd_benchmark_load_test(args: argparse.Namespace) -> None:
             osl=getattr(args, "osl", 150),
             api_key=args.api_key,
             ui_mode=getattr(args, "ui_mode", "simple"),
+            profile=profile,
             extra_args=extra_args,
         )
         print_aiperf_summary(report, output=args.output)

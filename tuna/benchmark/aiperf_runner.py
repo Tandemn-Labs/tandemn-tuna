@@ -217,6 +217,7 @@ def run_aiperf_benchmark(
     api_key: str | None = None,
     output_dir: str | None = None,
     ui_mode: str = "simple",
+    profile: str | None = None,
     extra_args: list[str] | None = None,
 ) -> AiperfReport:
     """Run aiperf benchmark with parallel cost sidecar.
@@ -231,23 +232,60 @@ def run_aiperf_benchmark(
         print("Error: aiperf not installed. Install with: uv pip install aiperf", file=sys.stderr)
         sys.exit(1)
 
+    # Generate trace file if a traffic profile is requested (day-cycle, spike, etc.)
+    trace_file = None
+    if profile:
+        from tuna.benchmark.trace_generator import generate_trace, print_trace_summary
+        entries = generate_trace(
+            duration_s=duration_s, profile=profile,
+            isl=isl, osl=osl, seed=42,
+        )
+        if not entries:
+            print(f"Error: profile '{profile}' generated 0 requests", file=sys.stderr)
+            sys.exit(1)
+        print_trace_summary(entries, duration_s, profile)
+        print()
+
+        trace_file = os.path.join(artifact_dir, "trace.jsonl")
+        os.makedirs(artifact_dir, exist_ok=True)
+        with open(trace_file, "w") as f:
+            for entry in entries:
+                f.write(json.dumps(entry) + "\n")
+
     cmd = [
         aiperf_bin, "profile",
         "--model", model,
         "--url", endpoint_url.rstrip("/"),
         "--endpoint-type", "chat",
-        "--benchmark-duration", str(int(duration_s)),
-        "--isl", str(isl),
-        "--osl", str(osl),
         "--output-artifact-dir", artifact_dir,
         "--ui-type", ui_mode,
         "--use-legacy-max-tokens",
     ]
 
+    if trace_file:
+        # Fixed-schedule mode: aiperf replays trace timestamps
+        cmd += [
+            "--input-file", trace_file,
+            "--custom-dataset-type", "mooncake-trace",
+            "--fixed-schedule",
+            "--fixed-schedule-auto-offset",
+        ]
+    else:
+        # Standard mode: duration + rate/concurrency
+        cmd += [
+            "--benchmark-duration", str(int(duration_s)),
+            "--isl", str(isl),
+            "--osl", str(osl),
+        ]
+
     if streaming:
         cmd.append("--streaming")
 
-    if request_rate is not None:
+    if trace_file:
+        # Trace mode: concurrency is a ceiling, not a driver
+        if concurrency:
+            cmd += ["--concurrency", str(concurrency)]
+    elif request_rate is not None:
         cmd += ["--request-rate", str(request_rate)]
         cmd += ["--request-rate-mode", request_rate_mode]
         if concurrency:
