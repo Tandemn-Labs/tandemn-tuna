@@ -648,10 +648,19 @@ def proxy(path: str):
 # because without warming pokes there's no QPS to trigger provisioning.
 # With min_replicas>=1 the pokes are harmless (replica is already coming up).
 
-if _skyserve_base_url:
-    logger.info("Spot URL configured — auto-entering WARMING on startup")
-    _enter_warming()
+def _auto_warm_on_startup():
+    """Enter WARMING if spot URL is configured. Called by gunicorn/flask startup."""
+    if _skyserve_base_url:
+        logger.info("Spot URL configured — auto-entering WARMING on startup")
+        _enter_warming()
+
+
+# Auto-warm when running as a server (not when imported for testing).
+# Gunicorn workers execute module-level code; tests import without SKYSERVE_BASE_URL.
+if os.environ.get("SKYSERVE_BASE_URL"):
+    _auto_warm_on_startup()
 
 
 if __name__ == "__main__":
+    _auto_warm_on_startup()
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", "8080")))
