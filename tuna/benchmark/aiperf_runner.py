@@ -303,7 +303,9 @@ def run_aiperf_benchmark(
     if extra_args:
         cmd += extra_args
 
-    print(f"Running: {shlex.join(cmd)}", flush=True)
+    # Log command without API key
+    safe_cmd = [c if i == 0 or cmd[i - 1] != "--api-key" else "***" for i, c in enumerate(cmd)]
+    print(f"Running: {shlex.join(safe_cmd)}", flush=True)
     print(f"Artifacts: {artifact_dir}", flush=True)
 
     # Run aiperf + cost sidecar in parallel
