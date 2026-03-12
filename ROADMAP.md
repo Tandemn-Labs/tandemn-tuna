@@ -2,7 +2,7 @@
 
 > Hybrid GPU inference orchestrator — serverless for speed, spot for savings, one endpoint for everything.
 
-Current state: v0.0.1a9 | 6 serverless providers (Modal, RunPod, Cloud Run, Baseten, Azure, Cerebrium) | 2 spot providers (AWS, GCP via SkyPilot) | ~572 tests
+Current state: v0.0.1a10 | 6 serverless providers (Modal, RunPod, Cloud Run, Baseten, Azure, Cerebrium) | 2 spot providers (AWS, GCP via SkyPilot) | ~651 tests
 
 ---
 
@@ -14,6 +14,11 @@ Current state: v0.0.1a9 | 6 serverless providers (Modal, RunPod, Cloud Run, Base
 - ~~Partial deployment cleanup — when a deploy fails midway (serverless deployed but spot didn't), `tuna destroy` should clean up whatever was created~~
 - Storage cleanups after destroy — remove orphaned provider-side artifacts (SkyPilot buckets, Cloud Run images, Baseten models, Modal volumes)
 - ~~`--serverless` mode — deploy to serverless only, no spot, no router. Single endpoint, simplest path for dev/test or low-traffic models~~
+- ~~Spot state machine (COLD → WARMING → READY) — replaced boolean health probes with 3-state machine for reliable scale-to-zero~~
+- ~~Scale-to-zero — deploy with min_replicas=0, auto-warming pokes protect boot, no sky serve update needed~~
+- ~~Replica watcher — background script on controller pushes real replica count to router~~
+- Async router proxy — migrate meta_lb.py from Flask+requests to FastAPI+httpx async (handles 100+ concurrent streaming connections)
+- Router backpressure — return 429 when overloaded instead of dropping connections
 
 ---
 
@@ -61,6 +66,11 @@ Spot (via SkyPilot):
   ```
   tuna benchmark cold-start --providers modal,runpod,baseten,cloudrun --gpu T4 --model Qwen/Qwen3-0.6B
   ```
+- ~~Load test benchmarking with aiperf — TTFT, ITL, token throughput, Poisson/gamma arrivals, cost tracking sidecar~~
+  ```
+  tuna benchmark load-test --endpoint-url http://router:8080 --concurrency 30 --duration 2h --profile day-cycle
+  ```
+- ~~Trace generator — day-cycle/spike/flat profiles with zero-traffic gaps for scale-to-zero testing~~
 - Spot preemption prediction — integrate spot price history and preemption rates into the cost dashboard, show predicted uptime per region/GPU
 - Log aggregation — `tuna logs <service-name>` streaming logs from all components (serverless, spot, router) instead of checking each provider dashboard separately
 
