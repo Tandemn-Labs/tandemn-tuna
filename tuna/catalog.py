@@ -103,11 +103,11 @@ _PROVIDER_GPUS: list[ProviderGpu] = [
     ProviderGpu("T4", "modal", "T4", 0.59),
     ProviderGpu("A10G", "modal", "A10", 1.10),
     ProviderGpu("L4", "modal", "L4", 0.80),
-    ProviderGpu("L40S", "modal", "L40S", 1.60),
-    ProviderGpu("A100_40GB", "modal", "A100-40GB", 1.82),
-    ProviderGpu("A100_80GB", "modal", "A100-80GB", 2.78),
+    ProviderGpu("L40S", "modal", "L40S", 1.95),
+    ProviderGpu("A100_40GB", "modal", "A100-40GB", 2.10),
+    ProviderGpu("A100_80GB", "modal", "A100-80GB", 2.50),
     ProviderGpu("H100", "modal", "H100", 3.95),
-    ProviderGpu("B200", "modal", "B200", 5.49),
+    ProviderGpu("B200", "modal", "B200", 6.25),
 
     # RunPod (serverless) — prices converted from per-second to per-hour
     ProviderGpu("A4000", "runpod", "NVIDIA RTX A4000", 0.43),
