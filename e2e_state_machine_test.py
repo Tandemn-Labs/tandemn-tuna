@@ -103,15 +103,20 @@ def send_request(router_url: str, api_key: str, timeout: float = 120) -> dict:
         return {"ok": False, "latency_ms": (time.monotonic() - t0) * 1000, "error": str(e)}
 
 
-def wait_for_state(router_url: str, api_key: str, target: str, timeout: float) -> bool:
-    """Poll /router/health until spot_state == target or timeout."""
+def wait_for_state(router_url: str, api_key: str, target: str, timeout: float, label: str = "") -> bool:
+    """Poll /router/health until spot_state == target or timeout. Discord update every 60s."""
     deadline = time.time() + timeout
+    last_discord = 0
     while time.time() < deadline:
         try:
             h = get_health(router_url, api_key)
             state = h.get("spot_state", "?")
             if state == target:
                 return True
+            elapsed = timeout - (deadline - time.time())
+            if time.time() - last_discord >= 60:
+                discord(f"⏳ {label or 'Waiting'}", f"state={state}, want={target}, {elapsed:.0f}s/{timeout:.0f}s")
+                last_discord = time.time()
         except Exception:
             pass
         time.sleep(5)
@@ -119,8 +124,9 @@ def wait_for_state(router_url: str, api_key: str, target: str, timeout: float) -
 
 
 def wait_for_sky_replicas(target: int, service_name: str, timeout: float) -> bool:
-    """Poll sky serve status until READY replica count == target."""
+    """Poll sky serve status until READY replica count == target. Discord update every 60s."""
     deadline = time.time() + timeout
+    last_discord = 0
     while time.time() < deadline:
         try:
             result = subprocess.run(
@@ -137,6 +143,10 @@ def wait_for_sky_replicas(target: int, service_name: str, timeout: float) -> boo
                                 ready = int(part.split("/")[0])
                                 if ready == target:
                                     return True
+                                elapsed = timeout - (deadline - time.time())
+                                if time.time() - last_discord >= 60:
+                                    discord(f"⏳ Replicas", f"ready={ready}, want={target}, {elapsed:.0f}s/{timeout:.0f}s")
+                                    last_discord = time.time()
                             except ValueError:
                                 pass
         except Exception:
@@ -241,7 +251,7 @@ def test_1_boot_and_warming(router_url: str, api_key: str) -> bool:
 
     # 1d. Wait for READY (spot boots)
     log(f"Waiting for spot replica to boot (up to {SPOT_BOOT_TIMEOUT}s)...")
-    if wait_for_state(router_url, api_key, "ready", SPOT_BOOT_TIMEOUT):
+    if wait_for_state(router_url, api_key, "ready", SPOT_BOOT_TIMEOUT, "Test 1: Spot Boot"):
         log_pass("Spot reached READY")
         results.append(True)
     else:
@@ -332,7 +342,7 @@ def test_3_scale_to_zero(router_url: str, api_key: str) -> bool:
             pass
 
     # Wait for router to detect COLD
-    if wait_for_state(router_url, api_key, "cold", 60):
+    if wait_for_state(router_url, api_key, "cold", 60, "Test 3: Router → COLD"):
         log_pass("Router transitioned to COLD")
         results.append(True)
     else:
@@ -396,7 +406,7 @@ def test_4_cold_start(router_url: str, api_key: str) -> bool:
     # Wait for READY (spot boots from zero)
     log(f"Waiting for spot to boot from zero (up to {COLD_START_TIMEOUT}s)...")
     t0 = time.monotonic()
-    if wait_for_state(router_url, api_key, "ready", COLD_START_TIMEOUT):
+    if wait_for_state(router_url, api_key, "ready", COLD_START_TIMEOUT, "Test 4: Cold Start Boot"):
         boot_time = time.monotonic() - t0
         log_pass(f"Spot reached READY from zero in {boot_time:.0f}s")
         results.append(True)
@@ -407,21 +417,27 @@ def test_4_cold_start(router_url: str, api_key: str) -> bool:
         discord("❌ Test 4: Cold Start", "Spot did not boot from zero", 0xE74C3C)
         return passed
 
-    # Verify requests now route to spot
-    h_before = get_health(router_url, api_key)
-    spot_before = h_before["route_stats"]["spot"]
-    r = send_request(router_url, api_key)
-    h_after = get_health(router_url, api_key)
-    spot_after = h_after["route_stats"]["spot"]
-
-    if r["ok"] and spot_after > spot_before:
-        log_pass("Post-recovery request routed to spot", f"{r['latency_ms']:.0f}ms")
-        results.append(True)
-    elif r["ok"]:
-        log_pass("Post-recovery request succeeded (may still be routing to serverless)")
-        results.append(True)
+    # Verify requests route to spot — retry a few times since vLLM may
+    # still be loading the model even after SkyServe reports READY
+    log("Verifying post-recovery requests (retrying if 502)...")
+    for attempt in range(5):
+        h_before = get_health(router_url, api_key)
+        spot_before = h_before["route_stats"]["spot"]
+        r = send_request(router_url, api_key)
+        if r["ok"]:
+            h_after = get_health(router_url, api_key)
+            spot_after = h_after["route_stats"]["spot"]
+            if spot_after > spot_before:
+                log_pass(f"Post-recovery request routed to spot", f"{r['latency_ms']:.0f}ms (attempt {attempt+1})")
+            else:
+                log_pass(f"Post-recovery request succeeded", f"{r['latency_ms']:.0f}ms (attempt {attempt+1})")
+            results.append(True)
+            break
+        else:
+            log(f"  Attempt {attempt+1}/5: {r['error']} — retrying in 10s...")
+            time.sleep(10)
     else:
-        log_fail("Post-recovery request failed", r["error"])
+        log_fail("Post-recovery requests failed after 5 attempts", r["error"])
         results.append(False)
 
     passed = all(results)
