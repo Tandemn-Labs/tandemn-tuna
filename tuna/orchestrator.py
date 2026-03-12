@@ -8,7 +8,7 @@ import re
 import secrets
 import shlex
 import subprocess
-import threading
+import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -271,7 +271,12 @@ def _launch_router_on_controller(
         logger.warning("SSH start command timed out — gunicorn may still be starting")
 
     # 4. SCP and launch replica watcher (pushes replica count to router)
+    # The watcher also handles one-time scale-to-zero activation: if it
+    # finds /tmp/tuna_s2z_<service>.yaml on the controller, it runs
+    # `sky serve update` when the first READY replica appears.
+    # That YAML is staged later (after spot deploy completes).
     spot_service_name = f"{request.service_name}-spot"
+    s2z_remote_path = f"/tmp/tuna_s2z_{spot_service_name}.yaml"
     try:
         subprocess.run(
             ["scp", *ssh_opts, str(REPLICA_WATCHER_PATH), f"{ssh_target}:/tmp/replica_watcher.sh"],
@@ -285,6 +290,7 @@ def _launch_router_on_controller(
             f"http://127.0.0.1:{router_port} "
             f"{shlex.quote(router_api_key)} "
             f"30 "
+            f"{shlex.quote(s2z_remote_path)} "
             f"> /tmp/replica_watcher.log 2>&1 < /dev/null &"
         )
         subprocess.run(
@@ -379,43 +385,24 @@ def push_url_to_router(
     return False
 
 
-def _schedule_scale_to_zero(request: DeployRequest, service_name: str) -> threading.Thread | None:
-    """Wait for the spot replica to reach READY, then switch min_replicas
-    from 1 to 0 to enable scale-to-zero.
+def _make_s2z_yaml(boot_yaml: str, desired_min_replicas: int) -> str | None:
+    """Derive the scale-to-zero YAML from the exact boot YAML.
 
-    Runs synchronously in a non-daemon thread and joins before returning,
-    so the CLI process cannot exit before the update completes.
+    Instead of re-rendering (which can pick a different region due to
+    dynamic spot pricing), we take the boot YAML and do a simple text
+    replacement: ``min_replicas: N`` → ``min_replicas: 0``.  This
+    guarantees byte-identical output except for the one field, so
+    SkyPilot's config comparison sees no change and reuses the replica.
 
-    Returns the thread (for testing) or None if scale-to-zero is disabled.
+    Returns the modified YAML string, or None if scale-to-zero is disabled.
     """
-    if request.scaling.spot.min_replicas != 0:
+    if desired_min_replicas != 0:
         return None
-
-    def _worker():
-        max_polls = 120  # 120 × 30s = 60 min
-        for _ in range(max_polls):
-            try:
-                statuses = serve_status(service_name)
-                if statuses:
-                    replicas = statuses[0].get("replica_info", [])
-                    if any(r.get("status_str") == "READY" or
-                           (hasattr(r.get("status"), "name") and r["status"].name == "READY")
-                           for r in replicas):
-                        logger.info(
-                            "Spot replica READY — enabling scale-to-zero for %s",
-                            service_name,
-                        )
-                        from tuna.spot.sky_launcher import SkyLauncher
-                        SkyLauncher().enable_scale_to_zero(service_name, request)
-                        return
-            except Exception as e:
-                logger.debug("Scale-to-zero poll error: %s", e)
-            time.sleep(30)
-        logger.warning("Timed out waiting for spot replica READY on %s", service_name)
-
-    thread = threading.Thread(target=_worker, name="scale-to-zero", daemon=True)
-    thread.start()
-    return thread
+    # Boot YAML was deployed with max(1, desired_min_replicas) = 1
+    s2z = boot_yaml.replace("min_replicas: 1", "min_replicas: 0", 1)
+    if s2z == boot_yaml:
+        return None  # no substitution happened — unexpected
+    return s2z
 
 
 def launch_hybrid(request: DeployRequest, *, separate_router_vm: bool = False) -> HybridDeployment:
@@ -435,6 +422,7 @@ def launch_hybrid(request: DeployRequest, *, separate_router_vm: bool = False) -
     serverless_prov = get_provider(request.serverless_provider)
     request.vllm_version = serverless_prov.vllm_version()
     logger.info("vLLM version: %s (from %s)", request.vllm_version, request.serverless_provider)
+
 
     # Auth token the router needs to proxy to this serverless backend
     _backend_auth_token = serverless_prov.auth_token()
@@ -466,6 +454,7 @@ def launch_hybrid(request: DeployRequest, *, separate_router_vm: bool = False) -
     # so error-path DeploymentResults still include provider-specific IDs.
     _serverless_meta: dict[str, str] = {}
     _spot_meta: dict[str, str] = {}
+    _spot_boot_yaml: dict[str, str] = {}  # captures {"yaml": boot_yaml} from _launch_spot
 
     def _launch_serverless():
         try:
@@ -494,6 +483,7 @@ def launch_hybrid(request: DeployRequest, *, separate_router_vm: bool = False) -
                 )
             plan = provider.plan(request, vllm_cmd)
             _spot_meta.update(plan.metadata)
+            _spot_boot_yaml["yaml"] = plan.rendered_script
             return provider.deploy(plan)
         except Exception as e:
             logger.error("Spot launch failed: %s", e)
@@ -563,10 +553,6 @@ def launch_hybrid(request: DeployRequest, *, separate_router_vm: bool = False) -
             elif spot_result and spot_result.error:
                 logger.warning("Spot deployment issue: %s", spot_result.error)
 
-            # Schedule background scale-to-zero after spot boots
-            if spot_result and not spot_result.error:
-                spot_svc_name = _spot_meta.get("service_name", f"{request.service_name}-spot")
-                _schedule_scale_to_zero(request, spot_svc_name)
         finally:
             pool.shutdown(wait=True)
 
@@ -666,10 +652,20 @@ def launch_hybrid(request: DeployRequest, *, separate_router_vm: bool = False) -
             logger.info("Pushing spot URL to router: %s", spot_result.endpoint_url)
             push_url_to_router(router_url, spot_url=spot_result.endpoint_url, router_api_key=_router_api_key)
 
-        # Schedule background scale-to-zero after spot boots
-        if spot_result and not spot_result.error:
-            spot_svc_name = _spot_meta.get("service_name", f"{request.service_name}-spot")
-            _schedule_scale_to_zero(request, spot_svc_name)
+        # Stage scale-to-zero YAML on controller (derived from the exact
+        # boot YAML that was deployed, so region/config are identical).
+        # The replica watcher will pick this up and run `sky serve update`
+        # once the first READY replica appears.
+        boot_yaml = _spot_boot_yaml.get("yaml")
+        if boot_yaml and spot_result and not spot_result.error:
+            s2z_yaml = _make_s2z_yaml(boot_yaml, request.scaling.spot.min_replicas)
+            if s2z_yaml and router_result and router_result.metadata:
+                _stage_s2z_yaml_on_controller(
+                    s2z_yaml,
+                    controller_cluster=router_result.metadata.get("cluster_name", ""),
+                    spot_service_name=_spot_meta.get("service_name", f"{request.service_name}-spot"),
+                )
+
     finally:
         pool.shutdown(wait=True)
 
@@ -679,6 +675,45 @@ def launch_hybrid(request: DeployRequest, *, separate_router_vm: bool = False) -
         router=router_result,
         router_url=router_url,
     )
+
+
+def _stage_s2z_yaml_on_controller(
+    s2z_yaml: str, controller_cluster: str, spot_service_name: str,
+) -> None:
+    """SCP the scale-to-zero YAML to the controller.
+
+    The replica watcher checks for this file each poll cycle.  When it
+    appears and the first READY replica is detected, the watcher runs
+    ``sky serve update`` to set min_replicas=0.
+    """
+    ip = _get_cluster_ip(controller_cluster)
+    if not ip:
+        logger.warning("Cannot stage s2z YAML — controller IP not found")
+        return
+    try:
+        ssh_key = _get_ssh_key_path()
+    except Exception:
+        logger.warning("Cannot stage s2z YAML — SSH key not found")
+        return
+
+    ssh_user = _get_ssh_user(controller_cluster)
+    ssh_target = f"{ssh_user}@{ip}"
+    ssh_opts = ["-i", ssh_key, "-o", "StrictHostKeyChecking=no"]
+    remote_path = f"/tmp/tuna_s2z_{spot_service_name}.yaml"
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+        f.write(s2z_yaml)
+        local_path = f.name
+    try:
+        subprocess.run(
+            ["scp", *ssh_opts, local_path, f"{ssh_target}:{remote_path}"],
+            capture_output=True, text=True, timeout=30,
+        )
+        logger.info("Staged scale-to-zero YAML at %s:%s", ip, remote_path)
+    except Exception as e:
+        logger.warning("Failed to stage s2z YAML (non-fatal): %s", e)
+    finally:
+        os.unlink(local_path)
 
 
 def _build_warmup_headers(provider_name: str, auth_token: str) -> dict[str, str]:

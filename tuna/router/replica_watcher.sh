@@ -1,10 +1,12 @@
 #!/bin/bash
 # replica_watcher.sh — pushes spot replica count to the router
-# Args: SERVICE_NAME ROUTER_URL API_KEY POLL_INTERVAL
+# Args: SERVICE_NAME ROUTER_URL API_KEY POLL_INTERVAL [SCALE_TO_ZERO_YAML]
 SERVICE_NAME="$1"
 ROUTER_URL="$2"
 API_KEY="$3"
 POLL_INTERVAL="${4:-30}"
+SCALE_TO_ZERO_YAML="${5:-}"
+S2Z_FLAG="/tmp/tuna_s2z_done_${SERVICE_NAME}"
 
 # Find the sky CLI binary (skypilot-runtime venv or system PATH)
 SKY_BIN=""
@@ -43,6 +45,19 @@ while true; do
             -H "x-api-key: $API_KEY" \
             -d "{\"replicas\": $REPLICAS}" > /dev/null 2>&1
         echo "$(date -u '+%Y-%m-%d %H:%M:%S') Pushed replicas=$REPLICAS" >&2
+
+        # One-time: enable scale-to-zero when first READY replica appears.
+        # The YAML file may not exist yet (staged after spot deploy completes),
+        # so we check -f on the YAML too — watcher retries next poll.
+        if [ -n "$SCALE_TO_ZERO_YAML" ] && [ -f "$SCALE_TO_ZERO_YAML" ] && [ ! -f "$S2Z_FLAG" ] && [ "$REPLICAS" -gt 0 ]; then
+            echo "$(date -u '+%Y-%m-%d %H:%M:%S') Replica READY — enabling scale-to-zero" >&2
+            if "$SKY_BIN" serve update "$SERVICE_NAME" "$SCALE_TO_ZERO_YAML" --mode rolling -y 2>&1; then
+                touch "$S2Z_FLAG"
+                echo "$(date -u '+%Y-%m-%d %H:%M:%S') Scale-to-zero enabled (min_replicas=0)" >&2
+            else
+                echo "$(date -u '+%Y-%m-%d %H:%M:%S') sky serve update failed, will retry next poll" >&2
+            fi
+        fi
     else
         echo "$(date -u '+%Y-%m-%d %H:%M:%S') sky serve status failed, skipping" >&2
     fi
