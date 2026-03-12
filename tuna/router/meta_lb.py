@@ -124,7 +124,15 @@ ALLOW_HEALTH_NO_AUTH = _env_bool("ALLOW_HEALTH_NO_AUTH", False)
 
 ROUTE_WINDOW_SIZE = int(os.getenv("ROUTE_WINDOW_SIZE", "200"))
 
+# Connection pool sized to handle concurrent requests.
+# Default urllib3 pool is 10 — too small for 30+ concurrency.
+_adapter = req_lib.adapters.HTTPAdapter(
+    pool_connections=50,
+    pool_maxsize=50,
+)
 SESSION = req_lib.Session()
+SESSION.mount("http://", _adapter)
+SESSION.mount("https://", _adapter)
 
 
 # ---------------------------------------------------------------------------
