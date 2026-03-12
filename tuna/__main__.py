@@ -6,6 +6,7 @@ import argparse
 import json
 import logging
 import os
+import shlex
 import sys
 
 from tuna.models import DeployRequest
@@ -1043,7 +1044,7 @@ def cmd_list(args: argparse.Namespace) -> None:
 
 
 def cmd_benchmark_load_test(args: argparse.Namespace) -> None:
-    from tuna.benchmark.load_test import _parse_duration, print_summary, run_load_test
+    from tuna.benchmark.load_test import _parse_duration
 
     try:
         duration_s = _parse_duration(args.duration)
@@ -1051,21 +1052,57 @@ def cmd_benchmark_load_test(args: argparse.Namespace) -> None:
         print(f"Error: invalid --duration {args.duration!r}: {e}", file=sys.stderr)
         sys.exit(1)
 
-    print(
-        f"Starting load test: profile={args.profile} duration={args.duration} "
-        f"max-users={args.max_users} model={args.model}"
-    )
+    # Choose engine: aiperf (if installed) or built-in tuna
+    engine = getattr(args, "engine", None)
+    if engine is None:
+        from tuna.benchmark.aiperf_runner import aiperf_available
+        engine = "aiperf" if aiperf_available() else "tuna"
 
-    report = run_load_test(
-        endpoint_url=args.endpoint_url,
-        duration_s=duration_s,
-        max_users=args.max_users,
-        profile=args.profile,
-        model=args.model,
-        log_file=args.log_file,
-        api_key=args.api_key,
-    )
-    print_summary(report, output=args.output)
+    if engine == "aiperf":
+        from tuna.benchmark.aiperf_runner import run_aiperf_benchmark, print_aiperf_summary
+
+        concurrency = getattr(args, "concurrency", None) or args.max_users
+        request_rate = getattr(args, "request_rate", None)
+        extra_args = shlex.split(args.aiperf_args) if getattr(args, "aiperf_args", None) else None
+
+        print(
+            f"Starting aiperf load test: concurrency={concurrency} "
+            f"duration={args.duration} model={args.model}"
+        )
+
+        report = run_aiperf_benchmark(
+            endpoint_url=args.endpoint_url,
+            model=args.model,
+            duration_s=duration_s,
+            concurrency=concurrency,
+            request_rate=request_rate,
+            request_rate_mode=getattr(args, "request_rate_mode", "poisson"),
+            streaming=getattr(args, "streaming", True),
+            isl=getattr(args, "isl", 550),
+            osl=getattr(args, "osl", 150),
+            api_key=args.api_key,
+            ui_mode=getattr(args, "ui_mode", "simple"),
+            extra_args=extra_args,
+        )
+        print_aiperf_summary(report, output=args.output)
+    else:
+        from tuna.benchmark.load_test import print_summary, run_load_test
+
+        print(
+            f"Starting load test: profile={args.profile} duration={args.duration} "
+            f"max-users={args.max_users} model={args.model}"
+        )
+
+        report = run_load_test(
+            endpoint_url=args.endpoint_url,
+            duration_s=duration_s,
+            max_users=args.max_users,
+            profile=args.profile,
+            model=args.model,
+            log_file=args.log_file,
+            api_key=args.api_key,
+        )
+        print_summary(report, output=args.output)
 
 
 def cmd_benchmark_cold_start(args: argparse.Namespace) -> None:
@@ -1368,6 +1405,44 @@ def main() -> None:
     p_load.add_argument(
         "--api-key", default=None,
         help="API key for the router (sent as Authorization Bearer and x-api-key)",
+    )
+    # aiperf engine flags
+    p_load.add_argument(
+        "--engine", choices=["aiperf", "tuna"], default=None,
+        help="Load generator engine (default: aiperf if installed, else tuna)",
+    )
+    p_load.add_argument(
+        "--concurrency", type=int, default=None,
+        help="Peak concurrent requests (aiperf mode, overrides --max-users)",
+    )
+    p_load.add_argument(
+        "--request-rate", type=float, default=None,
+        help="Target requests/sec (aiperf only, Poisson by default)",
+    )
+    p_load.add_argument(
+        "--request-rate-mode", choices=["poisson", "constant", "gamma"],
+        default="poisson", help="Arrival distribution (default: poisson)",
+    )
+    p_load.add_argument(
+        "--streaming", action="store_true", default=True,
+        help="Enable streaming for TTFT detection (default: true)",
+    )
+    p_load.add_argument("--no-streaming", dest="streaming", action="store_false")
+    p_load.add_argument(
+        "--isl", type=int, default=550,
+        help="Mean input sequence length in tokens (default: 550)",
+    )
+    p_load.add_argument(
+        "--osl", type=int, default=150,
+        help="Mean output sequence length in tokens (default: 150)",
+    )
+    p_load.add_argument(
+        "--ui-mode", choices=["dashboard", "simple", "headless"],
+        default="simple", help="aiperf UI mode (default: simple)",
+    )
+    p_load.add_argument(
+        "--aiperf-args", default=None,
+        help="Extra args passed through to aiperf (quoted string)",
     )
     p_load.set_defaults(func=cmd_benchmark_load_test)
 
