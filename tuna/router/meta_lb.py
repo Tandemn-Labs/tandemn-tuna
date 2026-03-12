@@ -42,6 +42,7 @@ from typing import Dict
 
 import requests as req_lib
 from flask import Flask, Response, request
+from urllib.parse import urlparse
 
 app = Flask(__name__)
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO").upper())
@@ -190,8 +191,9 @@ def _get_skyserve_url() -> str:
 
 def set_serverless_url(url: str) -> None:
     global _serverless_base_url
+    validated = _validate_backend_url(url)
     with _state_lock:
-        _serverless_base_url = url.rstrip("/")
+        _serverless_base_url = validated
     logger.info("Serverless URL updated: %s", url)
 
 
@@ -202,10 +204,26 @@ def set_serverless_auth_token(token: str) -> None:
     logger.info("Serverless auth token updated")
 
 
+def _validate_backend_url(url: str) -> str:
+    """Validate and sanitize a backend URL to prevent SSRF.
+
+    Only allows http/https schemes. The /router/config endpoint is
+    auth-protected and only called by the orchestrator, but we
+    validate defensively.
+    """
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError(f"Invalid URL scheme: {parsed.scheme!r} (expected http/https)")
+    if not parsed.netloc:
+        raise ValueError(f"Invalid URL: missing host in {url!r}")
+    return url.rstrip("/")
+
+
 def set_spot_url(url: str) -> None:
     global _skyserve_base_url
+    validated = _validate_backend_url(url)
     with _state_lock:
-        _skyserve_base_url = url.rstrip("/")
+        _skyserve_base_url = validated
     logger.info("Spot URL updated: %s", url)
 
 
