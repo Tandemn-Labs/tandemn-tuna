@@ -16,7 +16,7 @@ from tuna.benchmark.load_test import (
     _concurrency_for_profile,
     _count_failovers,
     _do_request,
-    _parse_duration,
+    parse_duration,
     _percentile,
     print_summary,
 )
@@ -36,7 +36,7 @@ from tuna.benchmark.load_test import (
     ("  5m  ", 300.0),
 ])
 def test_parse_duration(s, expected):
-    assert _parse_duration(s) == pytest.approx(expected)
+    assert parse_duration(s) == pytest.approx(expected)
 
 
 # ---------------------------------------------------------------------------

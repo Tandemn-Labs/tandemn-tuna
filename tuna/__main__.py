@@ -1044,10 +1044,10 @@ def cmd_list(args: argparse.Namespace) -> None:
 
 
 def cmd_benchmark_load_test(args: argparse.Namespace) -> None:
-    from tuna.benchmark.load_test import _parse_duration
+    from tuna.benchmark.load_test import parse_duration
 
     try:
-        duration_s = _parse_duration(args.duration)
+        duration_s = parse_duration(args.duration)
     except ValueError as e:
         print(f"Error: invalid --duration {args.duration!r}: {e}", file=sys.stderr)
         sys.exit(1)

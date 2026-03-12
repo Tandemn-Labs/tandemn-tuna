@@ -116,8 +116,8 @@ async def _cost_sidecar(
                         gpu_s_spot=float(s.get("gpu_seconds_spot", 0.0)),
                         gpu_s_svl=float(s.get("gpu_seconds_serverless", 0.0)),
                     ))
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"Warning: cost sidecar poll failed: {e}", file=sys.stderr)
             try:
                 await asyncio.wait_for(stop.wait(), timeout=interval)
             except asyncio.TimeoutError:
@@ -399,8 +399,8 @@ def run_aiperf_benchmark(
                 s = resp.json().get("route_stats", {})
                 report.uptime_seconds = s.get("uptime_seconds", 0.0)
                 report.spot_ready_seconds = s.get("spot_ready_seconds", 0.0)
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"Warning: final router health fetch failed: {e}", file=sys.stderr)
 
     # Total requests from sidecar if aiperf count is missing
     if report.total_requests == 0:
@@ -438,8 +438,8 @@ def run_aiperf_benchmark(
                 report.counterfactual_all_serverless - report.estimated_cost_hybrid, 4)
             report.savings_vs_on_demand = round(
                 report.counterfactual_all_on_demand - report.estimated_cost_hybrid, 4)
-    except Exception:
-        pass  # cost computation is best-effort
+    except Exception as e:
+        print(f"Warning: cost computation failed: {e}", file=sys.stderr)
 
     return report
 
