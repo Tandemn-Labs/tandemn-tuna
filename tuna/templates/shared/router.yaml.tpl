@@ -11,7 +11,7 @@ file_mounts:
   /app/meta_lb.py: {meta_lb_local_path}
 
 setup: |
-  pip install flask requests gunicorn
+  pip install fastapi httpx 'uvicorn[standard]'
 
 run: |
   cd /app
@@ -20,5 +20,4 @@ run: |
   export API_KEY="{router_api_key}"
   export IDLE_TIMEOUT_SECONDS="{downscale_delay}"
   export WARMUP_POKE_INTERVAL_SECONDS="{upscale_delay}"
-  gunicorn -w 1 -k gthread --threads 16 --timeout 300 \
-    --bind 0.0.0.0:8080 meta_lb:app
+  uvicorn meta_lb:app --host 0.0.0.0 --port 8080 --timeout-keep-alive 300
