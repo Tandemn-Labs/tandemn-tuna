@@ -104,29 +104,39 @@ def cmd_deploy(args: argparse.Namespace) -> None:
         if ignored:
             print(f"Warning: {', '.join(ignored)} ignored in serverless-only mode", file=sys.stderr)
 
-    print(f"Deploying {request.model_name} on {request.gpu}")
-    print(f"Service name: {request.service_name}")
+    from tuna.ui import banner, info_panel, section
+
+    banner()
+    section("DEPLOY")
+    workload_data = {
+        "Model": request.model_name,
+        "GPU": request.gpu,
+        "Service": request.service_name,
+    }
     if not auto_selected:
-        print(f"Serverless provider: {request.serverless_provider}")
+        workload_data["Provider"] = request.serverless_provider
     if args.serverless_only:
-        print(f"Mode: serverless-only")
+        workload_data["Mode"] = "serverless-only"
     else:
-        print(f"Spot cloud: {request.spots_cloud}")
-    print()
+        workload_data["Spot cloud"] = request.spots_cloud
+    info_panel("WORKLOAD", workload_data)
 
     from tuna.models import HybridDeployment
+    from tuna.ui import SharkSpinner, error as ui_error
 
     result = None
     try:
         if args.serverless_only:
             from tuna.orchestrator import launch_serverless_only
-            result = launch_serverless_only(request)
+            with SharkSpinner("Deploying"):
+                result = launch_serverless_only(request)
         else:
-            result = launch_hybrid(request, separate_router_vm=args.use_different_vm_for_lb)
+            with SharkSpinner("Deploying"):
+                result = launch_hybrid(request, separate_router_vm=args.use_different_vm_for_lb)
     except KeyboardInterrupt:
-        print("\nDeployment interrupted! Saving partial state for cleanup...", file=sys.stderr)
+        ui_error("Deployment interrupted! Saving partial state for cleanup...")
     except Exception as e:
-        print(f"\nDeployment failed: {e}", file=sys.stderr)
+        ui_error(f"Deployment failed: {e}")
     finally:
         if result is None:
             result = HybridDeployment()
@@ -144,51 +154,50 @@ def cmd_deploy(args: argparse.Namespace) -> None:
     total_failure = not (serverless_ok or spot_ok or router_ok)
 
     if total_failure:
-        print("\nDeployment failed:", file=sys.stderr)
+        ui_error("Deployment failed:")
         for label, comp in [("Serverless", result.serverless), ("Spot", result.spot), ("Router", result.router)]:
             if comp and comp.error:
-                print(f"  {label}: {comp.error}", file=sys.stderr)
+                ui_error(f"  {label}: {comp.error}")
         if not any(c and c.error for _, c in [("Serverless", result.serverless), ("Spot", result.spot), ("Router", result.router)]):
-            print("  (no error details available)", file=sys.stderr)
-        print(f"Run: tuna destroy --service-name {request.service_name}", file=sys.stderr)
+            ui_error("  (no error details available)")
+        ui_error(f"Run: tuna destroy --service-name {request.service_name}")
         sys.exit(1)
 
-    print()
-    print("=" * 60)
-    print("DEPLOYMENT RESULT")
-    print("=" * 60)
-    print(f"  vLLM:       {request.vllm_version}")
+    from tuna.ui import console as ui_console, section as ui_section, styled_url
+
+    ui_console.print()
+    ui_section("RESULT")
+    result_data = {"vLLM": request.vllm_version}
 
     if result.router and result.router.endpoint_url:
-        print(f"  Router:     {result.router.endpoint_url}")
+        result_data["Router"] = result.router.endpoint_url
     elif result.router and result.router.error:
-        print(f"  Router:     FAILED - {result.router.error}")
+        result_data["Router"] = f"FAILED - {result.router.error}"
 
     if result.serverless and result.serverless.endpoint_url:
-        print(f"  Serverless: {result.serverless.endpoint_url}")
+        result_data["Serverless"] = result.serverless.endpoint_url
     elif result.serverless and result.serverless.error:
-        print(f"  Serverless: FAILED - {result.serverless.error}")
+        result_data["Serverless"] = f"FAILED - {result.serverless.error}"
 
     if result.spot and result.spot.endpoint_url:
-        print(f"  Spot:       {result.spot.endpoint_url}")
+        result_data["Spot"] = result.spot.endpoint_url
     elif result.spot and result.spot.error:
-        print(f"  Spot:       FAILED - {result.spot.error}")
+        result_data["Spot"] = f"FAILED - {result.spot.error}"
     elif result.spot:
-        print(f"  Spot:       launching in background...")
+        result_data["Spot"] = "launching in background..."
 
-    print()
+    border = "green" if not has_error else "yellow"
+    info_panel("DEPLOYMENT", result_data, border_style=border)
+
     if result.router_url:
+        ui_console.print()
         if result.router and result.router.endpoint_url:
-            print(f"All traffic -> {result.router_url}")
+            ui_console.print(f"All traffic -> {styled_url(result.router_url)}")
         else:
-            # Serverless-only: router_url is the direct serverless endpoint
-            print(f"Endpoint -> {result.router_url}")
-    print("=" * 60)
+            ui_console.print(f"Endpoint -> {styled_url(result.router_url)}")
 
     if has_error:
-        print()
-        print(f"Some components failed. To clean up: tuna destroy --service-name {request.service_name}",
-              file=sys.stderr)
+        ui_error(f"Some components failed. To clean up: tuna destroy --service-name {request.service_name}")
 
 
 def _clear_provider_caches(provider_names: set[str]) -> None:
@@ -209,6 +218,17 @@ def cmd_destroy(args: argparse.Namespace) -> None:
     from tuna.orchestrator import destroy_hybrid
     from tuna.providers.registry import ensure_providers_for_deployment
     from tuna.state import list_deployments, load_deployment, update_deployment_status
+    from tuna.ui import (
+        SharkSpinner,
+        banner,
+        console as ui_console,
+        error as ui_error,
+        section as ui_section,
+        success as ui_success,
+    )
+
+    banner()
+    ui_section("DESTROY")
 
     if args.destroy_all:
         from tuna.orchestrator import _cleanup_serve_controller
@@ -217,16 +237,17 @@ def cmd_destroy(args: argparse.Namespace) -> None:
         if not records:
             print("No active deployments to destroy.")
             return
-        print(f"Destroying {len(records)} active deployment(s)...")
+        ui_console.print(f"Destroying {len(records)} active deployment(s)...")
         errors = []
         for record in records:
-            print(f"\n--- {record.service_name} ---")
+            ui_console.rule(record.service_name, style="dim")
             try:
                 ensure_providers_for_deployment(record)
-                destroy_hybrid(record.service_name, record=record,
-                               skip_controller_cleanup=True)
+                with SharkSpinner(f"Destroying {record.service_name}"):
+                    destroy_hybrid(record.service_name, record=record,
+                                   skip_controller_cleanup=True)
                 update_deployment_status(record.service_name, "destroyed")
-                print(f"Destroyed: {record.service_name}")
+                ui_success(f"Destroyed {record.service_name}")
             except Exception as e:
                 print(f"Failed to destroy {record.service_name}: {e}", file=sys.stderr)
                 errors.append(record.service_name)
@@ -239,20 +260,20 @@ def cmd_destroy(args: argparse.Namespace) -> None:
                                     if r.serverless_provider_name})
 
         if errors:
-            print(f"\nFailed to destroy: {', '.join(errors)}", file=sys.stderr)
+            ui_error(f"Failed to destroy: {', '.join(errors)}")
             sys.exit(1)
-        print("\nDone.")
+        ui_success("All deployments destroyed")
         return
 
-    # Single-service path (unchanged)
+    # Single-service path
     record = load_deployment(args.service_name)
     if record is None:
         print(f"Error: no deployment record found for '{args.service_name}'.", file=sys.stderr)
         sys.exit(1)
 
     ensure_providers_for_deployment(record)
-    print(f"Destroying deployment: {args.service_name}")
-    destroy_hybrid(args.service_name, record=record)
+    with SharkSpinner(f"Destroying {args.service_name}"):
+        destroy_hybrid(args.service_name, record=record)
     update_deployment_status(args.service_name, "destroyed")
 
     # Optional: also delete the Azure environment (slow)
@@ -272,7 +293,7 @@ def cmd_destroy(args: argparse.Namespace) -> None:
     if getattr(args, "clear_cache", False) and record.serverless_provider_name:
         _clear_provider_caches({record.serverless_provider_name})
 
-    print("Done.")
+    ui_success("Deployment destroyed")
 
 
 def cmd_status(args: argparse.Namespace) -> None:
@@ -292,12 +313,10 @@ def cmd_status(args: argparse.Namespace) -> None:
 
 
 def _print_status(status: dict) -> None:
-    from rich.console import Console
     from rich.panel import Panel
     from rich.table import Table
     from rich.text import Text
-
-    console = Console()
+    from tuna.ui import console
     service_name = status.get("service_name", "?")
     mode = status.get("mode", "")
     mode_suffix = f"  [dim]({mode})[/dim]" if mode else ""
@@ -588,11 +607,9 @@ def _format_duration(seconds: float) -> str:
 
 def _print_serverless_only_cost(record) -> None:
     from datetime import datetime, timezone
-    from rich.console import Console
     from rich.table import Table
     from tuna.catalog import get_provider_price, GPU_SPECS
-
-    console = Console()
+    from tuna.ui import console
     serverless_price = get_provider_price(record.gpu, record.serverless_provider)
     spec = GPU_SPECS.get(record.gpu)
     gpu_label = f"{record.gpu} ({spec.vram_gb} GB)" if spec else record.gpu
@@ -655,12 +672,10 @@ def _print_cost_dashboard(
     savings_vs_serverless: float,
     savings_vs_on_demand: float,
 ) -> None:
-    from rich.console import Console
     from rich.table import Table
 
     from tuna.catalog import GPU_SPECS
-
-    console = Console()
+    from tuna.ui import console
 
     # Header
     spec = GPU_SPECS.get(record.gpu)
@@ -775,6 +790,9 @@ def cmd_show_gpus(args: argparse.Namespace) -> None:
         query,
         GPU_SPECS,
     )
+    from tuna.ui import SharkSpinner, banner
+
+    banner()
 
     gpu_filter = None
     if args.gpu:
@@ -787,8 +805,9 @@ def cmd_show_gpus(args: argparse.Namespace) -> None:
     # Fetch spot prices for all clouds when --spot is used
     spot_prices_by_cloud: dict[str, dict] = {}
     if args.spot:
-        for cloud in ("aws", "gcp"):
-            spot_prices_by_cloud[cloud] = fetch_spot_prices(cloud=cloud)
+        with SharkSpinner("Fetching spot prices"):
+            for cloud in ("aws", "gcp"):
+                spot_prices_by_cloud[cloud] = fetch_spot_prices(cloud=cloud)
 
     # Legacy single-cloud dict for detail view compatibility
     spot_prices = spot_prices_by_cloud.get(args.spots_cloud, {})
@@ -804,12 +823,11 @@ def cmd_show_gpus(args: argparse.Namespace) -> None:
 
 def _print_provider_selection(gpu: str, result, selected_provider: str) -> None:
     """Print a compact pricing table showing which provider was auto-selected."""
-    from rich.console import Console
     from rich.table import Table
     from tuna.catalog import get_gpu_spec
+    from tuna.ui import console
 
     spec = get_gpu_spec(gpu)
-    console = Console()
 
     table = Table(
         title=f"Serverless pricing for {gpu} ({spec.vram_gb} GB)",
@@ -862,12 +880,11 @@ def _spot_savings_pct(spot_price: float, serverless_prices: list[float]) -> floa
 
 
 def _print_gpu_detail(gpu: str, result, spot_prices_by_cloud: dict, get_gpu_spec) -> None:
-    from rich.console import Console
     from rich.table import Table
     from rich.text import Text
+    from tuna.ui import console
 
     spec = get_gpu_spec(gpu)
-    console = Console()
 
     console.print(f"[bold]GPU:[/bold]  {spec.short_name}")
     console.print(f"[bold]Name:[/bold] {spec.full_name}")
@@ -939,13 +956,11 @@ def _print_gpu_detail(gpu: str, result, spot_prices_by_cloud: dict, get_gpu_spec
 
 
 def _print_gpu_table(result, spot_prices_by_cloud: dict, show_spot: bool, get_gpu_spec) -> None:
-    from rich.console import Console
     from rich.table import Table
     from tuna.catalog import GPU_SPECS
+    from tuna.ui import console
 
     spot_clouds = ["aws", "gcp"]
-
-    console = Console()
     table = Table(show_header=True, header_style="bold")
     table.add_column("GPU")
     table.add_column("VRAM", justify="right")
@@ -1045,6 +1060,9 @@ def _print_gpu_table(result, spot_prices_by_cloud: dict, show_spot: bool, get_gp
 
 def cmd_list(args: argparse.Namespace) -> None:
     from tuna.state import list_deployments
+    from tuna.ui import banner
+
+    banner()
 
     records = list_deployments(status=args.status)
     if not records:
@@ -1476,10 +1494,18 @@ def main() -> None:
     args = parser.parse_args()
 
     level = logging.DEBUG if args.verbose else logging.INFO
-    logging.basicConfig(
-        level=level,
-        format="%(asctime)s %(name)s %(levelname)s %(message)s",
-    )
+    if args.verbose:
+        from rich.logging import RichHandler
+        logging.basicConfig(
+            level=level,
+            format="%(message)s",
+            handlers=[RichHandler(rich_tracebacks=True)],
+        )
+    else:
+        from tuna.ui import TunaLogHandler
+        root = logging.getLogger()
+        root.setLevel(level)
+        root.addHandler(TunaLogHandler())
 
     # Silence noisy third-party loggers unless --verbose
     if not args.verbose:

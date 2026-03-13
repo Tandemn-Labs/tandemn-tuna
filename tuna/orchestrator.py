@@ -668,20 +668,20 @@ def _warmup_serverless(
     One request is enough — serverless providers queue it and boot a
     container to serve it, so polling just adds billable invocations.
     """
+    from tuna.ui import success, warning as ui_warning
+
     logger.info("Warming up serverless container: %s", health_url)
-    print("Warming up container...", end="", flush=True)
 
     try:
         resp = requests.get(health_url, headers=auth_headers or {}, timeout=timeout)
         if resp.status_code == 200:
-            print(" ready!")
-            logger.info("Serverless container is healthy")
+            success("Container ready")
             return True
-        print(" unhealthy (status %d)" % resp.status_code)
+        ui_warning("Container unhealthy (status %d)" % resp.status_code)
         logger.warning("Warmup returned %d for %s", resp.status_code, health_url)
         return False
     except requests.exceptions.RequestException as e:
-        print(" timed out (container may still be starting)")
+        ui_warning("Warmup timed out (container may still be starting)")
         logger.warning("Warmup failed for %s: %s", health_url, e)
         return False
 
