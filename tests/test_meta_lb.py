@@ -39,6 +39,7 @@ def _reset_state():
     meta_lb._req_total = 0
     meta_lb._req_to_spot = 0
     meta_lb._req_to_serverless = 0
+    meta_lb._rejected_count = 0
     meta_lb._recent_routes.clear()
     meta_lb._gpu_seconds_spot = 0.0
     meta_lb._gpu_seconds_serverless = 0.0
@@ -47,6 +48,7 @@ def _reset_state():
     meta_lb._last_real_request_ts = 0.0
     # Ensure we have a fresh asyncio lock (tests may run in different event loops)
     meta_lb._state_lock = asyncio.Lock()
+    meta_lb._request_semaphore = asyncio.Semaphore(meta_lb.MAX_CONCURRENT_REQUESTS)
 
 
 @pytest_asyncio.fixture
@@ -658,3 +660,64 @@ class TestSpotReplicas:
             json={"replicas": 1},
         )
         assert resp.status_code == 401
+
+
+class TestBackpressure:
+    @pytest.mark.asyncio
+    async def test_under_limit_succeeds(self, client, mocker):
+        """Request under concurrency limit succeeds normally."""
+        await meta_lb.set_serverless_url("http://serverless.example.com")
+
+        mock_send = mocker.patch.object(
+            meta_lb._http_client, "send", new_callable=mocker.AsyncMock,
+        )
+        mock_send.return_value = _mock_response(mocker)
+
+        resp = await client.get("/v1/models")
+        assert resp.status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_over_limit_returns_429(self, client, mocker):
+        """When semaphore is fully acquired, return 429."""
+        await meta_lb.set_serverless_url("http://serverless.example.com")
+
+        # Set limit to 1 and acquire it so the next request is rejected
+        meta_lb._request_semaphore = asyncio.Semaphore(1)
+        await meta_lb._request_semaphore.acquire()
+
+        resp = await client.get("/v1/models")
+        assert resp.status_code == 429
+        data = resp.json()
+        assert data["error"] == "router_overloaded"
+
+        meta_lb._request_semaphore.release()
+
+    @pytest.mark.asyncio
+    async def test_429_includes_retry_after(self, client, mocker):
+        """429 response includes Retry-After header."""
+        await meta_lb.set_serverless_url("http://serverless.example.com")
+
+        meta_lb._request_semaphore = asyncio.Semaphore(1)
+        await meta_lb._request_semaphore.acquire()
+
+        resp = await client.get("/v1/models")
+        assert resp.status_code == 429
+        assert resp.headers["retry-after"] == "1"
+
+        meta_lb._request_semaphore.release()
+
+    @pytest.mark.asyncio
+    async def test_rejected_count_tracked(self, client, mocker):
+        """Rejected requests increment _rejected_count in route stats."""
+        await meta_lb.set_serverless_url("http://serverless.example.com")
+
+        meta_lb._request_semaphore = asyncio.Semaphore(1)
+        await meta_lb._request_semaphore.acquire()
+
+        await client.get("/v1/models")
+        await client.get("/v1/models")
+
+        stats = await meta_lb._route_stats()
+        assert stats["rejected"] == 2
+
+        meta_lb._request_semaphore.release()

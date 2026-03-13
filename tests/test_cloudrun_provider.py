@@ -199,7 +199,16 @@ class TestCloudRunDeploy:
         mock_client.delete_service.return_value = mock_delete_op
         mock_client.create_service.return_value = mock_create_op
 
-        with patch("google.cloud.run_v2.ServicesClient", return_value=mock_client):
+        mock_sdk = {
+            "ServicesClient": MagicMock(return_value=mock_client),
+            "Container": MagicMock(), "ContainerPort": MagicMock(),
+            "EnvVar": MagicMock(), "NodeSelector": MagicMock(),
+            "Probe": MagicMock(), "ResourceRequirements": MagicMock(),
+            "RevisionScaling": MagicMock(), "RevisionTemplate": MagicMock(),
+            "Service": MagicMock(), "TCPSocketAction": MagicMock(),
+            "duration_pb2": MagicMock(),
+        }
+        with patch("tuna.providers.cloudrun_provider._require_cloudrun_sdk", return_value=mock_sdk):
             result = self.provider.deploy(plan)
 
         assert result.error is None
@@ -234,7 +243,16 @@ class TestCloudRunDeploy:
         mock_client.delete_service.return_value = mock_delete_op
         mock_client.create_service.return_value = mock_create_op
 
-        with patch("google.cloud.run_v2.ServicesClient", return_value=mock_client):
+        mock_sdk = {
+            "ServicesClient": MagicMock(return_value=mock_client),
+            "Container": MagicMock(), "ContainerPort": MagicMock(),
+            "EnvVar": MagicMock(), "NodeSelector": MagicMock(),
+            "Probe": MagicMock(), "ResourceRequirements": MagicMock(),
+            "RevisionScaling": MagicMock(), "RevisionTemplate": MagicMock(),
+            "Service": MagicMock(), "TCPSocketAction": MagicMock(),
+            "duration_pb2": MagicMock(),
+        }
+        with patch("tuna.providers.cloudrun_provider._require_cloudrun_sdk", return_value=mock_sdk):
             result = self.provider.deploy(plan)
 
         assert result.error is None
@@ -259,28 +277,9 @@ class TestCloudRunDeploy:
         }
         plan.env = {}
 
-        # Temporarily remove the real module so the lazy import fails
-        import sys as _sys
-        real_mod = _sys.modules.pop("google.cloud.run_v2", None)
-        real_cloud = _sys.modules.pop("google.cloud", None)
-        real_google = _sys.modules.pop("google", None)
-        try:
-            _sys.modules["google.cloud.run_v2"] = None  # block import
-            _sys.modules["google.cloud"] = None
-            _sys.modules["google"] = None
-            provider = CloudRunProvider()
+        provider = CloudRunProvider()
+        with patch("tuna.providers.cloudrun_provider._require_cloudrun_sdk", side_effect=ImportError):
             result = provider.deploy(plan)
-        finally:
-            # Restore
-            _sys.modules.pop("google.cloud.run_v2", None)
-            _sys.modules.pop("google.cloud", None)
-            _sys.modules.pop("google", None)
-            if real_mod is not None:
-                _sys.modules["google.cloud.run_v2"] = real_mod
-            if real_cloud is not None:
-                _sys.modules["google.cloud"] = real_cloud
-            if real_google is not None:
-                _sys.modules["google"] = real_google
 
         assert result.error is not None
         assert "google-cloud-run SDK not installed" in result.error
@@ -296,7 +295,16 @@ class TestCloudRunDeploy:
         mock_client.delete_service.return_value = mock_delete_op
         mock_client.create_service.side_effect = Exception("Permission denied")
 
-        with patch("google.cloud.run_v2.ServicesClient", return_value=mock_client):
+        mock_sdk = {
+            "ServicesClient": MagicMock(return_value=mock_client),
+            "Container": MagicMock(), "ContainerPort": MagicMock(),
+            "EnvVar": MagicMock(), "NodeSelector": MagicMock(),
+            "Probe": MagicMock(), "ResourceRequirements": MagicMock(),
+            "RevisionScaling": MagicMock(), "RevisionTemplate": MagicMock(),
+            "Service": MagicMock(), "TCPSocketAction": MagicMock(),
+            "duration_pb2": MagicMock(),
+        }
+        with patch("tuna.providers.cloudrun_provider._require_cloudrun_sdk", return_value=mock_sdk):
             result = self.provider.deploy(plan)
 
         assert result.error is not None
@@ -319,7 +327,16 @@ class TestCloudRunDeploy:
         mock_client.delete_service.side_effect = Exception("404 NotFound")
         mock_client.create_service.return_value = mock_create_op
 
-        with patch("google.cloud.run_v2.ServicesClient", return_value=mock_client):
+        mock_sdk = {
+            "ServicesClient": MagicMock(return_value=mock_client),
+            "Container": MagicMock(), "ContainerPort": MagicMock(),
+            "EnvVar": MagicMock(), "NodeSelector": MagicMock(),
+            "Probe": MagicMock(), "ResourceRequirements": MagicMock(),
+            "RevisionScaling": MagicMock(), "RevisionTemplate": MagicMock(),
+            "Service": MagicMock(), "TCPSocketAction": MagicMock(),
+            "duration_pb2": MagicMock(),
+        }
+        with patch("tuna.providers.cloudrun_provider._require_cloudrun_sdk", return_value=mock_sdk):
             result = self.provider.deploy(plan)
 
         assert result.error is None
@@ -343,8 +360,9 @@ class TestCloudRunDestroy:
         )
 
         mock_client = MagicMock()
+        mock_sdk = {"ServicesClient": MagicMock(return_value=mock_client)}
 
-        with patch("google.cloud.run_v2.ServicesClient", return_value=mock_client):
+        with patch("tuna.providers.cloudrun_provider._require_cloudrun_sdk", return_value=mock_sdk):
             self.provider.destroy(result)
 
         mock_client.delete_service.assert_called_once_with(
@@ -373,8 +391,9 @@ class TestCloudRunStatus:
 
         mock_client = MagicMock()
         mock_client.get_service.return_value = mock_svc
+        mock_sdk = {"ServicesClient": MagicMock(return_value=mock_client)}
 
-        with patch("google.cloud.run_v2.ServicesClient", return_value=mock_client):
+        with patch("tuna.providers.cloudrun_provider._require_cloudrun_sdk", return_value=mock_sdk):
             status = self.provider.status("test-svc")
 
         assert status["status"] == "running"
@@ -384,8 +403,9 @@ class TestCloudRunStatus:
     def test_status_not_found(self):
         mock_client = MagicMock()
         mock_client.get_service.side_effect = Exception("404 NotFound")
+        mock_sdk = {"ServicesClient": MagicMock(return_value=mock_client)}
 
-        with patch("google.cloud.run_v2.ServicesClient", return_value=mock_client):
+        with patch("tuna.providers.cloudrun_provider._require_cloudrun_sdk", return_value=mock_sdk):
             status = self.provider.status("test-svc")
 
         assert status["status"] == "not found"

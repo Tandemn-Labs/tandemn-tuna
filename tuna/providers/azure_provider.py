@@ -72,7 +72,8 @@ def _require_azure_sdk():
     """Import and return Azure SDK classes, raising ImportError on failure."""
     from azure.identity import DefaultAzureCredential
     from azure.mgmt.appcontainers import ContainerAppsAPIClient
-    return DefaultAzureCredential, ContainerAppsAPIClient
+    from azure.mgmt.appcontainers import models as aca_models
+    return DefaultAzureCredential, ContainerAppsAPIClient, aca_models
 
 
 class AzureProvider(InferenceProvider):
@@ -112,7 +113,7 @@ class AzureProvider(InferenceProvider):
             return explicit
 
         try:
-            DefaultAzureCredential, ContainerAppsAPIClient = _require_azure_sdk()
+            DefaultAzureCredential, ContainerAppsAPIClient, _ = _require_azure_sdk()
         except ImportError:
             return None
 
@@ -456,8 +457,7 @@ class AzureProvider(InferenceProvider):
 
     def deploy(self, plan: ProviderPlan) -> DeploymentResult:
         try:
-            DefaultAzureCredential, ContainerAppsAPIClient = _require_azure_sdk()
-            from azure.mgmt.appcontainers import models as aca_models
+            DefaultAzureCredential, ContainerAppsAPIClient, aca_models = _require_azure_sdk()
         except ImportError:
             return DeploymentResult(
                 provider=self.name(),
@@ -637,7 +637,7 @@ class AzureProvider(InferenceProvider):
             return
 
         try:
-            DefaultAzureCredential, ContainerAppsAPIClient = _require_azure_sdk()
+            DefaultAzureCredential, ContainerAppsAPIClient, _ = _require_azure_sdk()
         except ImportError:
             logger.error("Azure SDK not installed, cannot destroy resources")
             return
@@ -669,7 +669,7 @@ class AzureProvider(InferenceProvider):
             return
 
         try:
-            DefaultAzureCredential, ContainerAppsAPIClient = _require_azure_sdk()
+            DefaultAzureCredential, ContainerAppsAPIClient, _ = _require_azure_sdk()
         except ImportError:
             logger.error("Azure SDK not installed, cannot destroy environment")
             return
@@ -690,7 +690,7 @@ class AzureProvider(InferenceProvider):
 
     def status(self, service_name: str) -> dict:
         try:
-            DefaultAzureCredential, ContainerAppsAPIClient = _require_azure_sdk()
+            DefaultAzureCredential, ContainerAppsAPIClient, _ = _require_azure_sdk()
         except ImportError:
             return {
                 "provider": self.name(),
