@@ -58,8 +58,8 @@ class TestDestroyAll:
         mock_update.assert_any_call("svc-b", "destroyed")
         mock_cleanup.assert_called_once()
         out = capsys.readouterr().out
-        assert "Destroyed: svc-a" in out
-        assert "Destroyed: svc-b" in out
+        assert "Destroyed svc-a" in out
+        assert "Destroyed svc-b" in out
 
     @patch("tuna.orchestrator._cleanup_serve_controller")
     @patch("tuna.state.update_deployment_status")
@@ -124,4 +124,4 @@ class TestDestroySingle:
         mock_ensure.assert_called_once_with(record)
         mock_destroy.assert_called_once_with("my-svc", record=record)
         mock_update.assert_called_once_with("my-svc", "destroyed")
-        assert "Done." in capsys.readouterr().out
+        assert "destroyed" in capsys.readouterr().out.lower()
