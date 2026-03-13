@@ -300,6 +300,9 @@ def cmd_status(args: argparse.Namespace) -> None:
     from tuna.orchestrator import status_hybrid
     from tuna.providers.registry import ensure_providers_for_deployment
     from tuna.state import load_deployment
+    from tuna.ui import banner
+
+    banner()
 
     record = load_deployment(args.service_name)
     if record is None:
@@ -440,7 +443,9 @@ def _setup_cloud_env(args: argparse.Namespace) -> None:
 
 def cmd_check(args: argparse.Namespace) -> None:
     from tuna.providers.registry import ensure_provider_registered, get_provider
+    from tuna.ui import banner
 
+    banner()
     _setup_cloud_env(args)
 
     provider_name = args.provider
@@ -491,6 +496,9 @@ def cmd_cost(args: argparse.Namespace) -> None:
         get_gpu_spec,
     )
     from tuna.orchestrator import status_hybrid
+    from tuna.ui import banner
+
+    banner()
     from tuna.providers.registry import ensure_providers_for_deployment
     from tuna.state import load_deployment
 
@@ -1080,6 +1088,9 @@ def cmd_list(args: argparse.Namespace) -> None:
 
 def cmd_benchmark_load_test(args: argparse.Namespace) -> None:
     from tuna.benchmark.load_test import parse_duration
+    from tuna.ui import banner
+
+    banner()
 
     try:
         duration_s = parse_duration(args.duration)
@@ -1151,6 +1162,10 @@ def cmd_benchmark_load_test(args: argparse.Namespace) -> None:
 
 
 def cmd_benchmark_cold_start(args: argparse.Namespace) -> None:
+    from tuna.ui import banner
+
+    banner()
+
     from tuna.benchmark.cold_start import (
         record_to_deployment_result,
         print_summary,
