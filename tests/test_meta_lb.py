@@ -51,10 +51,14 @@ def _reset_state():
 
 @pytest_asyncio.fixture
 async def client():
-    """httpx async test client with clean state per test."""
+    """httpx async test client with clean state per test.
+
+    ASGITransport does NOT trigger the app's lifespan, so we manually
+    create _http_client for the module to use during tests.
+    """
     _reset_state()
 
-    # Create a real httpx.AsyncClient for the module to use during tests
+    # Create the httpx client that meta_lb uses for upstream requests
     meta_lb._http_client = httpx.AsyncClient(
         timeout=httpx.Timeout(connect=2.0, read=30.0, write=10.0, pool=5.0),
         limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),

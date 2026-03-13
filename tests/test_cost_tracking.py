@@ -96,9 +96,6 @@ class TestRouterCostTracking:
         original_key = meta_lb.API_KEY
         meta_lb.API_KEY = ""
 
-        # Create a real httpx client and mock its send method
-        meta_lb._http_client = httpx.AsyncClient()
-
         async def _aiter_bytes(chunk_size=4096):
             yield b'{"ok": true}'
 
@@ -107,6 +104,9 @@ class TestRouterCostTracking:
         mock_resp.headers = httpx.Headers({"content-type": "application/json"})
         mock_resp.aiter_bytes = _aiter_bytes
         mock_resp.aclose = mocker.AsyncMock()
+
+        # ASGITransport doesn't trigger lifespan, create client manually
+        meta_lb._http_client = httpx.AsyncClient()
 
         mock_send = mocker.patch.object(
             meta_lb._http_client, "send", new_callable=mocker.AsyncMock,
