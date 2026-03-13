@@ -520,13 +520,25 @@ def cmd_cost(args: argparse.Namespace) -> None:
     ROUTER_CPU_COST_PER_HOUR = 0.0 if router_meta.get("colocated") == "true" else 0.04
 
     # Actual costs
-    actual_serverless = (gpu_sec_svl / 3600) * serverless_price
+    # Note: gpu_seconds_serverless from router is wall-clock time (includes
+    # cold start wait, network latency), NOT actual GPU billing time.
+    # Serverless providers bill per-second of active GPU compute, which is
+    # roughly proportional to gpu_seconds_spot per request. We estimate
+    # serverless cost from spot compute rate × serverless request count.
+    svl_reqs = route_stats.get("serverless", 0)
+    spot_reqs = route_stats.get("spot", 0)
+    avg_compute_per_req = gpu_sec_spot / spot_reqs if spot_reqs > 0 else 0.0
+    estimated_svl_compute_s = svl_reqs * avg_compute_per_req
+    actual_serverless = (estimated_svl_compute_s / 3600) * serverless_price
     actual_spot = (spot_ready_s / 3600) * spot_price * gpu_count
     actual_router = (uptime_s / 3600) * ROUTER_CPU_COST_PER_HOUR
     actual_total = actual_serverless + actual_spot + actual_router
 
     # Counterfactuals
-    all_serverless = ((gpu_sec_svl + gpu_sec_spot) / 3600) * serverless_price
+    # All-serverless: if every request used serverless GPU compute
+    total_reqs = svl_reqs + spot_reqs
+    all_svl_compute_s = total_reqs * avg_compute_per_req
+    all_serverless = (all_svl_compute_s / 3600) * serverless_price
     all_on_demand = (uptime_s / 3600) * on_demand_price * gpu_count
 
     # Savings
