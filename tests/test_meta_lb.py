@@ -87,8 +87,8 @@ class TestRouterHealth:
 
     @pytest.mark.asyncio
     async def test_health_shows_urls(self, client):
-        meta_lb.set_serverless_url("https://modal.example.com")
-        meta_lb.set_spot_url("http://spot.example.com")
+        await meta_lb.set_serverless_url("https://modal.example.com")
+        await meta_lb.set_spot_url("http://spot.example.com")
         resp = await client.get("/router/health")
         data = resp.json()
         assert data["serverless_base_url"] == "https://modal.example.com"
@@ -114,7 +114,7 @@ class TestHealthNoProbe:
     @pytest.mark.asyncio
     async def test_health_never_hits_skyserve_lb(self, client, mocker):
         """Verify /router/health never sends HTTP to SkyServe LB."""
-        meta_lb.set_spot_url("http://spot.example.com")
+        await meta_lb.set_spot_url("http://spot.example.com")
         mock_get = mocker.patch.object(meta_lb._http_client, "get", new_callable=mocker.AsyncMock)
 
         resp = await client.get("/router/health")
@@ -123,7 +123,7 @@ class TestHealthNoProbe:
 
     @pytest.mark.asyncio
     async def test_health_never_hits_skyserve_lb_when_ready(self, client, mocker):
-        meta_lb.set_spot_url("http://spot.example.com")
+        await meta_lb.set_spot_url("http://spot.example.com")
         await meta_lb._set_state(meta_lb.SpotState.READY)
         mock_get = mocker.patch.object(meta_lb._http_client, "get", new_callable=mocker.AsyncMock)
 
@@ -181,7 +181,7 @@ class TestProxy503:
 
     @pytest.mark.asyncio
     async def test_only_spot_not_ready_returns_503(self, client):
-        meta_lb.set_spot_url("http://spot.example.com")
+        await meta_lb.set_spot_url("http://spot.example.com")
         await meta_lb._set_state(meta_lb.SpotState.COLD)
         resp = await client.get("/v1/chat/completions")
         assert resp.status_code == 503
@@ -190,8 +190,8 @@ class TestProxy503:
 class TestRoutingDecision:
     @pytest.mark.asyncio
     async def test_routes_to_serverless_when_spot_not_ready(self, client, mocker):
-        meta_lb.set_serverless_url("http://serverless.example.com")
-        meta_lb.set_spot_url("http://spot.example.com")
+        await meta_lb.set_serverless_url("http://serverless.example.com")
+        await meta_lb.set_spot_url("http://spot.example.com")
         await meta_lb._set_state(meta_lb.SpotState.COLD)
 
         # Prevent warming task from actually running
@@ -214,8 +214,8 @@ class TestRoutingDecision:
 
     @pytest.mark.asyncio
     async def test_routes_to_spot_when_ready(self, client, mocker):
-        meta_lb.set_serverless_url("http://serverless.example.com")
-        meta_lb.set_spot_url("http://spot.example.com")
+        await meta_lb.set_serverless_url("http://serverless.example.com")
+        await meta_lb.set_spot_url("http://spot.example.com")
         await meta_lb._set_state(meta_lb.SpotState.READY)
 
         mock_send = mocker.patch.object(
@@ -235,7 +235,7 @@ class TestRoutingDecision:
 
     @pytest.mark.asyncio
     async def test_preserves_query_string(self, client, mocker):
-        meta_lb.set_serverless_url("http://serverless.example.com")
+        await meta_lb.set_serverless_url("http://serverless.example.com")
 
         mock_send = mocker.patch.object(
             meta_lb._http_client, "send", new_callable=mocker.AsyncMock,
@@ -251,8 +251,8 @@ class TestRoutingDecision:
 
     @pytest.mark.asyncio
     async def test_triggers_warming_on_serverless_route_when_spot_cold(self, client, mocker):
-        meta_lb.set_serverless_url("http://serverless.example.com")
-        meta_lb.set_spot_url("http://spot.example.com")
+        await meta_lb.set_serverless_url("http://serverless.example.com")
+        await meta_lb.set_spot_url("http://spot.example.com")
         await meta_lb._set_state(meta_lb.SpotState.COLD)
 
         mock_warming = mocker.patch.object(
@@ -268,8 +268,8 @@ class TestRoutingDecision:
 
     @pytest.mark.asyncio
     async def test_no_warming_when_already_warming(self, client, mocker):
-        meta_lb.set_serverless_url("http://serverless.example.com")
-        meta_lb.set_spot_url("http://spot.example.com")
+        await meta_lb.set_serverless_url("http://serverless.example.com")
+        await meta_lb.set_spot_url("http://spot.example.com")
         meta_lb._spot_state = meta_lb.SpotState.WARMING
 
         mock_warming = mocker.patch.object(
@@ -288,7 +288,7 @@ class TestAuth:
     @pytest.mark.asyncio
     async def test_rejects_missing_key(self, client):
         meta_lb.API_KEY = "secret123"
-        meta_lb.set_serverless_url("http://serverless.example.com")
+        await meta_lb.set_serverless_url("http://serverless.example.com")
 
         resp = await client.get("/v1/models")
         assert resp.status_code == 401
@@ -296,7 +296,7 @@ class TestAuth:
     @pytest.mark.asyncio
     async def test_accepts_correct_key(self, client, mocker):
         meta_lb.API_KEY = "secret123"
-        meta_lb.set_serverless_url("http://serverless.example.com")
+        await meta_lb.set_serverless_url("http://serverless.example.com")
 
         mock_send = mocker.patch.object(
             meta_lb._http_client, "send", new_callable=mocker.AsyncMock,
@@ -309,7 +309,7 @@ class TestAuth:
     @pytest.mark.asyncio
     async def test_accepts_bearer_token(self, client, mocker):
         meta_lb.API_KEY = "secret123"
-        meta_lb.set_serverless_url("http://serverless.example.com")
+        await meta_lb.set_serverless_url("http://serverless.example.com")
 
         mock_send = mocker.patch.object(
             meta_lb._http_client, "send", new_callable=mocker.AsyncMock,
@@ -325,7 +325,7 @@ class TestAuth:
 class TestRouteStats:
     @pytest.mark.asyncio
     async def test_stats_increment(self, client, mocker):
-        meta_lb.set_serverless_url("http://serverless.example.com")
+        await meta_lb.set_serverless_url("http://serverless.example.com")
 
         mock_send = mocker.patch.object(
             meta_lb._http_client, "send", new_callable=mocker.AsyncMock,
@@ -345,8 +345,8 @@ class TestSpotFailoverRetry:
     @pytest.mark.asyncio
     async def test_spot_connection_error_retries_on_serverless(self, client, mocker):
         """When spot fails with connection error, retry on serverless."""
-        meta_lb.set_serverless_url("http://serverless.example.com")
-        meta_lb.set_spot_url("http://spot.example.com")
+        await meta_lb.set_serverless_url("http://serverless.example.com")
+        await meta_lb.set_spot_url("http://spot.example.com")
         await meta_lb._set_state(meta_lb.SpotState.READY)
 
         mock_send = mocker.patch.object(
@@ -368,8 +368,8 @@ class TestSpotFailoverRetry:
     @pytest.mark.asyncio
     async def test_spot_5xx_retries_on_serverless(self, client, mocker):
         """When spot returns 500, retry on serverless."""
-        meta_lb.set_serverless_url("http://serverless.example.com")
-        meta_lb.set_spot_url("http://spot.example.com")
+        await meta_lb.set_serverless_url("http://serverless.example.com")
+        await meta_lb.set_spot_url("http://spot.example.com")
         await meta_lb._set_state(meta_lb.SpotState.READY)
 
         mock_send = mocker.patch.object(
@@ -388,7 +388,7 @@ class TestSpotFailoverRetry:
     @pytest.mark.asyncio
     async def test_spot_failure_no_serverless_returns_502(self, client, mocker):
         """When spot fails and no serverless configured, return 502."""
-        meta_lb.set_spot_url("http://spot.example.com")
+        await meta_lb.set_spot_url("http://spot.example.com")
         await meta_lb._set_state(meta_lb.SpotState.READY)
 
         mock_send = mocker.patch.object(
@@ -401,7 +401,7 @@ class TestSpotFailoverRetry:
     @pytest.mark.asyncio
     async def test_serverless_failure_no_retry(self, client, mocker):
         """When serverless fails, don't retry on spot."""
-        meta_lb.set_serverless_url("http://serverless.example.com")
+        await meta_lb.set_serverless_url("http://serverless.example.com")
         await meta_lb._set_state(meta_lb.SpotState.COLD)
 
         mock_send = mocker.patch.object(
@@ -415,8 +415,8 @@ class TestSpotFailoverRetry:
     @pytest.mark.asyncio
     async def test_spot_4xx_no_retry(self, client, mocker):
         """Client errors (4xx) from spot are NOT retried."""
-        meta_lb.set_serverless_url("http://serverless.example.com")
-        meta_lb.set_spot_url("http://spot.example.com")
+        await meta_lb.set_serverless_url("http://serverless.example.com")
+        await meta_lb.set_spot_url("http://spot.example.com")
         await meta_lb._set_state(meta_lb.SpotState.READY)
 
         mock_send = mocker.patch.object(

@@ -183,16 +183,18 @@ async def _get_skyserve_url() -> str:
         return _skyserve_base_url
 
 
-def set_serverless_url(url: str) -> None:
+async def set_serverless_url(url: str) -> None:
     global _serverless_base_url
     validated = _validate_backend_url(url)
-    _serverless_base_url = validated
+    async with _state_lock:
+        _serverless_base_url = validated
     logger.info("Serverless URL updated: %s", url)
 
 
-def set_serverless_auth_token(token: str) -> None:
+async def set_serverless_auth_token(token: str) -> None:
     global _serverless_auth_token
-    _serverless_auth_token = token
+    async with _state_lock:
+        _serverless_auth_token = token
     logger.info("Serverless auth token updated")
 
 
@@ -211,10 +213,11 @@ def _validate_backend_url(url: str) -> str:
     return url.rstrip("/")
 
 
-def set_spot_url(url: str) -> None:
+async def set_spot_url(url: str) -> None:
     global _skyserve_base_url
     validated = _validate_backend_url(url)
-    _skyserve_base_url = validated
+    async with _state_lock:
+        _skyserve_base_url = validated
     logger.info("Spot URL updated: %s", url)
 
 
@@ -491,8 +494,7 @@ async def lifespan(app: FastAPI):
         follow_redirects=True,
     )
     # Auto-warm on startup if spot URL is configured
-    if os.environ.get("SKYSERVE_BASE_URL"):
-        _auto_warm_on_startup()
+    _auto_warm_on_startup()
     yield
     # Shutdown: cancel warming task, close client
     if _warming_task and not _warming_task.done():
@@ -544,11 +546,11 @@ async def update_config(request: Request):
     if not data:
         data = {}
     if "serverless_url" in data:
-        set_serverless_url(data["serverless_url"])
+        await set_serverless_url(data["serverless_url"])
     if "serverless_auth_token" in data:
-        set_serverless_auth_token(data["serverless_auth_token"])
+        await set_serverless_auth_token(data["serverless_auth_token"])
     if "spot_url" in data:
-        set_spot_url(data["spot_url"])
+        await set_spot_url(data["spot_url"])
     return JSONResponse(content={"status": "ok"}, status_code=200)
 
 
