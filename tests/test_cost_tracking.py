@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import time
 from unittest.mock import MagicMock, patch
 
 import httpx
@@ -61,7 +60,7 @@ class TestRouterCostTracking:
     async def test_spot_ready_accumulates_on_transition(self, _reset_meta_lb):
         # Transition to ready
         await meta_lb._set_ready(True)
-        time.sleep(0.05)
+        await asyncio.sleep(0.05)
         # Transition to not-ready — should accumulate
         await meta_lb._set_ready(False)
 
@@ -72,7 +71,7 @@ class TestRouterCostTracking:
     async def test_spot_ready_includes_current_period(self, _reset_meta_lb):
         # Transition to ready and stay ready
         await meta_lb._set_ready(True)
-        time.sleep(0.05)
+        await asyncio.sleep(0.05)
 
         # _route_stats should include the ongoing ready period
         stats = await meta_lb._route_stats()
@@ -84,7 +83,7 @@ class TestRouterCostTracking:
     async def test_repeated_ready_true_does_not_double_count(self, _reset_meta_lb):
         await meta_lb._set_ready(True)
         since1 = meta_lb._spot_ready_since
-        time.sleep(0.02)
+        await asyncio.sleep(0.02)
         # Calling _set_ready(True) again while already ready shouldn't reset _spot_ready_since
         await meta_lb._set_ready(True)
         assert meta_lb._spot_ready_since == since1
