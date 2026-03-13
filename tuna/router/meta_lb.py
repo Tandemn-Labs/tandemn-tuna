@@ -370,6 +370,9 @@ async def _enter_warming() -> None:
         """
         max_attempts = int(WARMUP_TIMEOUT_SECONDS / WARMUP_POKE_INTERVAL_SECONDS)
         skyserve_url = await _get_skyserve_url()
+        # Validate URL to prevent SSRF — skyserve_url is set via auth-protected
+        # /router/config or env var, but validate defensively.
+        _validate_backend_url(skyserve_url)
         poke_url = _join_url(skyserve_url, SKYSERVE_POKE_PATH)
         readiness_url = _join_url(skyserve_url, "/v1/models")
 
@@ -515,11 +518,15 @@ async def router_health(request: Request):
     # Pure read — no SkyServe LB hit. State is updated by proxy() results
     # and the warming task.
     async with _state_lock:
+        # Sanitize probe error — strip exception details that could leak internals
+        safe_err = None
+        if _last_probe_err:
+            safe_err = _last_probe_err[:200] if len(_last_probe_err) <= 200 else _last_probe_err[:200] + "..."
         state = {
             "skyserve_ready": _spot_state == SpotState.READY,
             "spot_state": _spot_state,
             "last_probe_ts": _last_probe_ts,
-            "last_probe_err": _last_probe_err,
+            "last_probe_err": safe_err,
             "serverless_base_url": _serverless_base_url,
             "skyserve_base_url": _skyserve_base_url,
         }
