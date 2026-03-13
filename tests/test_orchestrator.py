@@ -549,9 +549,9 @@ class TestDestroyHybridColocated:
             args = call[0][0]
             if isinstance(args, list) and "ssh" in args:
                 cmd = args[-1]
-                if "pkill" in cmd and "gunicorn" in cmd:
+                if "pkill" in cmd and "uvicorn" in cmd:
                     found_pkill = True
-        assert found_pkill, "Should SSH pkill the colocated gunicorn process"
+        assert found_pkill, "Should SSH pkill the colocated uvicorn process"
 
 
 class TestLaunchHybridPreflightGate:

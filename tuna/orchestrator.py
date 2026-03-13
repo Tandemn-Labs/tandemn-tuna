@@ -237,7 +237,7 @@ def _launch_router_on_controller(
 
     # 3a. Install dependencies (can be slow on first deploy)
     logger.info("Installing dependencies on controller via SSH")
-    install_cmd = f"{conda_prefix} && pip install -q flask requests gunicorn"
+    install_cmd = f"{conda_prefix} && pip install -q fastapi httpx 'uvicorn[standard]'"
     try:
         subprocess.run(
             ["ssh", *ssh_opts, ssh_target, install_cmd],
@@ -257,11 +257,11 @@ def _launch_router_on_controller(
         f"SKYSERVE_BASE_URL='http://127.0.0.1:30001' "
         f"IDLE_TIMEOUT_SECONDS={request.scaling.spot.downscale_delay} "
         f"WARMUP_POKE_INTERVAL_SECONDS={request.scaling.spot.upscale_delay} "
-        f"setsid gunicorn -w 1 -k gthread --threads 16 --timeout 300 "
-        f"--bind 0.0.0.0:{router_port} "
-        f"--chdir /tmp meta_lb:app > /tmp/meta_lb.log 2>&1 < /dev/null &"
+        f"setsid uvicorn meta_lb:app --host 0.0.0.0 --port {router_port} "
+        f"--timeout-keep-alive 300 --app-dir /tmp "
+        f"> /tmp/meta_lb.log 2>&1 < /dev/null &"
     )
-    logger.info("Starting gunicorn on controller via SSH")
+    logger.info("Starting uvicorn on controller via SSH")
     try:
         subprocess.run(
             ["ssh", *ssh_opts, ssh_target, start_cmd],
@@ -835,7 +835,7 @@ def destroy_hybrid(
                     ssh_opts = ["-i", ssh_key, "-o", "StrictHostKeyChecking=no"]
                     logger.info("Killing colocated router on %s", controller_cluster)
                     subprocess.run(
-                        ["ssh", *ssh_opts, ssh_target, "pkill -f 'gunicorn.*meta_lb'"],
+                        ["ssh", *ssh_opts, ssh_target, "pkill -f 'uvicorn.*meta_lb'"],
                         capture_output=True, text=True, timeout=15,
                     )
                 except Exception as e:

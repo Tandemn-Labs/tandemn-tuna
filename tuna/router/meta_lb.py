@@ -5,7 +5,7 @@ only knows about URLs, never imports Modal/SkyPilot.
 
 Spot state machine (COLD → WARMING → READY):
   COLD:    Spot is down. Route everything to serverless. Zero SkyServe LB hits.
-  WARMING: Waking spot up. Background thread pokes SkyServe periodically.
+  WARMING: Waking spot up. Background task pokes SkyServe periodically.
   READY:   Spot is up. Route to spot. Zero probing — failures trigger COLD.
 
 Env vars:
@@ -26,25 +26,26 @@ Env vars:
   ALLOW_HEALTH_NO_AUTH    default: 0
 
 Run:
-  gunicorn -w 2 -k gthread --threads 8 --timeout 300 --bind 0.0.0.0:8080 meta_lb:app
+  uvicorn meta_lb:app --host 0.0.0.0 --port 8080 --timeout-keep-alive 300
 """
 
 from __future__ import annotations
 
+import asyncio
 import hmac
 import json
 import logging
 import os
-import threading
 import time
 from collections import deque
+from contextlib import asynccontextmanager
 from typing import Dict
-
-import requests as req_lib
-from flask import Flask, Response, request
 from urllib.parse import urlparse
 
-app = Flask(__name__)
+import httpx
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse, Response, StreamingResponse
+
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO").upper())
 logger = logging.getLogger("meta_lb")
 
@@ -86,7 +87,7 @@ def _build_proxy_url(base: str, path: str, query_string: bytes | None = None) ->
 
     Sanitizes the path and validates the result points to the expected host.
     """
-    from urllib.parse import urlparse, quote, urlencode, parse_qs
+    from urllib.parse import urlparse, quote
     clean_path = _sanitize_path(path)
     url = base.rstrip("/") + "/" + clean_path
     if query_string:
@@ -125,15 +126,8 @@ ALLOW_HEALTH_NO_AUTH = _env_bool("ALLOW_HEALTH_NO_AUTH", False)
 
 ROUTE_WINDOW_SIZE = int(os.getenv("ROUTE_WINDOW_SIZE", "200"))
 
-# Connection pool sized to handle concurrent requests.
-# Default urllib3 pool is 10 — too small for 30+ concurrency.
-_adapter = req_lib.adapters.HTTPAdapter(
-    pool_connections=50,
-    pool_maxsize=50,
-)
-SESSION = req_lib.Session()
-SESSION.mount("http://", _adapter)
-SESSION.mount("https://", _adapter)
+# HTTP client — created in lifespan, shared across all requests.
+_http_client: httpx.AsyncClient | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -150,13 +144,13 @@ class SpotState:
 # Mutable state — backend URLs can be updated at runtime via /router/config
 # ---------------------------------------------------------------------------
 
-_state_lock = threading.Lock()
+_state_lock = asyncio.Lock()
 _serverless_base_url: str = os.environ.get("SERVERLESS_BASE_URL", "").rstrip("/")
 _serverless_auth_token: str = os.environ.get("SERVERLESS_AUTH_TOKEN", "")
 _skyserve_base_url: str = os.environ.get("SKYSERVE_BASE_URL", "").rstrip("/")
 
 _spot_state: str = SpotState.COLD
-_warming_thread: threading.Thread | None = None
+_warming_task: asyncio.Task | None = None
 _last_probe_ts: float | None = None
 _last_probe_err: str | None = None
 
@@ -179,28 +173,26 @@ _last_real_request_ts: float = 0.0
 # State accessors
 # ---------------------------------------------------------------------------
 
-def _get_serverless_url() -> str:
-    with _state_lock:
+async def _get_serverless_url() -> str:
+    async with _state_lock:
         return _serverless_base_url
 
 
-def _get_skyserve_url() -> str:
-    with _state_lock:
+async def _get_skyserve_url() -> str:
+    async with _state_lock:
         return _skyserve_base_url
 
 
 def set_serverless_url(url: str) -> None:
     global _serverless_base_url
     validated = _validate_backend_url(url)
-    with _state_lock:
-        _serverless_base_url = validated
+    _serverless_base_url = validated
     logger.info("Serverless URL updated: %s", url)
 
 
 def set_serverless_auth_token(token: str) -> None:
     global _serverless_auth_token
-    with _state_lock:
-        _serverless_auth_token = token
+    _serverless_auth_token = token
     logger.info("Serverless auth token updated")
 
 
@@ -222,16 +214,15 @@ def _validate_backend_url(url: str) -> str:
 def set_spot_url(url: str) -> None:
     global _skyserve_base_url
     validated = _validate_backend_url(url)
-    with _state_lock:
-        _skyserve_base_url = validated
+    _skyserve_base_url = validated
     logger.info("Spot URL updated: %s", url)
 
 
-def _set_state(new_state: str, err: str | None = None) -> None:
+async def _set_state(new_state: str, err: str | None = None) -> None:
     """Transition the spot state machine and track ready-time accounting."""
     global _spot_state, _last_probe_ts, _last_probe_err
     global _spot_ready_cumulative_s, _spot_ready_since
-    with _state_lock:
+    async with _state_lock:
         old = _spot_state
         now = time.time()
         # Accumulate spot-ready time on state transitions
@@ -247,23 +238,23 @@ def _set_state(new_state: str, err: str | None = None) -> None:
         logger.info("Spot state: %s -> %s", old, new_state)
 
 
-def _is_ready() -> bool:
-    with _state_lock:
+async def _is_ready() -> bool:
+    async with _state_lock:
         return _spot_state == SpotState.READY
 
 
 # Backward-compat helper for _set_ready(bool) callers
-def _set_ready(val: bool, err: str | None = None) -> None:
-    _set_state(SpotState.READY if val else SpotState.COLD, err)
+async def _set_ready(val: bool, err: str | None = None) -> None:
+    await _set_state(SpotState.READY if val else SpotState.COLD, err)
 
 
 # ---------------------------------------------------------------------------
 # Route stats
 # ---------------------------------------------------------------------------
 
-def _record_route(backend: str) -> None:
+async def _record_route(backend: str) -> None:
     global _req_total, _req_to_spot, _req_to_serverless, _last_real_request_ts
-    with _state_lock:
+    async with _state_lock:
         _req_total += 1
         _recent_routes.append(backend)
         _last_real_request_ts = time.time()
@@ -273,8 +264,8 @@ def _record_route(backend: str) -> None:
             _req_to_serverless += 1
 
 
-def _route_stats() -> dict:
-    with _state_lock:
+async def _route_stats() -> dict:
+    async with _state_lock:
         total = _req_total
         spot = _req_to_spot
         svl = _req_to_serverless
@@ -332,7 +323,7 @@ def _filter_outgoing(h) -> Dict[str, str]:
 # Auth
 # ---------------------------------------------------------------------------
 
-def _extract_api_key(req) -> str:
+def _extract_api_key(req: Request) -> str:
     key = req.headers.get(API_KEY_HEADER)
     if not key:
         auth = req.headers.get("Authorization", "")
@@ -341,7 +332,7 @@ def _extract_api_key(req) -> str:
     return key or ""
 
 
-def _is_authorized(req) -> bool:
+def _is_authorized(req: Request) -> bool:
     if not API_KEY:
         return True
     provided = _extract_api_key(req)
@@ -354,16 +345,16 @@ def _is_authorized(req) -> bool:
 # Warming state machine — replaces proactive health probes
 # ---------------------------------------------------------------------------
 
-def _enter_warming() -> None:
-    """Start background warming thread that pokes SkyServe periodically.
+async def _enter_warming() -> None:
+    """Start background warming task that pokes SkyServe periodically.
 
     Keeps QPS > 0 so SkyServe doesn't kill the PROVISIONING replica.
     Poke interval = upscale_delay (autoscaler's tick rate).
     Timeout = readiness_probe.initial_delay_seconds (max time for replica to boot).
     Reads poke responses to detect when spot becomes READY.
     """
-    global _warming_thread, _spot_state, _last_probe_ts
-    with _state_lock:
+    global _warming_task, _spot_state, _last_probe_ts
+    async with _state_lock:
         if _spot_state != SpotState.COLD:
             return  # already warming or ready
         # Inline transition to WARMING (avoid re-acquiring lock via _set_state)
@@ -371,62 +362,61 @@ def _enter_warming() -> None:
         _last_probe_ts = time.time()
     logger.info("Spot state: cold -> warming")
 
-    def _warm_loop():
+    async def _warm_loop():
         """Poke SkyServe LB every interval to maintain QPS > 0 (prevents
         autoscaler from killing the PROVISIONING replica).  Also probes
         /v1/models to verify a real replica is serving — transitions to
         READY only when that succeeds.
         """
         max_attempts = int(WARMUP_TIMEOUT_SECONDS / WARMUP_POKE_INTERVAL_SECONDS)
-        skyserve_url = _get_skyserve_url()
+        skyserve_url = await _get_skyserve_url()
         poke_url = _join_url(skyserve_url, SKYSERVE_POKE_PATH)
         readiness_url = _join_url(skyserve_url, "/v1/models")
 
         for _ in range(max_attempts):
             # Check if state changed externally (e.g., watcher reported replicas>0)
-            with _state_lock:
+            async with _state_lock:
                 if _spot_state != SpotState.WARMING:
                     return
             # Poke /health to maintain QPS for autoscaler
             try:
-                req_lib.get(poke_url, timeout=POKE_TIMEOUT_SECONDS)
+                await _http_client.get(poke_url, timeout=POKE_TIMEOUT_SECONDS)
             except Exception:
                 pass
             # Probe /v1/models to verify a real replica is serving
             try:
-                r = req_lib.get(readiness_url, timeout=5.0)
+                r = await _http_client.get(readiness_url, timeout=5.0)
                 if 200 <= r.status_code < 300:
-                    _set_state(SpotState.READY)
+                    await _set_state(SpotState.READY)
                     return
             except Exception:
                 pass
-            time.sleep(WARMUP_POKE_INTERVAL_SECONDS)
+            await asyncio.sleep(WARMUP_POKE_INTERVAL_SECONDS)
 
         # Timeout — replica didn't become READY within initial_delay window
         logger.warning(
             "Spot warmup timed out after %.0fs", WARMUP_TIMEOUT_SECONDS,
         )
-        _set_state(SpotState.COLD)
+        await _set_state(SpotState.COLD)
 
-    _warming_thread = threading.Thread(target=_warm_loop, daemon=True, name="spot-warming")
-    _warming_thread.start()
+    _warming_task = asyncio.create_task(_warm_loop())
 
 
 # ---------------------------------------------------------------------------
 # Streaming helpers
 # ---------------------------------------------------------------------------
 
-def _stream_and_track(response, t0, backend_name):
-    """Yield chunks from an upstream response and track GPU seconds on completion."""
+async def _stream_and_track(response: httpx.Response, t0: float, backend_name: str):
+    """Async generator: yield chunks from upstream and track GPU seconds on completion."""
     global _gpu_seconds_spot, _gpu_seconds_serverless
     try:
-        for chunk in response.iter_content(chunk_size=4096):
+        async for chunk in response.aiter_bytes(chunk_size=4096):
             if chunk:
                 yield chunk
     finally:
-        response.close()
+        await response.aclose()
         elapsed = time.time() - t0
-        with _state_lock:
+        async with _state_lock:
             if backend_name == "spot":
                 _gpu_seconds_spot += elapsed
             else:
@@ -437,61 +427,94 @@ def _stream_and_track(response, t0, backend_name):
 # Spot → serverless failover
 # ---------------------------------------------------------------------------
 
-def _forward_to_serverless(path, headers, data, serverless_url):
+async def _forward_to_serverless(
+    request: Request, path: str, headers: dict, data: bytes, serverless_url: str,
+) -> Response:
     """Retry a failed spot request on the serverless backend."""
     global _gpu_seconds_serverless
-    target_url = _build_proxy_url(serverless_url, path, request.query_string or None)
+    target_url = _build_proxy_url(
+        serverless_url, path, request.url.query.encode() if request.url.query else None,
+    )
 
     # Swap in serverless auth token
-    with _state_lock:
+    async with _state_lock:
         auth_token = _serverless_auth_token
     if auth_token:
         headers["Authorization"] = f"Bearer {auth_token}"
     else:
         headers.pop("Authorization", None)
 
-    _record_route("serverless")  # Count the retry as a serverless route
+    await _record_route("serverless")  # Count the retry as a serverless route
 
     t0 = time.time()
     try:
-        r = SESSION.request(
-            method=request.method,
-            url=target_url,
-            headers=headers,
-            data=data if data else None,
-            allow_redirects=True,
-            timeout=(2.0, UPSTREAM_TIMEOUT_SECONDS),
+        resp = await _http_client.send(
+            _http_client.build_request(
+                request.method, target_url, headers=headers, content=data or None,
+            ),
             stream=True,
         )
-    except req_lib.RequestException as e:
+    except httpx.HTTPError as e:
         elapsed = time.time() - t0
-        with _state_lock:
+        async with _state_lock:
             _gpu_seconds_serverless += elapsed
         logger.warning("Upstream error: %s", e)
-        return Response("upstream_error", status=502)
+        return Response(content="upstream_error", status_code=502)
 
-    resp_headers = _filter_outgoing(r.headers)
-    return Response(
-        response=_stream_and_track(r, t0, "serverless"),
-        status=r.status_code,
+    resp_headers = _filter_outgoing(dict(resp.headers))
+    return StreamingResponse(
+        _stream_and_track(resp, t0, "serverless"),
+        status_code=resp.status_code,
         headers=resp_headers,
-        content_type=r.headers.get("content-type"),
-        direct_passthrough=True,
+        media_type=resp.headers.get("content-type"),
     )
+
+
+# ---------------------------------------------------------------------------
+# Lifespan — manage httpx client and warming task
+# ---------------------------------------------------------------------------
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global _http_client
+    _http_client = httpx.AsyncClient(
+        timeout=httpx.Timeout(
+            connect=2.0,
+            read=UPSTREAM_TIMEOUT_SECONDS,
+            write=10.0,
+            pool=5.0,
+        ),
+        limits=httpx.Limits(max_connections=200, max_keepalive_connections=50),
+        follow_redirects=True,
+    )
+    # Auto-warm on startup if spot URL is configured
+    if os.environ.get("SKYSERVE_BASE_URL"):
+        _auto_warm_on_startup()
+    yield
+    # Shutdown: cancel warming task, close client
+    if _warming_task and not _warming_task.done():
+        _warming_task.cancel()
+        try:
+            await _warming_task
+        except asyncio.CancelledError:
+            pass
+    await _http_client.aclose()
+
+app = FastAPI(lifespan=lifespan)
 
 
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
 
-@app.route("/router/health", methods=["GET"])
-def router_health():
+@app.get("/router/health")
+async def router_health(request: Request):
     if not ALLOW_HEALTH_NO_AUTH and not _is_authorized(request):
-        return Response("unauthorized", status=401)
+        return Response(content="unauthorized", status_code=401)
 
     # Pure read — no SkyServe LB hit. State is updated by proxy() results
-    # and the warming thread.
-    with _state_lock:
+    # and the warming task.
+    async with _state_lock:
         state = {
             "skyserve_ready": _spot_state == SpotState.READY,
             "spot_state": _spot_state,
@@ -500,101 +523,97 @@ def router_health():
             "serverless_base_url": _serverless_base_url,
             "skyserve_base_url": _skyserve_base_url,
         }
-    state["route_stats"] = _route_stats()
+    state["route_stats"] = await _route_stats()
 
-    return Response(
-        response=json.dumps(state),
-        status=200,
-        mimetype="application/json",
-    )
+    return JSONResponse(content=state, status_code=200)
 
 
-@app.route("/router/config", methods=["POST"])
-def update_config():
+@app.post("/router/config")
+async def update_config(request: Request):
     """Orchestrator pushes backend URLs here after deploy."""
     if not _is_authorized(request):
-        return Response("unauthorized", status=401)
-    data = request.get_json(silent=True) or {}
+        return Response(content="unauthorized", status_code=401)
+    data = await request.json()
+    if not data:
+        data = {}
     if "serverless_url" in data:
         set_serverless_url(data["serverless_url"])
     if "serverless_auth_token" in data:
         set_serverless_auth_token(data["serverless_auth_token"])
     if "spot_url" in data:
         set_spot_url(data["spot_url"])
-    return Response(
-        response=json.dumps({"status": "ok"}),
-        status=200,
-        mimetype="application/json",
-    )
+    return JSONResponse(content={"status": "ok"}, status_code=200)
 
 
-@app.route("/router/spot-replicas", methods=["POST"])
-def update_spot_replicas():
+@app.post("/router/spot-replicas")
+async def update_spot_replicas(request: Request):
     """Replica watcher pushes actual replica count here."""
     if not _is_authorized(request):
-        return Response("unauthorized", status=401)
-    data = request.get_json(silent=True) or {}
+        return Response(content="unauthorized", status_code=401)
+    data = await request.json()
+    if not data:
+        data = {}
     replicas = data.get("replicas", 0)
-    with _state_lock:
+    async with _state_lock:
         current = _spot_state
     if replicas == 0 and current == SpotState.READY:
         logger.info("Replica watcher: 0 replicas, marking COLD")
-        _set_state(SpotState.COLD)
+        await _set_state(SpotState.COLD)
     elif replicas > 0 and current in (SpotState.COLD, SpotState.WARMING):
         logger.info("Replica watcher: %d replicas, marking READY", replicas)
-        _set_state(SpotState.READY)
-    return Response(json.dumps({"ok": True}), status=200, mimetype="application/json")
+        await _set_state(SpotState.READY)
+    return JSONResponse(content={"ok": True}, status_code=200)
 
 
-@app.route("/", defaults={"path": ""}, methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"])
-@app.route("/<path:path>", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"])
-def proxy(path: str):
+@app.api_route(
+    "/{path:path}",
+    methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
+)
+async def proxy(request: Request, path: str = ""):
     global _gpu_seconds_spot, _gpu_seconds_serverless
-    serverless_url = _get_serverless_url()
-    skyserve_url = _get_skyserve_url()
+    serverless_url = await _get_serverless_url()
+    skyserve_url = await _get_skyserve_url()
 
     if not serverless_url and not skyserve_url:
-        return Response(
-            json.dumps({"error": "No backends configured yet"}),
-            status=503,
-            mimetype="application/json",
+        return JSONResponse(
+            content={"error": "No backends configured yet"},
+            status_code=503,
         )
 
     if not _is_authorized(request):
-        return Response("unauthorized", status=401)
+        return Response(content="unauthorized", status_code=401)
 
     # Preemptive idle→cold: if spot is READY but no real traffic for
     # downscale_delay seconds, SkyServe has likely scaled down already.
     # Mark COLD to avoid routing to a dead spot (saves one failed request).
-    if skyserve_url and _is_ready():
-        with _state_lock:
+    if skyserve_url and await _is_ready():
+        async with _state_lock:
             idle_s = time.time() - _last_real_request_ts if _last_real_request_ts else 0
         if idle_s > IDLE_TIMEOUT_SECONDS:
             logger.info("Idle %.0fs > %.0fs, preemptively marking COLD", idle_s, IDLE_TIMEOUT_SECONDS)
-            _set_state(SpotState.COLD)
+            await _set_state(SpotState.COLD)
 
     # Decide backend: prefer spot (cheaper) if ready, else serverless (fast)
-    if skyserve_url and _is_ready():
+    if skyserve_url and await _is_ready():
         backend_base = skyserve_url
         backend_name = "spot"
-        _record_route("spot")
+        await _record_route("spot")
     elif serverless_url:
         backend_base = serverless_url
         backend_name = "serverless"
-        _record_route("serverless")
+        await _record_route("serverless")
         # Trigger warming if spot is cold and URL is configured
         if skyserve_url and _spot_state == SpotState.COLD:
-            _enter_warming()
+            await _enter_warming()
     else:
         # Only spot configured but not ready
-        return Response(
-            json.dumps({"error": "Spot backend not ready, no serverless fallback"}),
-            status=503,
-            mimetype="application/json",
+        return JSONResponse(
+            content={"error": "Spot backend not ready, no serverless fallback"},
+            status_code=503,
         )
 
     # Log periodically
-    stats = _route_stats()
+    stats = await _route_stats()
     if stats["total"] % 100 == 0 and stats["total"] > 0:
         logger.info(
             "requests=%d spot=%d (%.0f%%) serverless=%d (%.0f%%) spot_state=%s",
@@ -603,34 +622,32 @@ def proxy(path: str):
         )
 
     # Forward request
-    target_url = _build_proxy_url(backend_base, path, request.query_string or None)
+    query_string = request.url.query.encode() if request.url.query else None
+    target_url = _build_proxy_url(backend_base, path, query_string)
 
     # Strip auth headers for serverless (we inject our own token); preserve for spot
     headers = _filter_incoming(dict(request.headers), strip_auth=(backend_name == "serverless"))
 
     # Inject backend auth token for serverless
     if backend_name == "serverless":
-        with _state_lock:
+        async with _state_lock:
             auth_token = _serverless_auth_token
         if auth_token:
             headers["Authorization"] = f"Bearer {auth_token}"
 
-    data = request.get_data()
+    data = await request.body()
 
     t0 = time.time()
     try:
-        r = SESSION.request(
-            method=request.method,
-            url=target_url,
-            headers=headers,
-            data=data if data else None,
-            allow_redirects=True,
-            timeout=(2.0, UPSTREAM_TIMEOUT_SECONDS),
+        r = await _http_client.send(
+            _http_client.build_request(
+                request.method, target_url, headers=headers, content=data if data else None,
+            ),
             stream=True,
         )
-    except req_lib.RequestException as e:
+    except httpx.HTTPError as e:
         elapsed = time.time() - t0
-        with _state_lock:
+        async with _state_lock:
             if backend_name == "spot":
                 _gpu_seconds_spot += elapsed
             else:
@@ -639,29 +656,28 @@ def proxy(path: str):
         # RETRY: if spot failed and serverless is available, retry there
         if backend_name == "spot" and serverless_url:
             logger.warning("Spot request failed (%s), retrying on serverless", e)
-            _set_state(SpotState.COLD, str(e))
-            return _forward_to_serverless(path, headers, data, serverless_url)
+            await _set_state(SpotState.COLD, str(e))
+            return await _forward_to_serverless(request, path, headers, data, serverless_url)
 
         logger.warning("Upstream error: %s", e)
-        return Response("upstream_error", status=502)
+        return Response(content="upstream_error", status_code=502)
 
     # Retry on 5xx from spot — we haven't streamed anything yet, safe to failover
     if backend_name == "spot" and r.status_code >= 500 and serverless_url:
-        r.close()
+        await r.aclose()
         elapsed = time.time() - t0
-        with _state_lock:
+        async with _state_lock:
             _gpu_seconds_spot += elapsed
         logger.warning("Spot returned %d, retrying on serverless", r.status_code)
-        _set_state(SpotState.COLD, f"status={r.status_code}")
-        return _forward_to_serverless(path, headers, data, serverless_url)
+        await _set_state(SpotState.COLD, f"status={r.status_code}")
+        return await _forward_to_serverless(request, path, headers, data, serverless_url)
 
-    resp_headers = _filter_outgoing(r.headers)
-    return Response(
-        response=_stream_and_track(r, t0, backend_name),
-        status=r.status_code,
+    resp_headers = _filter_outgoing(dict(r.headers))
+    return StreamingResponse(
+        _stream_and_track(r, t0, backend_name),
+        status_code=r.status_code,
         headers=resp_headers,
-        content_type=r.headers.get("content-type"),
-        direct_passthrough=True,
+        media_type=r.headers.get("content-type"),
     )
 
 
@@ -675,18 +691,12 @@ def proxy(path: str):
 # With min_replicas>=1 the pokes are harmless (replica is already coming up).
 
 def _auto_warm_on_startup():
-    """Enter WARMING if spot URL is configured. Called by gunicorn/flask startup."""
+    """Schedule WARMING if spot URL is configured. Called by lifespan startup."""
     if _skyserve_base_url:
         logger.info("Spot URL configured — auto-entering WARMING on startup")
-        _enter_warming()
-
-
-# Auto-warm when running as a server (not when imported for testing).
-# Gunicorn workers execute module-level code; tests import without SKYSERVE_BASE_URL.
-if os.environ.get("SKYSERVE_BASE_URL"):
-    _auto_warm_on_startup()
+        asyncio.create_task(_enter_warming())
 
 
 if __name__ == "__main__":
-    _auto_warm_on_startup()
-    app.run(host="0.0.0.0", port=int(os.getenv("PORT", "8080")))
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", "8080")))

@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
+import pytest_asyncio
+from httpx import ASGITransport, AsyncClient
 
 from tuna.router import meta_lb
 from tuna.catalog import (
@@ -27,13 +31,14 @@ def _reset_meta_lb():
     meta_lb._gpu_seconds_serverless = 0.0
     meta_lb._spot_ready_cumulative_s = 0.0
     meta_lb._spot_ready_since = None
-    meta_lb._skyserve_ready = False
+    meta_lb._spot_state = meta_lb.SpotState.COLD
     meta_lb._req_total = 0
     meta_lb._req_to_spot = 0
     meta_lb._req_to_serverless = 0
     meta_lb._recent_routes.clear()
     meta_lb._last_probe_ts = None
     meta_lb._last_probe_err = None
+    meta_lb._state_lock = asyncio.Lock()
     yield
 
 
@@ -44,62 +49,80 @@ def _reset_meta_lb():
 class TestRouterCostTracking:
     """Test the cost-tracking globals in meta_lb."""
 
-    def test_route_stats_includes_cost_fields(self, _reset_meta_lb):
-        stats = meta_lb._route_stats()
+    @pytest.mark.asyncio
+    async def test_route_stats_includes_cost_fields(self, _reset_meta_lb):
+        stats = await meta_lb._route_stats()
         assert "gpu_seconds_spot" in stats
         assert "gpu_seconds_serverless" in stats
         assert "uptime_seconds" in stats
         assert "spot_ready_seconds" in stats
 
-    def test_spot_ready_accumulates_on_transition(self, _reset_meta_lb):
+    @pytest.mark.asyncio
+    async def test_spot_ready_accumulates_on_transition(self, _reset_meta_lb):
         # Transition to ready
-        meta_lb._set_ready(True)
+        await meta_lb._set_ready(True)
         time.sleep(0.05)
         # Transition to not-ready — should accumulate
-        meta_lb._set_ready(False)
+        await meta_lb._set_ready(False)
 
         assert meta_lb._spot_ready_cumulative_s > 0.0
         assert meta_lb._spot_ready_since is None
 
-    def test_spot_ready_includes_current_period(self, _reset_meta_lb):
+    @pytest.mark.asyncio
+    async def test_spot_ready_includes_current_period(self, _reset_meta_lb):
         # Transition to ready and stay ready
-        meta_lb._set_ready(True)
+        await meta_lb._set_ready(True)
         time.sleep(0.05)
 
         # _route_stats should include the ongoing ready period
-        stats = meta_lb._route_stats()
+        stats = await meta_lb._route_stats()
         assert stats["spot_ready_seconds"] > 0.0
         # _spot_ready_since should still be set (spot is still ready)
         assert meta_lb._spot_ready_since is not None
 
-    def test_repeated_ready_true_does_not_double_count(self, _reset_meta_lb):
-        meta_lb._set_ready(True)
+    @pytest.mark.asyncio
+    async def test_repeated_ready_true_does_not_double_count(self, _reset_meta_lb):
+        await meta_lb._set_ready(True)
         since1 = meta_lb._spot_ready_since
         time.sleep(0.02)
         # Calling _set_ready(True) again while already ready shouldn't reset _spot_ready_since
-        meta_lb._set_ready(True)
+        await meta_lb._set_ready(True)
         assert meta_lb._spot_ready_since == since1
 
-    def test_gpu_seconds_accumulate_on_proxy(self, _reset_meta_lb):
+    @pytest.mark.asyncio
+    async def test_gpu_seconds_accumulate_on_proxy(self, _reset_meta_lb, mocker):
         """Verify GPU-seconds accumulate when proxy() handles a request."""
-        meta_lb.app.config["TESTING"] = True
         meta_lb._serverless_base_url = "http://serverless.example.com"
         meta_lb._skyserve_base_url = ""
         original_key = meta_lb.API_KEY
         meta_lb.API_KEY = ""
 
-        with meta_lb.app.test_client() as client:
-            with patch.object(meta_lb.SESSION, "request") as mock_req:
-                mock_resp = MagicMock(
-                    status_code=200,
-                    headers={"content-type": "application/json"},
-                )
-                mock_resp.iter_content.return_value = iter([b'{"ok": true}'])
-                mock_req.return_value = mock_resp
-                client.post("/v1/chat/completions", json={"prompt": "hi"})
+        # Create a real httpx client and mock its send method
+        meta_lb._http_client = httpx.AsyncClient()
+
+        async def _aiter_bytes(chunk_size=4096):
+            yield b'{"ok": true}'
+
+        mock_resp = mocker.AsyncMock(spec=httpx.Response)
+        mock_resp.status_code = 200
+        mock_resp.headers = httpx.Headers({"content-type": "application/json"})
+        mock_resp.aiter_bytes = _aiter_bytes
+        mock_resp.aclose = mocker.AsyncMock()
+
+        mock_send = mocker.patch.object(
+            meta_lb._http_client, "send", new_callable=mocker.AsyncMock,
+        )
+        mock_send.return_value = mock_resp
+
+        async with AsyncClient(
+            transport=ASGITransport(app=meta_lb.app),
+            base_url="http://test",
+        ) as client:
+            await client.post("/v1/chat/completions", json={"prompt": "hi"})
 
         meta_lb.API_KEY = original_key
         assert meta_lb._gpu_seconds_serverless > 0.0
+        await meta_lb._http_client.aclose()
 
 
 # ---------------------------------------------------------------------------
