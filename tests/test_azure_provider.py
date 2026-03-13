@@ -50,6 +50,23 @@ def vllm_cmd():
     return "vllm serve Qwen/Qwen3-0.6B --port 8000"
 
 
+@pytest.fixture
+def mock_azure_sdk(mocker):
+    """Factory fixture for mocking _require_azure_sdk.
+
+    Usage:
+        mock_sdk, mock_client = mock_azure_sdk()          # fresh client
+        mock_sdk, mock_client = mock_azure_sdk(my_client)  # provide your own
+    """
+    def _factory(mock_client=None):
+        if mock_client is None:
+            mock_client = MagicMock()
+        mock_sdk = mocker.patch("tuna.providers.azure_provider._require_azure_sdk")
+        mock_sdk.return_value = (MagicMock(), MagicMock(return_value=mock_client), MagicMock())
+        return mock_sdk, mock_client
+    return _factory
+
+
 # ---------------------------------------------------------------------------
 # Provider basics
 # ---------------------------------------------------------------------------
@@ -356,7 +373,7 @@ class TestFindExistingEnvironment:
         assert result == "my-env"
 
     @patch.dict("os.environ", {}, clear=True)
-    def test_finds_matching_gpu_profile(self, provider):
+    def test_finds_matching_gpu_profile(self, provider, mock_azure_sdk):
         mock_wp = MagicMock()
         mock_wp.workload_profile_type = "Consumption-GPU-NC8as-T4"
 
@@ -366,15 +383,13 @@ class TestFindExistingEnvironment:
 
         mock_client = MagicMock()
         mock_client.managed_environments.list_by_resource_group.return_value = [mock_env]
+        mock_azure_sdk(mock_client)
 
-        with patch("tuna.providers.azure_provider._require_azure_sdk") as mock_sdk:
-            mock_sdk.return_value = (MagicMock(), MagicMock(return_value=mock_client), MagicMock())
-            result = provider._find_existing_environment("sub", "rg", "Consumption-GPU-NC8as-T4")
-
+        result = provider._find_existing_environment("sub", "rg", "Consumption-GPU-NC8as-T4")
         assert result == "found-env"
 
     @patch.dict("os.environ", {}, clear=True)
-    def test_returns_none_when_no_match(self, provider):
+    def test_returns_none_when_no_match(self, provider, mock_azure_sdk):
         mock_wp = MagicMock()
         mock_wp.workload_profile_type = "Consumption"  # Not a GPU profile
 
@@ -384,39 +399,33 @@ class TestFindExistingEnvironment:
 
         mock_client = MagicMock()
         mock_client.managed_environments.list_by_resource_group.return_value = [mock_env]
+        mock_azure_sdk(mock_client)
 
-        with patch("tuna.providers.azure_provider._require_azure_sdk") as mock_sdk:
-            mock_sdk.return_value = (MagicMock(), MagicMock(return_value=mock_client), MagicMock())
-            result = provider._find_existing_environment("sub", "rg", "Consumption-GPU-NC8as-T4")
-
+        result = provider._find_existing_environment("sub", "rg", "Consumption-GPU-NC8as-T4")
         assert result is None
 
     @patch.dict("os.environ", {}, clear=True)
-    def test_returns_none_when_empty_list(self, provider):
+    def test_returns_none_when_empty_list(self, provider, mock_azure_sdk):
         mock_client = MagicMock()
         mock_client.managed_environments.list_by_resource_group.return_value = []
+        mock_azure_sdk(mock_client)
 
-        with patch("tuna.providers.azure_provider._require_azure_sdk") as mock_sdk:
-            mock_sdk.return_value = (MagicMock(), MagicMock(return_value=mock_client), MagicMock())
-            result = provider._find_existing_environment("sub", "rg", "Consumption-GPU-NC8as-T4")
-
+        result = provider._find_existing_environment("sub", "rg", "Consumption-GPU-NC8as-T4")
         assert result is None
 
     @patch.dict("os.environ", {}, clear=True)
-    def test_returns_none_on_sdk_import_error(self, provider):
-        with patch("tuna.providers.azure_provider._require_azure_sdk", side_effect=ImportError):
-            result = provider._find_existing_environment("sub", "rg", "Consumption-GPU-NC8as-T4")
+    def test_returns_none_on_sdk_import_error(self, provider, mocker):
+        mocker.patch("tuna.providers.azure_provider._require_azure_sdk", side_effect=ImportError)
+        result = provider._find_existing_environment("sub", "rg", "Consumption-GPU-NC8as-T4")
         assert result is None
 
     @patch.dict("os.environ", {}, clear=True)
-    def test_returns_none_on_api_error(self, provider):
+    def test_returns_none_on_api_error(self, provider, mock_azure_sdk):
         mock_client = MagicMock()
         mock_client.managed_environments.list_by_resource_group.side_effect = Exception("API error")
+        mock_azure_sdk(mock_client)
 
-        with patch("tuna.providers.azure_provider._require_azure_sdk") as mock_sdk:
-            mock_sdk.return_value = (MagicMock(), MagicMock(return_value=mock_client), MagicMock())
-            result = provider._find_existing_environment("sub", "rg", "Consumption-GPU-NC8as-T4")
-
+        result = provider._find_existing_environment("sub", "rg", "Consumption-GPU-NC8as-T4")
         assert result is None
 
 
@@ -452,7 +461,7 @@ class TestAzureDeploy:
             metadata=metadata,
         )
 
-    def test_deploy_reuses_existing_environment(self, provider):
+    def test_deploy_reuses_existing_environment(self, provider, mock_azure_sdk):
         plan = self._make_plan()
 
         mock_app = MagicMock()
@@ -464,11 +473,8 @@ class TestAzureDeploy:
         mock_client = MagicMock()
         mock_client.container_apps.begin_create_or_update.return_value = mock_poller
 
-        with (
-            patch("tuna.providers.azure_provider._require_azure_sdk") as mock_sdk,
-            patch.object(provider, "_find_existing_environment", return_value="existing-env"),
-        ):
-            mock_sdk.return_value = (MagicMock(), MagicMock(return_value=mock_client), MagicMock())
+        _, mock_client = mock_azure_sdk(mock_client)
+        with patch.object(provider, "_find_existing_environment", return_value="existing-env"):
             result = provider.deploy(plan)
 
         assert result.error is None
@@ -478,7 +484,7 @@ class TestAzureDeploy:
         # Should NOT have called begin_create_or_update on environments
         mock_client.managed_environments.begin_create_or_update.assert_not_called()
 
-    def test_deploy_creates_environment_when_none_exists(self, provider):
+    def test_deploy_creates_environment_when_none_exists(self, provider, mock_azure_sdk):
         plan = self._make_plan()
 
         mock_app = MagicMock()
@@ -494,11 +500,8 @@ class TestAzureDeploy:
         mock_client.managed_environments.begin_create_or_update.return_value = mock_env_poller
         mock_client.container_apps.begin_create_or_update.return_value = mock_app_poller
 
-        with (
-            patch("tuna.providers.azure_provider._require_azure_sdk") as mock_sdk,
-            patch.object(provider, "_find_existing_environment", return_value=None),
-        ):
-            mock_sdk.return_value = (MagicMock(), MagicMock(return_value=mock_client), MagicMock())
+        _, mock_client = mock_azure_sdk(mock_client)
+        with patch.object(provider, "_find_existing_environment", return_value=None):
             result = provider.deploy(plan)
 
         assert result.error is None
@@ -506,7 +509,7 @@ class TestAzureDeploy:
         # Should have created the environment
         mock_client.managed_environments.begin_create_or_update.assert_called_once()
 
-    def test_deploy_environment_creation_failure(self, provider):
+    def test_deploy_environment_creation_failure(self, provider, mock_azure_sdk):
         plan = self._make_plan()
 
         mock_poller = MagicMock()
@@ -515,17 +518,14 @@ class TestAzureDeploy:
         mock_client = MagicMock()
         mock_client.managed_environments.begin_create_or_update.return_value = mock_poller
 
-        with (
-            patch("tuna.providers.azure_provider._require_azure_sdk") as mock_sdk,
-            patch.object(provider, "_find_existing_environment", return_value=None),
-        ):
-            mock_sdk.return_value = (MagicMock(), MagicMock(return_value=mock_client), MagicMock())
+        _, mock_client = mock_azure_sdk(mock_client)
+        with patch.object(provider, "_find_existing_environment", return_value=None):
             result = provider.deploy(plan)
 
         assert result.error is not None
         assert "Environment creation failed" in result.error
 
-    def test_deploy_container_app_creation_failure(self, provider):
+    def test_deploy_container_app_creation_failure(self, provider, mock_azure_sdk):
         plan = self._make_plan()
 
         mock_app_poller = MagicMock()
@@ -534,21 +534,17 @@ class TestAzureDeploy:
         mock_client = MagicMock()
         mock_client.container_apps.begin_create_or_update.return_value = mock_app_poller
 
-        with (
-            patch("tuna.providers.azure_provider._require_azure_sdk") as mock_sdk,
-            patch.object(provider, "_find_existing_environment", return_value="existing-env"),
-        ):
-            mock_sdk.return_value = (MagicMock(), MagicMock(return_value=mock_client), MagicMock())
+        _, mock_client = mock_azure_sdk(mock_client)
+        with patch.object(provider, "_find_existing_environment", return_value="existing-env"):
             result = provider.deploy(plan)
 
         assert result.error is not None
         assert "Container app creation failed" in result.error
 
-    def test_deploy_missing_sdk_returns_error(self, provider):
+    def test_deploy_missing_sdk_returns_error(self, provider, mocker):
         plan = self._make_plan()
-
-        with patch("tuna.providers.azure_provider._require_azure_sdk", side_effect=ImportError):
-            result = provider.deploy(plan)
+        mocker.patch("tuna.providers.azure_provider._require_azure_sdk", side_effect=ImportError)
+        result = provider.deploy(plan)
 
         assert result.error is not None
         assert "Azure SDK not installed" in result.error
@@ -559,7 +555,7 @@ class TestAzureDeploy:
 # ---------------------------------------------------------------------------
 
 class TestAzureDestroy:
-    def test_destroy_only_deletes_container_app(self, provider):
+    def test_destroy_only_deletes_container_app(self, provider, mock_azure_sdk):
         result = DeploymentResult(
             provider="azure",
             endpoint_url="https://test-svc-serverless.eastus.azurecontainerapps.io",
@@ -576,10 +572,9 @@ class TestAzureDestroy:
 
         mock_client = MagicMock()
         mock_client.container_apps.begin_delete.return_value = mock_poller
+        mock_azure_sdk(mock_client)
 
-        with patch("tuna.providers.azure_provider._require_azure_sdk") as mock_sdk:
-            mock_sdk.return_value = (MagicMock(), MagicMock(return_value=mock_client), MagicMock())
-            provider.destroy(result)
+        provider.destroy(result)
 
         # Container App deleted
         mock_client.container_apps.begin_delete.assert_called_once_with("test-rg", "test-svc-serverless")
@@ -591,7 +586,7 @@ class TestAzureDestroy:
         # Should not crash
         provider.destroy(result)
 
-    def test_destroy_missing_sdk(self, provider):
+    def test_destroy_missing_sdk(self, provider, mocker):
         result = DeploymentResult(
             provider="azure",
             metadata={
@@ -600,10 +595,9 @@ class TestAzureDestroy:
                 "subscription_id": "test-sub",
             },
         )
-
-        with patch("tuna.providers.azure_provider._require_azure_sdk", side_effect=ImportError):
-            # Should not crash
-            provider.destroy(result)
+        mocker.patch("tuna.providers.azure_provider._require_azure_sdk", side_effect=ImportError)
+        # Should not crash
+        provider.destroy(result)
 
 
 # ---------------------------------------------------------------------------
@@ -611,7 +605,7 @@ class TestAzureDestroy:
 # ---------------------------------------------------------------------------
 
 class TestAzureDestroyEnvironment:
-    def test_destroy_environment_deletes_env(self, provider):
+    def test_destroy_environment_deletes_env(self, provider, mock_azure_sdk):
         result = DeploymentResult(
             provider="azure",
             metadata={
@@ -627,11 +621,9 @@ class TestAzureDestroyEnvironment:
 
         mock_client = MagicMock()
         mock_client.managed_environments.begin_delete.return_value = mock_poller
+        mock_azure_sdk(mock_client)
 
-        with patch("tuna.providers.azure_provider._require_azure_sdk") as mock_sdk:
-            mock_sdk.return_value = (MagicMock(), MagicMock(return_value=mock_client), MagicMock())
-            provider.destroy_environment(result)
-
+        provider.destroy_environment(result)
         mock_client.managed_environments.begin_delete.assert_called_once_with("test-rg", "test-svc-env")
 
     def test_destroy_environment_missing_metadata(self, provider):
@@ -693,14 +685,11 @@ class TestAzurePreflight:
 
     @patch("tuna.providers.azure_provider.subprocess.run")
     @patch.dict("os.environ", {"AZURE_SUBSCRIPTION_ID": "test-sub", "AZURE_RESOURCE_GROUP": "test-rg"})
-    def test_all_checks_pass(self, mock_run, provider, request_t4):
+    def test_all_checks_pass(self, mock_run, provider, request_t4, mock_azure_sdk):
         self._mock_az_success(mock_run)
+        mock_azure_sdk()
 
-        with (
-            patch("tuna.providers.azure_provider._require_azure_sdk") as mock_sdk,
-            patch.object(provider, "_find_existing_environment", return_value="my-env"),
-        ):
-            mock_sdk.return_value = (MagicMock(), MagicMock(), MagicMock())
+        with patch.object(provider, "_find_existing_environment", return_value="my-env"):
             result = provider.preflight(request_t4)
 
         assert result.ok
@@ -762,11 +751,10 @@ class TestAzurePreflight:
 
     @patch("tuna.providers.azure_provider.subprocess.run")
     @patch.dict("os.environ", {"AZURE_SUBSCRIPTION_ID": "test-sub", "AZURE_RESOURCE_GROUP": "test-rg"})
-    def test_sdk_not_installed(self, mock_run, provider, request_t4):
+    def test_sdk_not_installed(self, mock_run, provider, request_t4, mocker):
         self._mock_az_success(mock_run)
-
-        with patch("tuna.providers.azure_provider._require_azure_sdk", side_effect=ImportError):
-            result = provider.preflight(request_t4)
+        mocker.patch("tuna.providers.azure_provider._require_azure_sdk", side_effect=ImportError)
+        result = provider.preflight(request_t4)
 
         sdk_check = [c for c in result.checks if c.name == "azure_sdk"][0]
         assert not sdk_check.passed
@@ -774,14 +762,11 @@ class TestAzurePreflight:
 
     @patch("tuna.providers.azure_provider.subprocess.run")
     @patch.dict("os.environ", {"AZURE_SUBSCRIPTION_ID": "test-sub", "AZURE_RESOURCE_GROUP": "test-rg"})
-    def test_preflight_environment_found(self, mock_run, provider, request_t4):
+    def test_preflight_environment_found(self, mock_run, provider, request_t4, mock_azure_sdk):
         self._mock_az_success(mock_run)
+        mock_azure_sdk()
 
-        with (
-            patch("tuna.providers.azure_provider._require_azure_sdk") as mock_sdk,
-            patch.object(provider, "_find_existing_environment", return_value="my-env"),
-        ):
-            mock_sdk.return_value = (MagicMock(), MagicMock(), MagicMock())
+        with patch.object(provider, "_find_existing_environment", return_value="my-env"):
             result = provider.preflight(request_t4)
 
         env_check = [c for c in result.checks if c.name == "environment"][0]
@@ -790,14 +775,11 @@ class TestAzurePreflight:
 
     @patch("tuna.providers.azure_provider.subprocess.run")
     @patch.dict("os.environ", {"AZURE_SUBSCRIPTION_ID": "test-sub", "AZURE_RESOURCE_GROUP": "test-rg"})
-    def test_preflight_environment_not_found(self, mock_run, provider, request_t4):
+    def test_preflight_environment_not_found(self, mock_run, provider, request_t4, mock_azure_sdk):
         self._mock_az_success(mock_run)
+        mock_azure_sdk()
 
-        with (
-            patch("tuna.providers.azure_provider._require_azure_sdk") as mock_sdk,
-            patch.object(provider, "_find_existing_environment", return_value=None),
-        ):
-            mock_sdk.return_value = (MagicMock(), MagicMock(), MagicMock())
+        with patch.object(provider, "_find_existing_environment", return_value=None):
             result = provider.preflight(request_t4)
 
         env_check = [c for c in result.checks if c.name == "environment"][0]
@@ -814,18 +796,16 @@ class TestAzureStatus:
         "AZURE_SUBSCRIPTION_ID": "test-sub",
         "AZURE_RESOURCE_GROUP": "test-rg",
     })
-    def test_status_running(self, provider):
+    def test_status_running(self, provider, mock_azure_sdk):
         mock_app = MagicMock()
         mock_app.provisioning_state = "Succeeded"
         mock_app.configuration.ingress.fqdn = "test-svc-serverless.eastus.azurecontainerapps.io"
 
         mock_client = MagicMock()
         mock_client.container_apps.get.return_value = mock_app
+        mock_azure_sdk(mock_client)
 
-        with patch("tuna.providers.azure_provider._require_azure_sdk") as mock_sdk:
-            mock_sdk.return_value = (MagicMock(), MagicMock(return_value=mock_client), MagicMock())
-            status = provider.status("test-svc")
-
+        status = provider.status("test-svc")
         assert status["status"] == "Succeeded"
         assert status["uri"] == "https://test-svc-serverless.eastus.azurecontainerapps.io"
 
@@ -833,29 +813,26 @@ class TestAzureStatus:
         "AZURE_SUBSCRIPTION_ID": "test-sub",
         "AZURE_RESOURCE_GROUP": "test-rg",
     })
-    def test_status_not_found(self, provider):
+    def test_status_not_found(self, provider, mock_azure_sdk):
         mock_client = MagicMock()
         mock_client.container_apps.get.side_effect = Exception("ResourceNotFound")
+        mock_azure_sdk(mock_client)
 
-        with patch("tuna.providers.azure_provider._require_azure_sdk") as mock_sdk:
-            mock_sdk.return_value = (MagicMock(), MagicMock(return_value=mock_client), MagicMock())
-            status = provider.status("test-svc")
-
+        status = provider.status("test-svc")
         assert status["status"] == "not found"
 
-    def test_status_missing_sdk(self, provider):
-        with patch("tuna.providers.azure_provider._require_azure_sdk", side_effect=ImportError):
-            status = provider.status("test-svc")
+    def test_status_missing_sdk(self, provider, mocker):
+        mocker.patch("tuna.providers.azure_provider._require_azure_sdk", side_effect=ImportError)
+        status = provider.status("test-svc")
         assert status["status"] == "unknown"
         assert "Azure SDK not installed" in status["error"]
 
     @patch.dict("os.environ", {}, clear=True)
     @patch("tuna.providers.azure_provider.subprocess.run")
-    def test_status_no_subscription(self, mock_run, provider):
+    def test_status_no_subscription(self, mock_run, provider, mock_azure_sdk):
         mock_run.return_value = MagicMock(stdout="", returncode=1)
-        with patch("tuna.providers.azure_provider._require_azure_sdk") as mock_sdk:
-            mock_sdk.return_value = (MagicMock(), MagicMock(), MagicMock())
-            status = provider.status("test-svc")
+        mock_azure_sdk()
+        status = provider.status("test-svc")
         assert status["status"] == "unknown"
         assert "No subscription" in status["error"]
 
