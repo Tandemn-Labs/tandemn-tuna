@@ -424,14 +424,22 @@ def run_aiperf_benchmark(
             od_entry = od_prices.get(rec.gpu)
             od_price = od_entry.price_per_gpu_hour if od_entry else 0.0
 
+            # Estimate serverless cost from spot compute rate per request.
+            # gpu_seconds_serverless from router is wall-clock (includes cold
+            # start wait), not actual GPU billing. Use spot compute as proxy.
+            avg_compute = (report.gpu_seconds_spot / report.spot_requests
+                           if report.spot_requests > 0 else 0.0)
+            estimated_svl_compute = report.serverless_requests * avg_compute
+            total_reqs = report.spot_requests + report.serverless_requests
+
             report.estimated_cost_serverless = round(
-                (report.gpu_seconds_serverless / 3600) * svl_price, 4)
+                (estimated_svl_compute / 3600) * svl_price, 4)
             report.estimated_cost_spot = round(
                 (report.spot_ready_seconds / 3600) * spot_price, 4)
             report.estimated_cost_hybrid = round(
                 report.estimated_cost_spot + report.estimated_cost_serverless, 4)
             report.counterfactual_all_serverless = round(
-                ((report.gpu_seconds_spot + report.gpu_seconds_serverless) / 3600) * svl_price, 4)
+                (total_reqs * avg_compute / 3600) * svl_price, 4)
             report.counterfactual_all_on_demand = round(
                 (report.uptime_seconds / 3600) * od_price, 4)
             report.savings_vs_serverless = round(
