@@ -85,9 +85,35 @@ def get_project_id() -> str:
 
 
 def _require_cloudrun_sdk():
-    """Import and return the Cloud Run SDK, raising ImportError on failure."""
+    """Import and return the Cloud Run SDK classes, raising ImportError on failure."""
     from google.cloud.run_v2 import ServicesClient
-    return ServicesClient
+    from google.cloud.run_v2.types import (
+        Container,
+        ContainerPort,
+        EnvVar,
+        NodeSelector,
+        Probe,
+        ResourceRequirements,
+        RevisionScaling,
+        RevisionTemplate,
+        Service,
+        TCPSocketAction,
+    )
+    from google.protobuf import duration_pb2
+    return {
+        "ServicesClient": ServicesClient,
+        "Container": Container,
+        "ContainerPort": ContainerPort,
+        "EnvVar": EnvVar,
+        "NodeSelector": NodeSelector,
+        "Probe": Probe,
+        "ResourceRequirements": ResourceRequirements,
+        "RevisionScaling": RevisionScaling,
+        "RevisionTemplate": RevisionTemplate,
+        "Service": Service,
+        "TCPSocketAction": TCPSocketAction,
+        "duration_pb2": duration_pb2,
+    }
 
 
 class CloudRunProvider(InferenceProvider):
@@ -477,20 +503,19 @@ class CloudRunProvider(InferenceProvider):
 
     def deploy(self, plan: ProviderPlan) -> DeploymentResult:
         try:
-            ServicesClient = _require_cloudrun_sdk()
-            from google.cloud.run_v2.types import (
-                Container,
-                ContainerPort,
-                EnvVar,
-                NodeSelector,
-                Probe,
-                ResourceRequirements,
-                RevisionScaling,
-                RevisionTemplate,
-                Service,
-                TCPSocketAction,
-            )
-            from google.protobuf import duration_pb2
+            sdk = _require_cloudrun_sdk()
+            ServicesClient = sdk["ServicesClient"]
+            Container = sdk["Container"]
+            ContainerPort = sdk["ContainerPort"]
+            EnvVar = sdk["EnvVar"]
+            NodeSelector = sdk["NodeSelector"]
+            Probe = sdk["Probe"]
+            ResourceRequirements = sdk["ResourceRequirements"]
+            RevisionScaling = sdk["RevisionScaling"]
+            RevisionTemplate = sdk["RevisionTemplate"]
+            Service = sdk["Service"]
+            TCPSocketAction = sdk["TCPSocketAction"]
+            duration_pb2 = sdk["duration_pb2"]
         except ImportError:
             return DeploymentResult(
                 provider=self.name(),
@@ -653,7 +678,8 @@ class CloudRunProvider(InferenceProvider):
             return
 
         try:
-            ServicesClient = _require_cloudrun_sdk()
+            sdk = _require_cloudrun_sdk()
+            ServicesClient = sdk["ServicesClient"]
         except ImportError:
             logger.error("google-cloud-run SDK not installed, cannot destroy service")
             return
@@ -669,7 +695,8 @@ class CloudRunProvider(InferenceProvider):
 
     def status(self, service_name: str) -> dict:
         try:
-            ServicesClient = _require_cloudrun_sdk()
+            sdk = _require_cloudrun_sdk()
+            ServicesClient = sdk["ServicesClient"]
         except ImportError:
             return {
                 "provider": self.name(),

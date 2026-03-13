@@ -37,7 +37,9 @@ def _reset_meta_lb():
     meta_lb._recent_routes.clear()
     meta_lb._last_probe_ts = None
     meta_lb._last_probe_err = None
+    meta_lb._rejected_count = 0
     meta_lb._state_lock = asyncio.Lock()
+    meta_lb._request_semaphore = asyncio.Semaphore(meta_lb.MAX_CONCURRENT_REQUESTS)
     yield
 
 

@@ -2,7 +2,7 @@
 
 > Hybrid GPU inference orchestrator — serverless for speed, spot for savings, one endpoint for everything.
 
-Current state: v0.0.1a10 | 6 serverless providers (Modal, RunPod, Cloud Run, Baseten, Azure, Cerebrium) | 2 spot providers (AWS, GCP via SkyPilot) | ~651 tests
+Current state: v0.1.0 | 6 serverless providers (Modal, RunPod, Cloud Run, Baseten, Azure, Cerebrium) | 2 spot providers (AWS, GCP via SkyPilot) | ~651 tests
 
 ---
 
@@ -17,8 +17,8 @@ Current state: v0.0.1a10 | 6 serverless providers (Modal, RunPod, Cloud Run, Bas
 - ~~Spot state machine (COLD → WARMING → READY) — replaced boolean health probes with 3-state machine for reliable scale-to-zero~~
 - ~~Scale-to-zero — deploy with min_replicas=0, auto-warming pokes protect boot, no sky serve update needed~~
 - ~~Replica watcher — background script on controller pushes real replica count to router~~
-- Async router proxy — migrate meta_lb.py from Flask+requests to FastAPI+httpx async (handles 100+ concurrent streaming connections)
-- Router backpressure — return 429 when overloaded instead of dropping connections
+- ~~Async router proxy — migrate meta_lb.py from Flask+requests to FastAPI+httpx async (handles 100+ concurrent streaming connections)~~
+- ~~Router backpressure — return 429 when overloaded instead of dropping connections~~
 
 ---
 

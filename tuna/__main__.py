@@ -144,7 +144,12 @@ def cmd_deploy(args: argparse.Namespace) -> None:
     total_failure = not (serverless_ok or spot_ok or router_ok)
 
     if total_failure:
-        print("\nDeployment failed: no components launched successfully.", file=sys.stderr)
+        print("\nDeployment failed:", file=sys.stderr)
+        for label, comp in [("Serverless", result.serverless), ("Spot", result.spot), ("Router", result.router)]:
+            if comp and comp.error:
+                print(f"  {label}: {comp.error}", file=sys.stderr)
+        if not any(c and c.error for _, c in [("Serverless", result.serverless), ("Spot", result.spot), ("Router", result.router)]):
+            print("  (no error details available)", file=sys.stderr)
         print(f"Run: tuna destroy --service-name {request.service_name}", file=sys.stderr)
         sys.exit(1)
 

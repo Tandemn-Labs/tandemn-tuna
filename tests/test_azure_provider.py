@@ -368,7 +368,7 @@ class TestFindExistingEnvironment:
         mock_client.managed_environments.list_by_resource_group.return_value = [mock_env]
 
         with patch("tuna.providers.azure_provider._require_azure_sdk") as mock_sdk:
-            mock_sdk.return_value = (MagicMock(), MagicMock(return_value=mock_client))
+            mock_sdk.return_value = (MagicMock(), MagicMock(return_value=mock_client), MagicMock())
             result = provider._find_existing_environment("sub", "rg", "Consumption-GPU-NC8as-T4")
 
         assert result == "found-env"
@@ -386,7 +386,7 @@ class TestFindExistingEnvironment:
         mock_client.managed_environments.list_by_resource_group.return_value = [mock_env]
 
         with patch("tuna.providers.azure_provider._require_azure_sdk") as mock_sdk:
-            mock_sdk.return_value = (MagicMock(), MagicMock(return_value=mock_client))
+            mock_sdk.return_value = (MagicMock(), MagicMock(return_value=mock_client), MagicMock())
             result = provider._find_existing_environment("sub", "rg", "Consumption-GPU-NC8as-T4")
 
         assert result is None
@@ -397,7 +397,7 @@ class TestFindExistingEnvironment:
         mock_client.managed_environments.list_by_resource_group.return_value = []
 
         with patch("tuna.providers.azure_provider._require_azure_sdk") as mock_sdk:
-            mock_sdk.return_value = (MagicMock(), MagicMock(return_value=mock_client))
+            mock_sdk.return_value = (MagicMock(), MagicMock(return_value=mock_client), MagicMock())
             result = provider._find_existing_environment("sub", "rg", "Consumption-GPU-NC8as-T4")
 
         assert result is None
@@ -414,7 +414,7 @@ class TestFindExistingEnvironment:
         mock_client.managed_environments.list_by_resource_group.side_effect = Exception("API error")
 
         with patch("tuna.providers.azure_provider._require_azure_sdk") as mock_sdk:
-            mock_sdk.return_value = (MagicMock(), MagicMock(return_value=mock_client))
+            mock_sdk.return_value = (MagicMock(), MagicMock(return_value=mock_client), MagicMock())
             result = provider._find_existing_environment("sub", "rg", "Consumption-GPU-NC8as-T4")
 
         assert result is None
@@ -468,7 +468,7 @@ class TestAzureDeploy:
             patch("tuna.providers.azure_provider._require_azure_sdk") as mock_sdk,
             patch.object(provider, "_find_existing_environment", return_value="existing-env"),
         ):
-            mock_sdk.return_value = (MagicMock(), MagicMock(return_value=mock_client))
+            mock_sdk.return_value = (MagicMock(), MagicMock(return_value=mock_client), MagicMock())
             result = provider.deploy(plan)
 
         assert result.error is None
@@ -498,7 +498,7 @@ class TestAzureDeploy:
             patch("tuna.providers.azure_provider._require_azure_sdk") as mock_sdk,
             patch.object(provider, "_find_existing_environment", return_value=None),
         ):
-            mock_sdk.return_value = (MagicMock(), MagicMock(return_value=mock_client))
+            mock_sdk.return_value = (MagicMock(), MagicMock(return_value=mock_client), MagicMock())
             result = provider.deploy(plan)
 
         assert result.error is None
@@ -519,7 +519,7 @@ class TestAzureDeploy:
             patch("tuna.providers.azure_provider._require_azure_sdk") as mock_sdk,
             patch.object(provider, "_find_existing_environment", return_value=None),
         ):
-            mock_sdk.return_value = (MagicMock(), MagicMock(return_value=mock_client))
+            mock_sdk.return_value = (MagicMock(), MagicMock(return_value=mock_client), MagicMock())
             result = provider.deploy(plan)
 
         assert result.error is not None
@@ -538,7 +538,7 @@ class TestAzureDeploy:
             patch("tuna.providers.azure_provider._require_azure_sdk") as mock_sdk,
             patch.object(provider, "_find_existing_environment", return_value="existing-env"),
         ):
-            mock_sdk.return_value = (MagicMock(), MagicMock(return_value=mock_client))
+            mock_sdk.return_value = (MagicMock(), MagicMock(return_value=mock_client), MagicMock())
             result = provider.deploy(plan)
 
         assert result.error is not None
@@ -578,7 +578,7 @@ class TestAzureDestroy:
         mock_client.container_apps.begin_delete.return_value = mock_poller
 
         with patch("tuna.providers.azure_provider._require_azure_sdk") as mock_sdk:
-            mock_sdk.return_value = (MagicMock(), MagicMock(return_value=mock_client))
+            mock_sdk.return_value = (MagicMock(), MagicMock(return_value=mock_client), MagicMock())
             provider.destroy(result)
 
         # Container App deleted
@@ -629,7 +629,7 @@ class TestAzureDestroyEnvironment:
         mock_client.managed_environments.begin_delete.return_value = mock_poller
 
         with patch("tuna.providers.azure_provider._require_azure_sdk") as mock_sdk:
-            mock_sdk.return_value = (MagicMock(), MagicMock(return_value=mock_client))
+            mock_sdk.return_value = (MagicMock(), MagicMock(return_value=mock_client), MagicMock())
             provider.destroy_environment(result)
 
         mock_client.managed_environments.begin_delete.assert_called_once_with("test-rg", "test-svc-env")
@@ -700,7 +700,7 @@ class TestAzurePreflight:
             patch("tuna.providers.azure_provider._require_azure_sdk") as mock_sdk,
             patch.object(provider, "_find_existing_environment", return_value="my-env"),
         ):
-            mock_sdk.return_value = (MagicMock(), MagicMock())
+            mock_sdk.return_value = (MagicMock(), MagicMock(), MagicMock())
             result = provider.preflight(request_t4)
 
         assert result.ok
@@ -781,7 +781,7 @@ class TestAzurePreflight:
             patch("tuna.providers.azure_provider._require_azure_sdk") as mock_sdk,
             patch.object(provider, "_find_existing_environment", return_value="my-env"),
         ):
-            mock_sdk.return_value = (MagicMock(), MagicMock())
+            mock_sdk.return_value = (MagicMock(), MagicMock(), MagicMock())
             result = provider.preflight(request_t4)
 
         env_check = [c for c in result.checks if c.name == "environment"][0]
@@ -797,7 +797,7 @@ class TestAzurePreflight:
             patch("tuna.providers.azure_provider._require_azure_sdk") as mock_sdk,
             patch.object(provider, "_find_existing_environment", return_value=None),
         ):
-            mock_sdk.return_value = (MagicMock(), MagicMock())
+            mock_sdk.return_value = (MagicMock(), MagicMock(), MagicMock())
             result = provider.preflight(request_t4)
 
         env_check = [c for c in result.checks if c.name == "environment"][0]
@@ -823,7 +823,7 @@ class TestAzureStatus:
         mock_client.container_apps.get.return_value = mock_app
 
         with patch("tuna.providers.azure_provider._require_azure_sdk") as mock_sdk:
-            mock_sdk.return_value = (MagicMock(), MagicMock(return_value=mock_client))
+            mock_sdk.return_value = (MagicMock(), MagicMock(return_value=mock_client), MagicMock())
             status = provider.status("test-svc")
 
         assert status["status"] == "Succeeded"
@@ -838,7 +838,7 @@ class TestAzureStatus:
         mock_client.container_apps.get.side_effect = Exception("ResourceNotFound")
 
         with patch("tuna.providers.azure_provider._require_azure_sdk") as mock_sdk:
-            mock_sdk.return_value = (MagicMock(), MagicMock(return_value=mock_client))
+            mock_sdk.return_value = (MagicMock(), MagicMock(return_value=mock_client), MagicMock())
             status = provider.status("test-svc")
 
         assert status["status"] == "not found"
@@ -854,7 +854,7 @@ class TestAzureStatus:
     def test_status_no_subscription(self, mock_run, provider):
         mock_run.return_value = MagicMock(stdout="", returncode=1)
         with patch("tuna.providers.azure_provider._require_azure_sdk") as mock_sdk:
-            mock_sdk.return_value = (MagicMock(), MagicMock())
+            mock_sdk.return_value = (MagicMock(), MagicMock(), MagicMock())
             status = provider.status("test-svc")
         assert status["status"] == "unknown"
         assert "No subscription" in status["error"]

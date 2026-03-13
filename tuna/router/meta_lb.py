@@ -125,9 +125,11 @@ API_KEY_HEADER = os.getenv("API_KEY_HEADER", "x-api-key")
 ALLOW_HEALTH_NO_AUTH = _env_bool("ALLOW_HEALTH_NO_AUTH", False)
 
 ROUTE_WINDOW_SIZE = int(os.getenv("ROUTE_WINDOW_SIZE", "200"))
+MAX_CONCURRENT_REQUESTS = int(os.getenv("MAX_CONCURRENT_REQUESTS", "100"))
 
 # HTTP client — created in lifespan, shared across all requests.
 _http_client: httpx.AsyncClient | None = None
+_request_semaphore: asyncio.Semaphore | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -167,6 +169,7 @@ _gpu_seconds_serverless: float = 0.0
 _spot_ready_cumulative_s: float = 0.0
 _spot_ready_since: float | None = None
 _last_real_request_ts: float = 0.0
+_rejected_count: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -272,6 +275,7 @@ async def _route_stats() -> dict:
         total = _req_total
         spot = _req_to_spot
         svl = _req_to_serverless
+        rejected = _rejected_count
         recent = list(_recent_routes)
         gpu_s_spot = _gpu_seconds_spot
         gpu_s_svl = _gpu_seconds_serverless
@@ -286,6 +290,7 @@ async def _route_stats() -> dict:
         "total": total,
         "spot": spot,
         "serverless": svl,
+        "rejected": rejected,
         "pct_spot": (100.0 * spot / total) if total else 0.0,
         "pct_serverless": (100.0 * svl / total) if total else 0.0,
         "window_total": recent_total,
@@ -484,7 +489,8 @@ async def _forward_to_serverless(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _http_client
+    global _http_client, _request_semaphore
+    _request_semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
     _http_client = httpx.AsyncClient(
         timeout=httpx.Timeout(
             connect=2.0,
@@ -590,102 +596,115 @@ async def proxy(request: Request, path: str = ""):
     if not _is_authorized(request):
         return Response(content="unauthorized", status_code=401)
 
-    # Preemptive idle→cold: if spot is READY but no real traffic for
-    # downscale_delay seconds, SkyServe has likely scaled down already.
-    # Mark COLD to avoid routing to a dead spot (saves one failed request).
-    if skyserve_url and await _is_ready():
+    # Backpressure: reject if at concurrency limit
+    if _request_semaphore is not None and _request_semaphore.locked():
+        global _rejected_count
         async with _state_lock:
-            idle_s = time.time() - _last_real_request_ts if _last_real_request_ts else 0
-        if idle_s > IDLE_TIMEOUT_SECONDS:
-            logger.info("Idle %.0fs > %.0fs, preemptively marking COLD", idle_s, IDLE_TIMEOUT_SECONDS)
-            await _set_state(SpotState.COLD)
-
-    # Decide backend: prefer spot (cheaper) if ready, else serverless (fast)
-    if skyserve_url and await _is_ready():
-        backend_base = skyserve_url
-        backend_name = "spot"
-        await _record_route("spot")
-    elif serverless_url:
-        backend_base = serverless_url
-        backend_name = "serverless"
-        await _record_route("serverless")
-        # Trigger warming if spot is cold and URL is configured
-        if skyserve_url and _spot_state == SpotState.COLD:
-            await _enter_warming()
-    else:
-        # Only spot configured but not ready
+            _rejected_count += 1
         return JSONResponse(
-            content={"error": "Spot backend not ready, no serverless fallback"},
-            status_code=503,
+            content={"error": "router_overloaded", "retry_after": 1},
+            status_code=429,
+            headers={"Retry-After": "1"},
         )
 
-    # Log periodically
-    stats = await _route_stats()
-    if stats["total"] % 100 == 0 and stats["total"] > 0:
-        logger.info(
-            "requests=%d spot=%d (%.0f%%) serverless=%d (%.0f%%) spot_state=%s",
-            stats["total"], stats["spot"], stats["pct_spot"],
-            stats["serverless"], stats["pct_serverless"], _spot_state,
-        )
+    # Acquire concurrency permit (held during routing + connection setup)
+    async with _request_semaphore:
+        # Preemptive idle→cold: if spot is READY but no real traffic for
+        # downscale_delay seconds, SkyServe has likely scaled down already.
+        # Mark COLD to avoid routing to a dead spot (saves one failed request).
+        if skyserve_url and await _is_ready():
+            async with _state_lock:
+                idle_s = time.time() - _last_real_request_ts if _last_real_request_ts else 0
+            if idle_s > IDLE_TIMEOUT_SECONDS:
+                logger.info("Idle %.0fs > %.0fs, preemptively marking COLD", idle_s, IDLE_TIMEOUT_SECONDS)
+                await _set_state(SpotState.COLD)
 
-    # Forward request
-    query_string = request.url.query.encode() if request.url.query else None
-    target_url = _build_proxy_url(backend_base, path, query_string)
+        # Decide backend: prefer spot (cheaper) if ready, else serverless (fast)
+        if skyserve_url and await _is_ready():
+            backend_base = skyserve_url
+            backend_name = "spot"
+            await _record_route("spot")
+        elif serverless_url:
+            backend_base = serverless_url
+            backend_name = "serverless"
+            await _record_route("serverless")
+            # Trigger warming if spot is cold and URL is configured
+            if skyserve_url and _spot_state == SpotState.COLD:
+                await _enter_warming()
+        else:
+            # Only spot configured but not ready
+            return JSONResponse(
+                content={"error": "Spot backend not ready, no serverless fallback"},
+                status_code=503,
+            )
 
-    # Strip auth headers for serverless (we inject our own token); preserve for spot
-    headers = _filter_incoming(dict(request.headers), strip_auth=(backend_name == "serverless"))
+        # Log periodically
+        stats = await _route_stats()
+        if stats["total"] % 100 == 0 and stats["total"] > 0:
+            logger.info(
+                "requests=%d spot=%d (%.0f%%) serverless=%d (%.0f%%) spot_state=%s",
+                stats["total"], stats["spot"], stats["pct_spot"],
+                stats["serverless"], stats["pct_serverless"], _spot_state,
+            )
 
-    # Inject backend auth token for serverless
-    if backend_name == "serverless":
-        async with _state_lock:
-            auth_token = _serverless_auth_token
-        if auth_token:
-            headers["Authorization"] = f"Bearer {auth_token}"
+        # Forward request
+        query_string = request.url.query.encode() if request.url.query else None
+        target_url = _build_proxy_url(backend_base, path, query_string)
 
-    data = await request.body()
+        # Strip auth headers for serverless (we inject our own token); preserve for spot
+        headers = _filter_incoming(dict(request.headers), strip_auth=(backend_name == "serverless"))
 
-    t0 = time.time()
-    try:
-        r = await _http_client.send(
-            _http_client.build_request(
-                request.method, target_url, headers=headers, content=data if data else None,
-            ),
-            stream=True,
-        )
-    except httpx.HTTPError as e:
-        elapsed = time.time() - t0
-        async with _state_lock:
-            if backend_name == "spot":
+        # Inject backend auth token for serverless
+        if backend_name == "serverless":
+            async with _state_lock:
+                auth_token = _serverless_auth_token
+            if auth_token:
+                headers["Authorization"] = f"Bearer {auth_token}"
+
+        data = await request.body()
+
+        t0 = time.time()
+        try:
+            r = await _http_client.send(
+                _http_client.build_request(
+                    request.method, target_url, headers=headers, content=data if data else None,
+                ),
+                stream=True,
+            )
+        except httpx.HTTPError as e:
+            elapsed = time.time() - t0
+            async with _state_lock:
+                if backend_name == "spot":
+                    _gpu_seconds_spot += elapsed
+                else:
+                    _gpu_seconds_serverless += elapsed
+
+            # RETRY: if spot failed and serverless is available, retry there
+            if backend_name == "spot" and serverless_url:
+                logger.warning("Spot request failed (%s), retrying on serverless", e)
+                await _set_state(SpotState.COLD, str(e))
+                return await _forward_to_serverless(request, path, headers, data, serverless_url)
+
+            logger.warning("Upstream error: %s", e)
+            return Response(content="upstream_error", status_code=502)
+
+        # Retry on 5xx from spot — we haven't streamed anything yet, safe to failover
+        if backend_name == "spot" and r.status_code >= 500 and serverless_url:
+            await r.aclose()
+            elapsed = time.time() - t0
+            async with _state_lock:
                 _gpu_seconds_spot += elapsed
-            else:
-                _gpu_seconds_serverless += elapsed
-
-        # RETRY: if spot failed and serverless is available, retry there
-        if backend_name == "spot" and serverless_url:
-            logger.warning("Spot request failed (%s), retrying on serverless", e)
-            await _set_state(SpotState.COLD, str(e))
+            logger.warning("Spot returned %d, retrying on serverless", r.status_code)
+            await _set_state(SpotState.COLD, f"status={r.status_code}")
             return await _forward_to_serverless(request, path, headers, data, serverless_url)
 
-        logger.warning("Upstream error: %s", e)
-        return Response(content="upstream_error", status_code=502)
-
-    # Retry on 5xx from spot — we haven't streamed anything yet, safe to failover
-    if backend_name == "spot" and r.status_code >= 500 and serverless_url:
-        await r.aclose()
-        elapsed = time.time() - t0
-        async with _state_lock:
-            _gpu_seconds_spot += elapsed
-        logger.warning("Spot returned %d, retrying on serverless", r.status_code)
-        await _set_state(SpotState.COLD, f"status={r.status_code}")
-        return await _forward_to_serverless(request, path, headers, data, serverless_url)
-
-    resp_headers = _filter_outgoing(dict(r.headers))
-    return StreamingResponse(
-        _stream_and_track(r, t0, backend_name),
-        status_code=r.status_code,
-        headers=resp_headers,
-        media_type=r.headers.get("content-type"),
-    )
+        resp_headers = _filter_outgoing(dict(r.headers))
+        return StreamingResponse(
+            _stream_and_track(r, t0, backend_name),
+            status_code=r.status_code,
+            headers=resp_headers,
+            media_type=r.headers.get("content-type"),
+        )
 
 
 # ---------------------------------------------------------------------------

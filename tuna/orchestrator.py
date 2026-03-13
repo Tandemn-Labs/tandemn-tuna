@@ -409,7 +409,12 @@ def launch_hybrid(request: DeployRequest, *, separate_router_vm: bool = False) -
     # Early preflight — fail fast before launching any VMs
     preflight = serverless_prov.preflight(request)
     if not preflight.ok:
-        failures = "; ".join(c.message for c in preflight.failed)
+        parts = []
+        for c in preflight.failed:
+            parts.append(f"  - {c.message}")
+            if c.fix_command:
+                parts.append(f"    Fix: {c.fix_command}")
+        failures = "\n".join(parts)
         return HybridDeployment(
             serverless=DeploymentResult(
                 provider=request.serverless_provider,
@@ -450,7 +455,12 @@ def launch_hybrid(request: DeployRequest, *, separate_router_vm: bool = False) -
             provider = get_provider("skyserve")
             preflight = provider.preflight(request)
             if not preflight.ok:
-                failures = "; ".join(c.message for c in preflight.failed)
+                parts = []
+                for c in preflight.failed:
+                    parts.append(f"  - {c.message}")
+                    if c.fix_command:
+                        parts.append(f"    Fix: {c.fix_command}")
+                failures = "\n".join(parts)
                 return DeploymentResult(
                     provider="skyserve",
                     error=f"Preflight failed: {failures}",
@@ -685,7 +695,12 @@ def launch_serverless_only(request: DeployRequest) -> HybridDeployment:
     # Preflight
     preflight = serverless_prov.preflight(request)
     if not preflight.ok:
-        failures = "; ".join(c.message for c in preflight.failed)
+        parts = []
+        for c in preflight.failed:
+            parts.append(f"  - {c.message}")
+            if c.fix_command:
+                parts.append(f"    Fix: {c.fix_command}")
+        failures = "\n".join(parts)
         return HybridDeployment(
             serverless=DeploymentResult(
                 provider=request.serverless_provider,
